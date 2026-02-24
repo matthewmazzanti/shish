@@ -1,0 +1,9 @@
+.direnv/
+__pycache__/
+*.egg-info/
+dist/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.claude/
+!.claude/settings.json
