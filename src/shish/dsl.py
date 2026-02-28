@@ -20,14 +20,11 @@ Data = str | bytes
 Arg = str | ir.Sub
 Sub = ir.Sub
 
-_EMPTY_CMD = ir.Cmd(())
-
-
 class Cmd:
     """Immutable shell command builder with chainable syntax."""
 
-    def __init__(self, _shish_ir: ir.Cmd = _EMPTY_CMD) -> None:
-        self._shish_ir = _shish_ir
+    def __init__(self, _shish_ir: ir.Cmd | None = None) -> None:
+        self._shish_ir = ir.Cmd(()) if _shish_ir is None else _shish_ir
 
     def __getattr__(self, name: str) -> Cmd:
         """Chain subcommand: cmd.foo -> Cmd with "foo" appended."""
@@ -261,4 +258,20 @@ async def out(cmd: Cmd | Pipeline, encoding: str | None = "utf-8") -> str | byte
 
 
 # Convenience
-sh = Cmd()
+
+
+class Sh:
+    """Root command builder. Attribute access creates Cmd instances."""
+
+    def __getattr__(self, name: str) -> Cmd:
+        """sh.echo -> Cmd with ("echo",)."""
+        return Cmd(ir.Cmd((name,)))
+
+    def __call__(
+        self, *args: str | int | Path | ir.Sub, **kwargs: str | int | bool
+    ) -> Cmd:
+        """sh("cmd", "arg", flag=True) -> Cmd."""
+        return Cmd()(*args, **kwargs)
+
+
+sh = Sh()
