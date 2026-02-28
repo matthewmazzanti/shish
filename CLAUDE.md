@@ -21,14 +21,14 @@ src/shish/      # main package
   ir.py         # frozen dataclass IR: Cmd, Pipeline, per-fd redirects
   dsl.py        # thin wrappers (Cmd, Pipeline), operators, combinators
   fdops.py      # fd-table simulator for computing pass_fds
-  runtime.py    # executes IR nodes, run, out, Result
+  runtime.py    # executes IR, run, out, Result
   aio.py        # async_read, async_write, fd utilities
 TODO.md         # planned features and known issues
 ```
 
 ## Key Concepts
 
-- `sh.cmd()` returns `Cmd` - immutable command builder
+- `cmd("echo", "hello")` or `sh.echo("hello")` returns `Cmd` - immutable command builder
 - `cmd1 | cmd2` returns `Pipeline` - concurrent execution
 - `await cmd` or `await run(cmd)` - returns exit code
 - `await out(cmd)` - returns stdout as string (or bytes with `encoding=None`)

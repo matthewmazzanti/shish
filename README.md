@@ -33,7 +33,7 @@ await sh.git.commit(message="fix bug", amend=True)
 
 # Capture output (returns str, decoded as utf-8)
 stdout = await out(sh.ls("-la"))
-stdout = await out(sh.cmd(), encoding=None)  # raw bytes
+stdout = await out(sh.cat(), encoding=None)  # raw bytes
 ```
 
 ## Why Not stdlib?
@@ -107,10 +107,10 @@ task = asyncio.create_task(sh.server())
 Tuple syntax targets specific file descriptors:
 
 ```python
-await (sh.cmd() > (STDERR, "err.log"))         # stderr to file
-await (sh.cmd() >> (STDERR, "err.log"))        # stderr append
-await (sh.cmd() < (3, "data.txt"))        # fd 3 from file
-await (sh.cmd() << (3, "input"))          # fd 3 from string
+await (sh.make() > (STDERR, "err.log"))        # stderr to file
+await (sh.make() >> (STDERR, "err.log"))       # stderr append
+await (sh.cat() < (3, "data.txt"))             # fd 3 from file
+await (sh.cat() << (3, "input"))               # fd 3 from string
 ```
 
 ## Combinators
@@ -122,10 +122,10 @@ from shish import out, run, pipe, write, read, feed, close, sub_in, sub_out
 
 pipe(sh.a(), sh.b(), sh.c())              # varargs pipeline
 write(read(sh.cat(), "in"), "out")        # functional composition
-write(sh.cmd(), "err.log", fd=STDERR)     # stderr to file
+write(sh.make(), "err.log", fd=STDERR)    # stderr to file
 read(sh.cat(), sub_in(sh.sort("a.txt")))  # read from process sub
 write(sh.tee(), sub_out(sh.gzip() > "a.gz"))  # write to process sub
-close(sh.cmd(), STDERR)                   # close stderr
+close(sh.make(), STDERR)                  # close stderr
 stdout = await out(sh.ls())               # capture stdout as str
 ```
 
