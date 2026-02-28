@@ -19,8 +19,8 @@ Flag = ir.PathLike | bool
 class Cmd:
     """Immutable shell command builder with chainable syntax."""
 
-    def __init__(self, _shish_ir: ir.Cmd | None = None) -> None:
-        self._shish_ir = ir.Cmd(()) if _shish_ir is None else _shish_ir
+    def __init__(self, _shish_ir: ir.Cmd) -> None:
+        self._shish_ir = _shish_ir
 
     def __getattr__(self, name: str) -> Cmd:
         """Chain subcommand: cmd.foo -> Cmd with "foo" appended."""
@@ -174,6 +174,11 @@ def wrap(node: ir.Cmd | ir.Pipeline) -> Cmd | Pipeline:
             return Pipeline(node)
 
 
+def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
+    """Create a command from arguments: cmd("echo", "hello") -> Cmd."""
+    return Cmd(ir.cmd())(*args, **kwargs)
+
+
 def pipe(*cmds: Runnable) -> Pipeline:
     """Pipe commands together: pipe(cmd1, cmd2, ...) -> Pipeline."""
     return Pipeline(ir.pipeline(*(unwrap(cmd) for cmd in cmds)))
@@ -259,11 +264,11 @@ class Sh:
 
     def __getattr__(self, name: str) -> Cmd:
         """sh.echo -> Cmd with ("echo",)."""
-        return Cmd(ir.Cmd((name,)))
+        return cmd(name)
 
     def __call__(self, *args: ir.Arg, **kwargs: Flag) -> Cmd:
         """sh("cmd", "arg", flag=True) -> Cmd."""
-        return Cmd()(*args, **kwargs)
+        return cmd(*args, **kwargs)
 
 
 sh = Sh()

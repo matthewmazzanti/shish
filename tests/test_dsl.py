@@ -5,6 +5,7 @@ import pytest
 from shish import (
     Cmd,
     Pipeline,
+    cmd,
     feed,
     ir,
     pipe,
@@ -18,23 +19,23 @@ from shish import (
 
 
 def test_cmd_getattr() -> None:
-    assert unwrap(Cmd().echo).args == ("echo",)
+    assert unwrap(cmd().echo).args == ("echo",)
 
 
 def test_cmd_chain() -> None:
-    assert unwrap(Cmd().git.status).args == ("git", "status")
+    assert unwrap(cmd().git.status).args == ("git", "status")
 
 
 def test_cmd_call_args() -> None:
-    assert unwrap(Cmd().echo("hello", "world")).args == ("echo", "hello", "world")
+    assert unwrap(cmd().echo("hello", "world")).args == ("echo", "hello", "world")
 
 
 def test_cmd_call_short_flag() -> None:
-    assert unwrap(Cmd().ls(l=True, a=True)).args == ("ls", "-l", "-a")
+    assert unwrap(cmd().ls(l=True, a=True)).args == ("ls", "-l", "-a")
 
 
 def test_cmd_call_long_flag() -> None:
-    assert unwrap(Cmd().git.commit(message="fix")).args == (
+    assert unwrap(cmd().git.commit(message="fix")).args == (
         "git",
         "commit",
         "--message",
@@ -43,11 +44,11 @@ def test_cmd_call_long_flag() -> None:
 
 
 def test_cmd_call_flag_false() -> None:
-    assert unwrap(Cmd().ls(l=True, a=False)).args == ("ls", "-l")
+    assert unwrap(cmd().ls(l=True, a=False)).args == ("ls", "-l")
 
 
 def test_cmd_underscore_to_dash() -> None:
-    assert unwrap(Cmd().foo(some_flag="value")).args == (
+    assert unwrap(cmd().foo(some_flag="value")).args == (
         "foo",
         "--some-flag",
         "value",
