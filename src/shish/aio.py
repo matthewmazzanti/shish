@@ -22,20 +22,26 @@ async def async_write(fd: int, data: str | bytes) -> None:
     fills (BlockingIOError), yields to the event loop, allowing other coroutines
     to run. This enables multiple concurrent writes to interleave properly.
 
-    Closes the fd when complete, signaling EOF to readers.
+    Closes the fd when complete (or on error), signaling EOF to readers.
     """
     # 64K chunks: matches default pipe buffer (64K) and shutil.COPY_BUFSIZE.
     # Larger chunks amortize Python call overhead; smaller chunks waste syscalls.
-    for chunk in iterencode(data, chunk_size=65536):
-        written = 0
-        # Handle partial writes (os.write may write less than requested)
-        while written < len(chunk):
-            try:
-                written += os.write(fd, chunk[written:])
-            except BlockingIOError:
-                # Pipe buffer full - yield to event loop until writable
-                await wait_writable(fd)
-    os.close(fd)
+    try:
+        for chunk in iterencode(data, chunk_size=65536):
+            written = 0
+            # Handle partial writes (os.write may write less than requested)
+            while written < len(chunk):
+                try:
+                    written += os.write(fd, chunk[written:])
+                except BlockingIOError:
+                    # Pipe buffer full - yield to event loop until writable
+                    await wait_writable(fd)
+    except OSError:
+        # BrokenPipeError: reader closed its end — nothing left to write to.
+        # Other OSError: fd closed externally or became invalid.
+        pass
+    finally:
+        close_fd(fd)
 
 
 async def wait_writable(fd: int) -> None:
@@ -69,19 +75,24 @@ async def async_read(fd: int) -> bytes:
     """Read all data from fd asynchronously, then close.
 
     Reads in 64K chunks, yielding to the event loop when no data is available.
-    Closes the fd when EOF is reached.
+    Closes the fd when done (EOF or error).
     """
     os.set_blocking(fd, False)
     chunks: list[bytes] = []
-    while True:
-        try:
-            chunk = os.read(fd, 65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        except BlockingIOError:
-            await wait_readable(fd)
-    os.close(fd)
+    try:
+        while True:
+            try:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            except BlockingIOError:
+                await wait_readable(fd)
+    except OSError:
+        # Fd closed externally or became invalid — return what we have
+        pass
+    finally:
+        close_fd(fd)
     return b"".join(chunks)
 
 

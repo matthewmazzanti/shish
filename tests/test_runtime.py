@@ -345,6 +345,39 @@ async def test_fd_from_data_arbitrary_fd(tmp_path: Path) -> None:
     assert result == "hello from fd3"
 
 
+async def test_fd_to_file_append_arbitrary_fd(tmp_path: Path) -> None:
+    """cmd 3>> file — append mode on arbitrary fd."""
+    outfile = tmp_path / "out.txt"
+    await run(
+        ir.Cmd(("sh", "-c", "echo first >&3"), redirects=(ir.FdToFile(3, outfile),))
+    )
+    await run(
+        ir.Cmd(
+            ("sh", "-c", "echo second >&3"),
+            redirects=(ir.FdToFile(3, outfile, append=True),),
+        )
+    )
+    assert outfile.read_text() == "first\nsecond\n"
+
+
+async def test_multiple_redirects_same_fd(tmp_path: Path) -> None:
+    """Last redirect on same fd wins, matching bash semantics."""
+    file1 = tmp_path / "file1.txt"
+    file2 = tmp_path / "file2.txt"
+    command = ir.Cmd(
+        ("echo", "hello"),
+        redirects=(
+            ir.FdToFile(STDOUT, file1),
+            ir.FdToFile(STDOUT, file2),
+        ),
+    )
+    assert await run(command) == 0
+    # Second redirect wins — output goes to file2
+    assert file2.read_text() == "hello\n"
+    # file1 gets created but nothing written to it
+    assert file1.read_text() == ""
+
+
 # =============================================================================
 # FdClose
 # =============================================================================
@@ -481,6 +514,34 @@ async def test_fd_from_sub_with_pipeline() -> None:
     assert result == "HELLO\n"
 
 
+async def test_fd_to_sub_with_pipeline(tmp_path: Path) -> None:
+    """cmd > >(pipeline > file) — output sub contains a pipeline."""
+    outfile = tmp_path / "out.txt"
+    sub = ir.SubOut(
+        ir.Pipeline(
+            (
+                ir.Cmd(("tr", "a-z", "A-Z")),
+                ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, outfile),)),
+            )
+        ),
+    )
+    command = ir.Cmd(("echo", "hello"), redirects=(ir.FdToSub(STDOUT, sub),))
+    assert await run(command) == 0
+    assert outfile.read_text() == "HELLO\n"
+
+
+async def test_data_write_to_early_exit() -> None:
+    """Large data feed to process that exits early doesn't hang or crash."""
+    data = b"x" * (256 * 1024)
+    # head -c 1 reads 1 byte then exits; rest of data write hits broken pipe
+    command = ir.Cmd(
+        ("head", "-c", "1"),
+        redirects=(ir.FdFromData(STDIN, data),),
+    )
+    result = await out(command)
+    assert result == "x"
+
+
 async def test_sub_exit_code_ignored_arg() -> None:
     """cat <(false) — sub failure doesn't affect main exit code."""
     sub = ir.SubIn(ir.Cmd(("false",)))
@@ -614,6 +675,17 @@ async def test_out_raises_preserves_output() -> None:
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         await out(ir.Cmd(("sh", "-c", "echo partial; exit 1")))
     assert exc_info.value.output == b"partial\n"
+
+
+async def test_out_no_fd_leak_on_failure() -> None:
+    """out() doesn't leak its capture pipe when command fails."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    with pytest.raises(subprocess.CalledProcessError):
+        await out(ir.Cmd(("false",)))
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
 
 
 # =============================================================================
