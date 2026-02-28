@@ -1,8 +1,6 @@
 from shish.dsl import (
-    Arg,
     Cmd,
-    Data,
-    PathLike,
+    Flag,
     Pipeline,
     Runnable,
     Sh,
@@ -11,7 +9,6 @@ from shish.dsl import (
     out,
     pipe,
     read,
-    read_sub,
     run,
     sh,
     sub_in,
@@ -19,10 +16,9 @@ from shish.dsl import (
     unwrap,
     wrap,
     write,
-    write_sub,
 )
 from shish.fdops import STDERR, STDIN, STDOUT
-from shish.ir import Sub, SubIn, SubOut
+from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
 from shish.runtime import Result
 
 __all__ = [
@@ -32,20 +28,22 @@ __all__ = [
     "Arg",
     "Cmd",
     "Data",
+    "Flag",
     "PathLike",
     "Pipeline",
+    "ReadSrc",
     "Result",
     "Runnable",
     "Sh",
     "Sub",
     "SubIn",
     "SubOut",
+    "WriteDst",
     "close",
     "feed",
     "out",
     "pipe",
     "read",
-    "read_sub",
     "run",
     "sh",
     "sub_in",
@@ -53,5 +51,4 @@ __all__ = [
     "unwrap",
     "wrap",
     "write",
-    "write_sub",
 ]

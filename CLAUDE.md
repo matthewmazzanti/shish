@@ -35,7 +35,7 @@ TODO.md         # planned features and known issues
 - `sub_in(cmd)` / `sub_out(cmd)` - process substitution via `/dev/fd/N`
 - Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed
 - Tuple fd syntax: `cmd > (STDERR, "err.log")` targets specific fds
-- Combinators: `write`, `read`, `feed`, `close`, `pipe` with `fd=` kwargs
+- Combinators: `write`, `read`, `feed`, `close`, `pipe` — accept files or subs, with `fd=` kwarg
 - Pipefail by default (128 + signal for killed processes)
 
 ## Style
@@ -47,11 +47,11 @@ TODO.md         # planned features and known issues
 
 ## Implementation Notes
 
-- IR layer (`ir.py`): frozen dataclasses with builder methods (arg, read, write, feed, close, pipe)
+- IR layer (`ir.py`): frozen dataclasses with builder methods, type aliases (PathLike, Data, Arg, ReadSrc, WriteDst)
 - DSL layer (`dsl.py`): thin wrappers with no public methods, operators delegate to combinators
 - `unwrap()`/`wrap()` bridge DSL and IR layers
 - Per-fd redirects: FdToFile, FdFromFile, FdFromData, FdToFd, FdClose, FdFromSub, FdToSub
-- `Sub` holds process substitution commands (resolved to `/dev/fd/N` at runtime)
+- `SubIn`/`SubOut` hold process substitution commands (resolved to `/dev/fd/N` at runtime)
 - `fdops.py` simulates fd table to compute `pass_fds` for subprocess
 - Uses `asyncio.subprocess.create_subprocess_exec` with `pass_fds`
 - Pipeline stages run concurrently via `os.pipe()` fds

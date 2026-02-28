@@ -27,8 +27,8 @@ def test_cmd_path_arg() -> None:
     assert cmd("cat", Path("/tmp/file.txt")) == ir.Cmd(("cat", "/tmp/file.txt"))
 
 
-def test_cmd_int_arg() -> None:
-    assert cmd("head", "-n", 5) == ir.Cmd(("head", "-n", "5"))
+def test_cmd_numeric_str_arg() -> None:
+    assert cmd("head", "-n", "5") == ir.Cmd(("head", "-n", "5"))
 
 
 def test_cmd_returns_new_instance() -> None:

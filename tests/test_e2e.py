@@ -46,7 +46,7 @@ async def test_pipeline_pipefail() -> None:
 
 async def test_pipeline_sigpipe() -> None:
     # yes | head -1: yes gets SIGPIPE when head exits
-    result = await asyncio.wait_for(sh.yes() | sh.head(n=1), timeout=2.0)
+    result = await asyncio.wait_for(sh.yes() | sh.head(n="1"), timeout=2.0)
     assert result in (0, 141)  # head exits 0, yes gets SIGPIPE (128+13)
 
 

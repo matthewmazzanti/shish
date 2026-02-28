@@ -20,8 +20,12 @@ await (sh.echo("line") >> "log.txt")                 # append
 await (sh.grep("error") < "input.txt")               # stdin from file
 await (sh.grep("error") << "line1\nline2\n")         # stdin from string
 
-# Process substitution
+# Process substitution (as args)
 await sh.diff(sub_in(sh.sort("a.txt")), sub_in(sh.sort("b.txt")))
+
+# Process substitution (as redirect targets)
+await (sh.cat() < sub_in(sh.sort("a.txt")))    # <(sort a.txt)
+await (sh.echo("hi") > sub_out(sh.gzip() > "out.gz"))  # >(gzip > out.gz)
 
 # Kwargs to flags
 await sh.git.commit(message="fix bug", amend=True)
@@ -119,6 +123,8 @@ from shish import out, run, pipe, write, read, feed, close, sub_in, sub_out
 pipe(sh.a(), sh.b(), sh.c())              # varargs pipeline
 write(read(sh.cat(), "in"), "out")        # functional composition
 write(sh.cmd(), "err.log", fd=STDERR)     # stderr to file
+read(sh.cat(), sub_in(sh.sort("a.txt")))  # read from process sub
+write(sh.tee(), sub_out(sh.gzip() > "a.gz"))  # write to process sub
 close(sh.cmd(), STDERR)                   # close stderr
 stdout = await out(sh.ls())               # capture stdout as str
 ```
