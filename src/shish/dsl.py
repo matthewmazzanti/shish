@@ -189,9 +189,7 @@ def pipe(*cmds: Runnable) -> Pipeline:
 
 
 @overload
-def write(
-    cmd: Cmd, path: PathLike, *, append: bool = ..., fd: int = ...
-) -> Cmd: ...
+def write(cmd: Cmd, path: PathLike, *, append: bool = ..., fd: int = ...) -> Cmd: ...
 @overload
 def write(
     cmd: Pipeline, path: PathLike, *, append: bool = ..., fd: int = ...
@@ -215,9 +213,7 @@ def read(cmd: Cmd, path: PathLike, *, fd: int = ...) -> Cmd: ...
 def read(cmd: Pipeline, path: PathLike, *, fd: int = ...) -> Pipeline: ...
 
 
-def read(
-    cmd: Cmd | Pipeline, path: PathLike, *, fd: int = STDIN
-) -> Cmd | Pipeline:
+def read(cmd: Cmd | Pipeline, path: PathLike, *, fd: int = STDIN) -> Cmd | Pipeline:
     """Read fd from file. Defaults to STDIN."""
     return wrap(unwrap(cmd).read(path, fd=fd))
 
@@ -228,9 +224,7 @@ def feed(cmd: Cmd, data: Data, *, fd: int = ...) -> Cmd: ...
 def feed(cmd: Pipeline, data: Data, *, fd: int = ...) -> Pipeline: ...
 
 
-def feed(
-    cmd: Cmd | Pipeline, data: Data, *, fd: int = STDIN
-) -> Cmd | Pipeline:
+def feed(cmd: Cmd | Pipeline, data: Data, *, fd: int = STDIN) -> Cmd | Pipeline:
     """Feed data into fd. Defaults to STDIN."""
     return wrap(unwrap(cmd).feed(data, fd=fd))
 
@@ -246,12 +240,12 @@ def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
     return wrap(unwrap(cmd).close(fd))
 
 
-def from_proc(source: Runnable) -> ir.Sub:
+def sub_from(source: Runnable) -> ir.Sub:
     """Input process substitution: <(source)."""
     return ir.Sub(unwrap(source), write=False)
 
 
-def to_proc(sink: Runnable) -> ir.Sub:
+def sub_to(sink: Runnable) -> ir.Sub:
     """Output process substitution: >(sink)."""
     return ir.Sub(unwrap(sink), write=True)
 

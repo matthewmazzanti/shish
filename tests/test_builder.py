@@ -252,13 +252,13 @@ async def test_feed_bytes_e2e(tmp_path: Path) -> None:
     assert outfile.read_bytes() == data
 
 
-async def test_from_proc_single(tmp_path: Path) -> None:
+async def test_sub_from_single(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     await cmd("cat", cmd("echo", "hello").sub_in()).write(outfile).run()
     assert outfile.read_text() == "hello\n"
 
 
-async def test_from_proc_diff(tmp_path: Path) -> None:
+async def test_sub_from_diff(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     outfile = tmp_path / "out.txt"
@@ -277,7 +277,7 @@ async def test_from_proc_diff(tmp_path: Path) -> None:
     assert outfile.read_text() == ""
 
 
-async def test_to_proc_with_ir_sub(tmp_path: Path) -> None:
+async def test_sub_to_with_ir_sub(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
     sink = ir.Sub(

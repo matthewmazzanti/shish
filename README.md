@@ -21,7 +21,7 @@ await (sh.grep("error") < "input.txt")               # stdin from file
 await (sh.grep("error") << "line1\nline2\n")         # stdin from string
 
 # Process substitution
-await sh.diff(from_proc(sh.sort("a.txt")), from_proc(sh.sort("b.txt")))
+await sh.diff(sub_from(sh.sort("a.txt")), sub_from(sh.sort("b.txt")))
 
 # Kwargs to flags
 await sh.git.commit(message="fix bug", amend=True)
@@ -114,7 +114,7 @@ await (sh.cmd() << (3, "input"))          # fd 3 from string
 Operators delegate to functions for when you need them:
 
 ```python
-from shish import out, run, pipe, write, read, feed, close, from_proc, to_proc
+from shish import out, run, pipe, write, read, feed, close, sub_from, sub_to
 
 pipe(sh.a(), sh.b(), sh.c())              # varargs pipeline
 write(read(sh.cat(), "in"), "out")        # functional composition

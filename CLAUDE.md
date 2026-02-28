@@ -32,7 +32,7 @@ TODO.md         # planned features and known issues
 - `cmd1 | cmd2` returns `Pipeline` - concurrent execution
 - `await cmd` or `await run(cmd)` - returns exit code
 - `await out(cmd)` - returns stdout as string (or bytes with `encoding=None`)
-- `from_proc(cmd)` / `to_proc(cmd)` - process substitution via `/dev/fd/N`
+- `sub_from(cmd)` / `sub_to(cmd)` - process substitution via `/dev/fd/N`
 - Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed
 - Tuple fd syntax: `cmd > (STDERR, "err.log")` targets specific fds
 - Combinators: `write`, `read`, `feed`, `close`, `pipe` with `fd=` kwargs

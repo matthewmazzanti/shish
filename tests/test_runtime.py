@@ -288,7 +288,7 @@ async def test_fd_close() -> None:
 # =============================================================================
 
 
-async def test_from_proc(tmp_path: Path) -> None:
+async def test_sub_from(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     sub = ir.Sub(ir.Cmd(("echo", "hello")), write=False)
     node = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(1, outfile),))
@@ -296,7 +296,7 @@ async def test_from_proc(tmp_path: Path) -> None:
     assert outfile.read_text() == "hello\n"
 
 
-async def test_from_proc_two_sources(tmp_path: Path) -> None:
+async def test_sub_from_two_sources(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     outfile = tmp_path / "out.txt"
@@ -310,7 +310,7 @@ async def test_from_proc_two_sources(tmp_path: Path) -> None:
     assert outfile.read_text() == ""
 
 
-async def test_to_proc(tmp_path: Path) -> None:
+async def test_sub_to(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
     sink = ir.Sub(
@@ -328,7 +328,7 @@ async def test_to_proc(tmp_path: Path) -> None:
     assert main_out.read_text() == "hello\n"
 
 
-async def test_from_proc_with_pipeline(tmp_path: Path) -> None:
+async def test_sub_from_with_pipeline(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     sub = ir.Sub(
         ir.Pipeline(
@@ -431,7 +431,7 @@ async def test_sub_exit_code_ignored_from_redirect() -> None:
     assert await run(node) == 0
 
 
-async def test_from_proc_with_data_stdin(tmp_path: Path) -> None:
+async def test_sub_from_with_data_stdin(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     sub = ir.Sub(
         ir.Cmd(("cat",), redirects=(ir.FdFromData(0, "injected data"),)),
