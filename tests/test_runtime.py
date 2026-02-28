@@ -100,6 +100,12 @@ async def test_empty_pipeline() -> None:
     assert await run(ir.Pipeline(())) == 0
 
 
+async def test_single_stage_pipeline() -> None:
+    """Pipeline with one stage behaves like a plain command."""
+    result = await out(ir.Pipeline((ir.Cmd(("echo", "hello")),)))
+    assert result == "hello\n"
+
+
 # =============================================================================
 # File Redirects (on Cmd)
 # =============================================================================
@@ -496,6 +502,16 @@ async def test_sub_exit_code_ignored_from_redirect() -> None:
     assert await run(command) == 0
 
 
+async def test_sub_nested(tmp_path: Path) -> None:
+    """Nested process substitution: cat <(cat <(echo hello))."""
+    outfile = tmp_path / "out.txt"
+    inner = ir.SubIn(ir.Cmd(("echo", "hello")))
+    outer = ir.SubIn(ir.Cmd(("cat", inner)))
+    command = ir.Cmd(("cat", outer), redirects=(ir.FdToFile(STDOUT, outfile),))
+    assert await run(command) == 0
+    assert outfile.read_text() == "hello\n"
+
+
 async def test_sub_in_with_data_stdin(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     sub = ir.SubIn(
@@ -569,6 +585,23 @@ async def test_out_large_data_pipeline() -> None:
     )
     assert result_a == data
     assert result_b == data
+
+
+async def test_out_large_data_multi_fd(tmp_path: Path) -> None:
+    """Concurrent reads from multiple fds force interleaved async writes."""
+    data = b"x" * (256 * 1024)
+    out3 = tmp_path / "fd3.bin"
+    out4 = tmp_path / "fd4.bin"
+    command = ir.Cmd(
+        ("sh", "-c", f"cat <&3 > {out3} & cat <&4 > {out4} & wait"),
+        redirects=(
+            ir.FdFromData(3, data),
+            ir.FdFromData(4, data),
+        ),
+    )
+    assert await run(command) == 0
+    assert out3.read_bytes() == data
+    assert out4.read_bytes() == data
 
 
 async def test_out_raises_on_failure() -> None:
@@ -646,10 +679,12 @@ async def test_cancel_no_fd_leak() -> None:
     before = set(os.listdir("/proc/self/fd"))
     task = asyncio.create_task(
         run(
-            ir.Pipeline((
-                ir.Cmd(("sleep", "60")),
-                ir.Cmd(("sleep", "60")),
-            ))
+            ir.Pipeline(
+                (
+                    ir.Cmd(("sleep", "60")),
+                    ir.Cmd(("sleep", "60")),
+                )
+            )
         )
     )
     await asyncio.sleep(0.05)
@@ -663,6 +698,42 @@ async def test_cancel_no_fd_leak() -> None:
 # =============================================================================
 # Factory functions used by runtime
 # =============================================================================
+
+
+async def test_signal_killed_exit_code() -> None:
+    """Process killed by signal returns 128 + signal number."""
+    # SIGKILL = 9, so exit code should be 137
+    result = await run(ir.Cmd(("sh", "-c", "kill -9 $$")))
+    assert result == 137
+
+
+async def test_no_fd_leak_after_error() -> None:
+    """No fds leak in the parent when command-not-found raises."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    with pytest.raises(FileNotFoundError):
+        await run(ir.Cmd(("nonexistent_command_xyz_12345",)))
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
+
+
+async def test_no_fd_leak_after_pipeline_error() -> None:
+    """No fds leak when one pipeline stage fails to spawn."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    with pytest.raises(FileNotFoundError):
+        await run(
+            ir.Pipeline(
+                (
+                    ir.Cmd(("echo", "hello")),
+                    ir.Cmd(("nonexistent_command_xyz_12345",)),
+                )
+            )
+        )
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
 
 
 async def test_pipeline_factory_execution() -> None:

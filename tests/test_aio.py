@@ -2,18 +2,14 @@ import asyncio
 import fcntl
 import os
 
-from shish.aio import async_write, iterencode, wait_writable
-
-
-async def wait_readable(fd: int) -> None:
-    """Wait until fd is readable. For non-blocking async reads."""
-    loop = asyncio.get_running_loop()
-    fut: asyncio.Future[None] = loop.create_future()
-    loop.add_reader(fd, fut.set_result, None)
-    try:
-        await fut
-    finally:
-        loop.remove_reader(fd)
+from shish.aio import (
+    async_read,
+    async_write,
+    close_fd,
+    iterencode,
+    wait_readable,
+    wait_writable,
+)
 
 
 def test_bytes_exact_chunk() -> None:
@@ -221,3 +217,147 @@ async def test_async_write_interleaved() -> None:
     last_b = len(read_order) - 1 - read_order[::-1].index("B")
     # Ranges should overlap (interleave), not be sequential
     assert not (last_a < first_b or last_b < first_a), f"Not interleaved: {read_order}"
+
+
+# =============================================================================
+# close_fd tests
+# =============================================================================
+
+
+def test_close_fd_valid() -> None:
+    read_fd, write_fd = os.pipe()
+    close_fd(read_fd)
+    close_fd(write_fd)
+    # Both should be closed now — fstat raises
+    for fd in (read_fd, write_fd):
+        try:
+            os.fstat(fd)
+            raise AssertionError(f"fd {fd} should be closed")
+        except OSError:
+            pass
+
+
+def test_close_fd_invalid() -> None:
+    # Closing an invalid fd should not raise
+    close_fd(9999)
+
+
+def test_close_fd_double_close() -> None:
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    close_fd(read_fd)
+    # Double close should not raise
+    close_fd(read_fd)
+
+
+# =============================================================================
+# wait_readable tests
+# =============================================================================
+
+
+async def test_wait_readable_ready() -> None:
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"data")
+    os.close(write_fd)
+    # Data available, should return immediately
+    os.set_blocking(read_fd, False)
+    await wait_readable(read_fd)
+    os.close(read_fd)
+
+
+async def test_wait_readable_delayed() -> None:
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+
+    async def delayed_write() -> None:
+        await asyncio.sleep(0.01)
+        os.write(write_fd, b"hello")
+        os.close(write_fd)
+
+    writer = asyncio.create_task(delayed_write())
+    await wait_readable(read_fd)
+    result = os.read(read_fd, 1024)
+    await writer
+    os.close(read_fd)
+    assert result == b"hello"
+
+
+# =============================================================================
+# async_read tests
+# =============================================================================
+
+
+async def test_async_read_basic() -> None:
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"hello world")
+    os.close(write_fd)
+    result = await async_read(read_fd)
+    assert result == b"hello world"
+
+
+async def test_async_read_empty() -> None:
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)  # Immediate EOF
+    result = await async_read(read_fd)
+    assert result == b""
+
+
+async def test_async_read_large() -> None:
+    """Data larger than 64K exercises BlockingIOError path in async_read."""
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+    data = b"x" * (256 * 1024)
+
+    write_task = asyncio.create_task(async_write(write_fd, data))
+    result = await async_read(read_fd)
+    await write_task
+    assert result == data
+
+
+async def test_async_read_closes_fd() -> None:
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    await async_read(read_fd)
+    # read_fd should be closed after async_read
+    try:
+        os.fstat(read_fd)
+        raise AssertionError("fd should be closed")
+    except OSError:
+        pass
+
+
+async def test_async_read_multipart() -> None:
+    """Multiple writes before close produce concatenated result."""
+    read_fd, write_fd = os.pipe()
+
+    async def writer() -> None:
+        os.set_blocking(write_fd, False)
+        for chunk in [b"aaa", b"bbb", b"ccc"]:
+            os.write(write_fd, chunk)
+            await asyncio.sleep(0.01)
+        os.close(write_fd)
+
+    write_task = asyncio.create_task(writer())
+    result = await async_read(read_fd)
+    await write_task
+    assert result == b"aaabbbccc"
+
+
+async def test_async_read_concurrent() -> None:
+    """Two concurrent async_reads don't interfere with each other."""
+    pipe_a = os.pipe()
+    pipe_b = os.pipe()
+    read_a, write_a = pipe_a
+    read_b, write_b = pipe_b
+
+    os.write(write_a, b"alpha")
+    os.close(write_a)
+    os.write(write_b, b"beta")
+    os.close(write_b)
+
+    result_a, result_b = await asyncio.gather(
+        async_read(read_a),
+        async_read(read_b),
+    )
+    assert result_a == b"alpha"
+    assert result_b == b"beta"
