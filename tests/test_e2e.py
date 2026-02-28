@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from shish import out, run, sh, sub_in, sub_out
+from shish.ir import cmd
 
 # =============================================================================
 # Basic Execution
@@ -412,3 +413,73 @@ async def test_out_binary() -> None:
     data = bytes(range(256))
     result = await out(sh.cat() << data, encoding=None)
     assert result == data
+
+
+# =============================================================================
+# Builder (cmd()) E2E
+# =============================================================================
+
+
+async def test_builder_run() -> None:
+    assert await cmd("true").run() == 0
+    assert await cmd("false").run() == 1
+
+
+async def test_builder_pipeline(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("echo", "hello world").pipe(cmd("tr", "a-z", "A-Z")).write(outfile).run()
+    assert outfile.read_text() == "HELLO WORLD\n"
+
+
+async def test_builder_write_and_append(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("echo", "first").write(outfile).run()
+    await cmd("echo", "second").write(outfile, append=True).run()
+    assert outfile.read_text() == "first\nsecond\n"
+
+
+async def test_builder_read(tmp_path: Path) -> None:
+    inp = tmp_path / "in.txt"
+    outfile = tmp_path / "out.txt"
+    inp.write_text("hello from file")
+    await cmd("cat").read(inp).write(outfile).run()
+    assert outfile.read_text() == "hello from file"
+
+
+async def test_builder_feed(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("cat").feed("hello world").write(outfile).run()
+    assert outfile.read_text() == "hello world"
+
+
+async def test_builder_feed_bytes(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.bin"
+    data = bytes(range(256))
+    await cmd("cat").feed(data).write(outfile).run()
+    assert outfile.read_bytes() == data
+
+
+async def test_builder_sub_in(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("cat", cmd("echo", "hello").sub_in()).write(outfile).run()
+    assert outfile.read_text() == "hello\n"
+
+
+async def test_builder_sub_out(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    main_out = tmp_path / "main.txt"
+    sink = cmd("cat").write(outfile).sub_out()
+    await cmd("echo", "hello").pipe(cmd("tee", sink)).write(main_out).run()
+    assert outfile.read_text() == "hello\n"
+    assert main_out.read_text() == "hello\n"
+
+
+async def test_builder_out() -> None:
+    result = await cmd("echo", "hello").out()
+    assert result == "hello\n"
+
+
+async def test_builder_out_raises_on_failure() -> None:
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        await cmd("false").out()
+    assert exc_info.value.returncode == 1

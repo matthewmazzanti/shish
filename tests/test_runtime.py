@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from shish import ir
+from shish import STDERR, STDIN, STDOUT, ir
 from shish.runtime import out, run
 
 # =============================================================================
@@ -102,18 +102,18 @@ async def test_pipeline_sigpipe() -> None:
 
 async def test_cmd_stdout_redirect(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    command = ir.Cmd(("echo", "hello"), redirects=(ir.FdToFile(1, outfile),))
+    command = ir.Cmd(("echo", "hello"), redirects=(ir.FdToFile(STDOUT, outfile),))
     assert await run(command) == 0
     assert outfile.read_text() == "hello\n"
 
 
 async def test_cmd_stdout_append(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    await run(ir.Cmd(("echo", "first"), redirects=(ir.FdToFile(1, outfile),)))
+    await run(ir.Cmd(("echo", "first"), redirects=(ir.FdToFile(STDOUT, outfile),)))
     await run(
         ir.Cmd(
             ("echo", "second"),
-            redirects=(ir.FdToFile(1, outfile, append=True),),
+            redirects=(ir.FdToFile(STDOUT, outfile, append=True),),
         )
     )
     assert outfile.read_text() == "first\nsecond\n"
@@ -126,8 +126,8 @@ async def test_cmd_stdin_file(tmp_path: Path) -> None:
     command = ir.Cmd(
         ("cat",),
         redirects=(
-            ir.FdFromFile(0, inp),
-            ir.FdToFile(1, outfile),
+            ir.FdFromFile(STDIN, inp),
+            ir.FdToFile(STDOUT, outfile),
         ),
     )
     assert await run(command) == 0
@@ -139,8 +139,8 @@ async def test_cmd_stdin_data(tmp_path: Path) -> None:
     command = ir.Cmd(
         ("cat",),
         redirects=(
-            ir.FdFromData(0, "hello world"),
-            ir.FdToFile(1, outfile),
+            ir.FdFromData(STDIN, "hello world"),
+            ir.FdToFile(STDOUT, outfile),
         ),
     )
     assert await run(command) == 0
@@ -153,8 +153,8 @@ async def test_cmd_stdin_data_bytes(tmp_path: Path) -> None:
     command = ir.Cmd(
         ("cat",),
         redirects=(
-            ir.FdFromData(0, data),
-            ir.FdToFile(1, outfile),
+            ir.FdFromData(STDIN, data),
+            ir.FdToFile(STDOUT, outfile),
         ),
     )
     assert await run(command) == 0
@@ -171,7 +171,7 @@ async def test_pipeline_first_stage_stdin(tmp_path: Path) -> None:
     inp.write_text("hello\nworld\n")
     pipeline = ir.Pipeline(
         (
-            ir.Cmd(("cat",), redirects=(ir.FdFromFile(0, inp),)),
+            ir.Cmd(("cat",), redirects=(ir.FdFromFile(STDIN, inp),)),
             ir.Cmd(("grep", "world")),
         )
     )
@@ -185,8 +185,8 @@ async def test_pipeline_stage_stdout_override(tmp_path: Path) -> None:
     result_file = tmp_path / "result.txt"
     pipeline = ir.Pipeline(
         (
-            ir.Cmd(("echo", "hello"), redirects=(ir.FdToFile(1, outfile),)),
-            ir.Cmd(("cat",), redirects=(ir.FdToFile(1, result_file),)),
+            ir.Cmd(("echo", "hello"), redirects=(ir.FdToFile(STDOUT, outfile),)),
+            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, result_file),)),
         )
     )
     assert await run(pipeline) == 0
@@ -203,7 +203,7 @@ async def test_fd_to_fd_stderr_to_stdout() -> None:
     """cmd 2>&1 — stderr merges into stdout."""
     command = ir.Cmd(
         ("sh", "-c", "echo out; echo err >&2"),
-        redirects=(ir.FdToFd(1, 2),),
+        redirects=(ir.FdToFd(STDOUT, STDERR),),
     )
     result = await out(command)
     assert "out\n" in result
@@ -216,8 +216,8 @@ async def test_fd_to_fd_file_then_dup(tmp_path: Path) -> None:
     command = ir.Cmd(
         ("sh", "-c", "echo out; echo err >&2"),
         redirects=(
-            ir.FdToFile(1, outfile),
-            ir.FdToFd(1, 2),
+            ir.FdToFile(STDOUT, outfile),
+            ir.FdToFd(STDOUT, STDERR),
         ),
     )
     assert await run(command) == 0
@@ -236,8 +236,8 @@ async def test_fd_to_fd_order_matters(tmp_path: Path) -> None:
     command = ir.Cmd(
         ("sh", "-c", "echo out; echo err >&2"),
         redirects=(
-            ir.FdToFd(1, 2),
-            ir.FdToFile(1, outfile),
+            ir.FdToFd(STDOUT, STDERR),
+            ir.FdToFile(STDOUT, outfile),
         ),
     )
     # Capture what comes through the pipeline stdout (which is stderr after dup)
@@ -251,7 +251,7 @@ async def test_fd_to_file_stderr(tmp_path: Path) -> None:
     errfile = tmp_path / "err.txt"
     command = ir.Cmd(
         ("sh", "-c", "echo out; echo err >&2"),
-        redirects=(ir.FdToFile(2, errfile),),
+        redirects=(ir.FdToFile(STDERR, errfile),),
     )
     result = await out(command)
     assert result == "out\n"
@@ -278,7 +278,7 @@ async def test_fd_close() -> None:
     """Closing stdin causes cat to fail with EBADF."""
     command = ir.Cmd(
         ("cat",),
-        redirects=(ir.FdClose(0),),
+        redirects=(ir.FdClose(STDIN),),
     )
     assert await run(command) == 1
 
@@ -291,7 +291,7 @@ async def test_fd_close() -> None:
 async def test_sub_in(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     sub = ir.SubIn(ir.Cmd(("echo", "hello")))
-    command = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(1, outfile),))
+    command = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(STDOUT, outfile),))
     assert await run(command) == 0
     assert outfile.read_text() == "hello\n"
 
@@ -304,7 +304,7 @@ async def test_sub_in_two_sources(tmp_path: Path) -> None:
     file2.write_text("b\na\nc\n")
     sub1 = ir.SubIn(ir.Cmd(("sort", str(file1))))
     sub2 = ir.SubIn(ir.Cmd(("sort", str(file2))))
-    command = ir.Cmd(("diff", sub1, sub2), redirects=(ir.FdToFile(1, outfile),))
+    command = ir.Cmd(("diff", sub1, sub2), redirects=(ir.FdToFile(STDOUT, outfile),))
     result = await run(command)
     assert result == 0
     assert outfile.read_text() == ""
@@ -314,12 +314,12 @@ async def test_sub_out(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
     sink = ir.SubOut(
-        ir.Cmd(("cat",), redirects=(ir.FdToFile(1, outfile),)),
+        ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, outfile),)),
     )
     pipeline = ir.Pipeline(
         (
             ir.Cmd(("echo", "hello")),
-            ir.Cmd(("tee", sink), redirects=(ir.FdToFile(1, main_out),)),
+            ir.Cmd(("tee", sink), redirects=(ir.FdToFile(STDOUT, main_out),)),
         )
     )
     assert await run(pipeline) == 0
@@ -337,7 +337,7 @@ async def test_sub_in_with_pipeline(tmp_path: Path) -> None:
             )
         ),
     )
-    command = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(1, outfile),))
+    command = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(STDOUT, outfile),))
     assert await run(command) == 0
     assert outfile.read_text() == "HELLO\n"
 
@@ -345,7 +345,7 @@ async def test_sub_in_with_pipeline(tmp_path: Path) -> None:
 async def test_fd_from_sub_stdin() -> None:
     """cat < <(echo hello) — redirect stdin from process substitution."""
     sub = ir.SubIn(ir.Cmd(("echo", "hello")))
-    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(0, sub),))
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(STDIN, sub),))
     result = await out(command)
     assert result == "hello\n"
 
@@ -358,7 +358,7 @@ async def test_fd_from_sub_arbitrary_fd(tmp_path: Path) -> None:
         ("sh", "-c", "cat <&3"),
         redirects=(
             ir.FdFromSub(3, sub),
-            ir.FdToFile(1, outfile),
+            ir.FdToFile(STDOUT, outfile),
         ),
     )
     assert await run(command) == 0
@@ -369,9 +369,9 @@ async def test_fd_to_sub_stdout(tmp_path: Path) -> None:
     """cmd 1> >(cat > file) — redirect stdout to process substitution."""
     outfile = tmp_path / "out.txt"
     sub = ir.SubOut(
-        ir.Cmd(("cat",), redirects=(ir.FdToFile(1, outfile),)),
+        ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, outfile),)),
     )
-    command = ir.Cmd(("echo", "hello"), redirects=(ir.FdToSub(1, sub),))
+    command = ir.Cmd(("echo", "hello"), redirects=(ir.FdToSub(STDOUT, sub),))
     assert await run(command) == 0
     assert outfile.read_text() == "hello\n"
 
@@ -380,7 +380,7 @@ async def test_fd_to_sub_arbitrary_fd(tmp_path: Path) -> None:
     """cmd 3> >(cat > file) — redirect fd 3 to process substitution."""
     outfile = tmp_path / "out.txt"
     sub = ir.SubOut(
-        ir.Cmd(("cat",), redirects=(ir.FdToFile(1, outfile),)),
+        ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, outfile),)),
     )
     command = ir.Cmd(
         ("sh", "-c", "echo hello >&3"),
@@ -400,7 +400,7 @@ async def test_fd_from_sub_with_pipeline() -> None:
             )
         ),
     )
-    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(0, sub),))
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(STDIN, sub),))
     result = await out(command)
     assert result == "HELLO\n"
 
@@ -415,23 +415,23 @@ async def test_sub_exit_code_ignored_arg() -> None:
 async def test_sub_exit_code_ignored_redirect() -> None:
     """true 1> >(false) — redirect sub failure doesn't affect exit code."""
     sub = ir.SubOut(ir.Cmd(("false",)))
-    command = ir.Cmd(("true",), redirects=(ir.FdToSub(1, sub),))
+    command = ir.Cmd(("true",), redirects=(ir.FdToSub(STDOUT, sub),))
     assert await run(command) == 0
 
 
 async def test_sub_exit_code_ignored_from_redirect() -> None:
     """cat < <(false) — input sub failure doesn't affect exit code."""
     sub = ir.SubIn(ir.Cmd(("false",)))
-    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(0, sub),))
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(STDIN, sub),))
     assert await run(command) == 0
 
 
 async def test_sub_in_with_data_stdin(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     sub = ir.SubIn(
-        ir.Cmd(("cat",), redirects=(ir.FdFromData(0, "injected data"),)),
+        ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "injected data"),)),
     )
-    command = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(1, outfile),))
+    command = ir.Cmd(("cat", sub), redirects=(ir.FdToFile(STDOUT, outfile),))
     assert await run(command) == 0
     assert outfile.read_text() == "injected data"
 
@@ -458,14 +458,14 @@ async def test_out_pipeline() -> None:
 
 
 async def test_out_with_data() -> None:
-    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(0, "input data"),))
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "input data"),))
     result = await out(command)
     assert result == "input data"
 
 
 async def test_out_binary() -> None:
     data = bytes(range(256))
-    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(0, data),))
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),))
     result = await out(command, encoding=None)
     assert result == data
 
@@ -503,7 +503,7 @@ async def test_concurrent_file_writes(tmp_path: Path) -> None:
             run(
                 ir.Cmd(
                     ("echo", f"content{idx}"),
-                    redirects=(ir.FdToFile(1, fpath),),
+                    redirects=(ir.FdToFile(STDOUT, fpath),),
                 )
             )
             for idx, fpath in enumerate(files)

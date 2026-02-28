@@ -59,3 +59,16 @@ TODO.md         # planned features and known issues
 - SIGKILL orphan processes on error, shield reap from cancellation
 - Async IO via event loop reader/writer callbacks (aio.py)
 - SIGPIPE propagates naturally for early termination
+
+## Test Organization
+
+Four test files with clear boundaries:
+
+- `test_ir.py` — IR layer: `cmd()` builder methods, `ir.pipeline()` flattening. Sync only, no execution.
+- `test_dsl.py` — `sh` magic + operators produce correct IR. Sync only, no execution.
+- `test_runtime.py` — Raw IR → run. No builders or DSL. Tests runtime behavior.
+- `test_e2e.py` — Full integration from DSL or builder → run.
+
+Rules for `test_runtime.py` and `test_e2e.py`:
+- Only use commands available in typical macOS/Linux environments (coreutils, util-linux, BSD)
+- Clean runs: use `tmp_path` for any file writes, no system side effects

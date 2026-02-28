@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from shish import (
+    STDIN,
+    STDOUT,
     Cmd,
     Pipeline,
     cmd,
@@ -17,187 +19,209 @@ from shish import (
     write,
 )
 
+# =============================================================================
+# Magic cmd() builder
+# =============================================================================
+
 
 def test_cmd_getattr() -> None:
-    assert unwrap(cmd().echo).args == ("echo",)
+    assert unwrap(cmd().echo) == ir.Cmd(("echo",))
 
 
 def test_cmd_chain() -> None:
-    assert unwrap(cmd().git.status).args == ("git", "status")
+    assert unwrap(cmd().git.status) == ir.Cmd(("git", "status"))
 
 
 def test_cmd_call_args() -> None:
-    assert unwrap(cmd().echo("hello", "world")).args == ("echo", "hello", "world")
+    assert unwrap(cmd().echo("hello", "world")) == ir.Cmd(("echo", "hello", "world"))
 
 
 def test_cmd_call_short_flag() -> None:
-    assert unwrap(cmd().ls(l=True, a=True)).args == ("ls", "-l", "-a")
+    assert unwrap(cmd().ls(l=True, a=True)) == ir.Cmd(("ls", "-l", "-a"))
 
 
 def test_cmd_call_long_flag() -> None:
-    assert unwrap(cmd().git.commit(message="fix")).args == (
-        "git",
-        "commit",
-        "--message",
-        "fix",
+    assert unwrap(cmd().git.commit(message="fix")) == ir.Cmd(
+        ("git", "commit", "--message", "fix")
     )
 
 
 def test_cmd_call_flag_false() -> None:
-    assert unwrap(cmd().ls(l=True, a=False)).args == ("ls", "-l")
+    assert unwrap(cmd().ls(l=True, a=False)) == ir.Cmd(("ls", "-l"))
 
 
 def test_cmd_underscore_to_dash() -> None:
-    assert unwrap(cmd().foo(some_flag="value")).args == (
-        "foo",
-        "--some-flag",
-        "value",
+    assert unwrap(cmd().foo(some_flag="value")) == ir.Cmd(
+        ("foo", "--some-flag", "value")
     )
 
 
+# =============================================================================
+# sh shorthand
+# =============================================================================
+
+
 def test_sh_basic() -> None:
-    assert unwrap(sh.echo("hello")).args == ("echo", "hello")
+    assert unwrap(sh.echo("hello")) == ir.Cmd(("echo", "hello"))
 
 
 def test_sh_subcommand() -> None:
-    assert unwrap(sh.git.status()).args == ("git", "status")
+    assert unwrap(sh.git.status()) == ir.Cmd(("git", "status"))
 
 
 def test_sh_deep_chain() -> None:
-    assert unwrap(sh.docker.compose.up(d=True)).args == (
-        "docker",
-        "compose",
-        "up",
-        "-d",
+    assert unwrap(sh.docker.compose.up(d=True)) == ir.Cmd(
+        ("docker", "compose", "up", "-d")
     )
 
 
 def test_sh_mixed() -> None:
-    assert unwrap(sh.git.commit("file.txt", m="fix", amend=True)).args == (
-        "git",
-        "commit",
-        "file.txt",
-        "-m",
-        "fix",
-        "--amend",
+    assert unwrap(sh.git.commit("file.txt", m="fix", amend=True)) == ir.Cmd(
+        ("git", "commit", "file.txt", "-m", "fix", "--amend")
     )
 
 
 def test_cmd_path_arg() -> None:
-    assert unwrap(sh.cat(Path("/tmp/file.txt"))).args == ("cat", "/tmp/file.txt")
+    assert unwrap(sh.cat(Path("/tmp/file.txt"))) == ir.Cmd(("cat", "/tmp/file.txt"))
 
 
-# Pipeline spec tests
+# =============================================================================
+# Pipe operator
+# =============================================================================
 
 
 def test_pipe_creates_pipeline() -> None:
-    p = sh.echo("hello") | sh.cat()
-    assert isinstance(p, Pipeline)
-    stages = unwrap(p).stages
-    assert len(stages) == 2
-    assert stages[0].args == ("echo", "hello")
-    assert stages[1].args == ("cat",)
+    result = sh.echo("hello") | sh.cat()
+    assert isinstance(result, Pipeline)
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("cat",)),
+        )
+    )
 
 
 def test_pipe_chain() -> None:
-    p = sh.echo("hello") | sh.grep("h") | sh.wc(l=True)
-    assert isinstance(p, Pipeline)
-    assert len(unwrap(p).stages) == 3
+    result = sh.echo("hello") | sh.grep("h") | sh.wc(l=True)
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("grep", "h")),
+            ir.Cmd(("wc", "-l")),
+        )
+    )
 
 
 def test_pipe_flattens_left() -> None:
     p1 = sh.a() | sh.b()
-    p2 = p1 | sh.c()
-    stages = unwrap(p2).stages
-    assert len(stages) == 3
-    assert stages[0].args == ("a",)
-    assert stages[1].args == ("b",)
-    assert stages[2].args == ("c",)
+    result = p1 | sh.c()
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+        )
+    )
 
 
 def test_pipe_flattens_right() -> None:
     p1 = sh.b() | sh.c()
-    p2 = sh.a() | p1
-    stages = unwrap(p2).stages
-    assert len(stages) == 3
-    assert stages[0].args == ("a",)
-    assert stages[1].args == ("b",)
-    assert stages[2].args == ("c",)
+    result = sh.a() | p1
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+        )
+    )
 
 
 def test_pipe_flattens_both() -> None:
     p1 = sh.a() | sh.b()
     p2 = sh.c() | sh.d()
-    p3 = p1 | p2
-    assert len(unwrap(p3).stages) == 4
+    result = p1 | p2
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+            ir.Cmd(("d",)),
+        )
+    )
 
 
-# Redirect spec tests
+# =============================================================================
+# Redirect operators
+# =============================================================================
 
 
 def test_redirect_stdout() -> None:
     result = sh.echo("hello") > "out.txt"
     assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdToFile)
-    assert inner.redirects[0].path == Path("out.txt")
-    assert inner.redirects[0].append is False
+    assert unwrap(result) == ir.Cmd(
+        ("echo", "hello"),
+        redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+    )
 
 
 def test_redirect_stdout_append() -> None:
     result = sh.echo("hello") >> "out.txt"
     assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdToFile)
-    assert inner.redirects[0].append is True
+    assert unwrap(result) == ir.Cmd(
+        ("echo", "hello"),
+        redirects=(ir.FdToFile(STDOUT, Path("out.txt"), append=True),),
+    )
 
 
 def test_redirect_stdin_file() -> None:
     result = sh.cat() < "in.txt"
     assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdFromFile)
-    assert inner.redirects[0].path == Path("in.txt")
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
+    )
 
 
 def test_redirect_stdin_data() -> None:
     result = sh.cat() << "hello"
     assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdFromData)
-    assert inner.redirects[0].data == "hello"
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdFromData(STDIN,"hello"),),
+    )
 
 
 def test_redirect_chain_stdin_stdout() -> None:
     result = (sh.cat() < "in.txt") > "out.txt"
-    assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 2
-    assert isinstance(inner.redirects[0], ir.FdFromFile)
-    assert isinstance(inner.redirects[1], ir.FdToFile)
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(
+            ir.FdFromFile(STDIN, Path("in.txt")),
+            ir.FdToFile(STDOUT, Path("out.txt")),
+        ),
+    )
 
 
 def test_redirect_chain_stdout_stdin() -> None:
     result = (sh.cat() > "out.txt") < "in.txt"
-    assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 2
-    assert isinstance(inner.redirects[0], ir.FdToFile)
-    assert isinstance(inner.redirects[1], ir.FdFromFile)
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(
+            ir.FdToFile(STDOUT, Path("out.txt")),
+            ir.FdFromFile(STDIN, Path("in.txt")),
+        ),
+    )
 
 
 def test_redirect_pipeline() -> None:
-    p = sh.cat() | sh.grep("x")
-    result = p > "out.txt"
+    result = (sh.cat() | sh.grep("x")) > "out.txt"
     assert isinstance(result, Pipeline)
-    # Pipeline write applies to last stage
-    last = unwrap(result).stages[-1]
-    assert len(last.redirects) == 1
-    assert isinstance(last.redirects[0], ir.FdToFile)
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("cat",)),
+            ir.Cmd(("grep", "x"), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),)),
+        )
+    )
 
 
 def test_redirect_bool_raises() -> None:
@@ -205,131 +229,154 @@ def test_redirect_bool_raises() -> None:
         bool(sh.cat() < "in.txt")
 
 
-# Redirect as pipeline stage tests
+# =============================================================================
+# Redirects as pipeline stages
+# =============================================================================
 
 
 def test_redirect_in_pipeline_first() -> None:
-    p = (sh.cat() < "in.txt") | sh.grep("x")
-    assert isinstance(p, Pipeline)
-    stages = unwrap(p).stages
-    assert len(stages) == 2
-    assert len(stages[0].redirects) == 1
-    assert isinstance(stages[0].redirects[0], ir.FdFromFile)
-    assert len(stages[1].redirects) == 0
+    result = (sh.cat() < "in.txt") | sh.grep("x")
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("cat",), redirects=(ir.FdFromFile(STDIN, Path("in.txt")),)),
+            ir.Cmd(("grep", "x")),
+        )
+    )
 
 
 def test_redirect_in_pipeline_last() -> None:
-    p = sh.echo("hello") | (sh.cat() > "out.txt")
-    assert isinstance(p, Pipeline)
-    stages = unwrap(p).stages
-    assert len(stages) == 2
-    assert len(stages[0].redirects) == 0
-    assert len(stages[1].redirects) == 1
-    assert isinstance(stages[1].redirects[0], ir.FdToFile)
+    result = sh.echo("hello") | (sh.cat() > "out.txt")
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),)),
+        )
+    )
 
 
 def test_redirect_in_pipeline_middle() -> None:
-    p = sh.a() | (sh.b() > "log.txt") | sh.c()
-    assert isinstance(p, Pipeline)
-    stages = unwrap(p).stages
-    assert len(stages) == 3
-    assert len(stages[0].redirects) == 0
-    assert len(stages[1].redirects) == 1
-    assert isinstance(stages[1].redirects[0], ir.FdToFile)
-    assert len(stages[2].redirects) == 0
+    result = sh.a() | (sh.b() > "log.txt") | sh.c()
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",), redirects=(ir.FdToFile(STDOUT, Path("log.txt")),)),
+            ir.Cmd(("c",)),
+        )
+    )
 
 
-# Combinator function tests
+# =============================================================================
+# Combinator functions
+# =============================================================================
 
 
 def test_pipe_two() -> None:
-    p = pipe(sh.echo("hello"), sh.cat())
-    assert isinstance(p, Pipeline)
-    assert len(unwrap(p).stages) == 2
+    result = pipe(sh.echo("hello"), sh.cat())
+    assert isinstance(result, Pipeline)
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("cat",)),
+        )
+    )
 
 
 def test_pipe_varargs() -> None:
-    p = pipe(sh.a(), sh.b(), sh.c(), sh.d())
-    assert isinstance(p, Pipeline)
-    assert len(unwrap(p).stages) == 4
+    result = pipe(sh.a(), sh.b(), sh.c(), sh.d())
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+            ir.Cmd(("d",)),
+        )
+    )
 
 
 def test_pipe_flattens() -> None:
     p1 = pipe(sh.a(), sh.b())
-    p2 = pipe(p1, sh.c())
-    assert len(unwrap(p2).stages) == 3
+    result = pipe(p1, sh.c())
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+        )
+    )
 
 
 def test_write_fn() -> None:
     result = write(sh.echo("hello"), "out.txt")
     assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdToFile)
-    assert inner.redirects[0].path == Path("out.txt")
-    assert inner.redirects[0].append is False
+    assert unwrap(result) == ir.Cmd(
+        ("echo", "hello"),
+        redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+    )
 
 
 def test_write_append_fn() -> None:
     result = write(sh.echo("hello"), "out.txt", append=True)
-    assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdToFile)
-    assert inner.redirects[0].append is True
+    assert unwrap(result) == ir.Cmd(
+        ("echo", "hello"),
+        redirects=(ir.FdToFile(STDOUT, Path("out.txt"), append=True),),
+    )
 
 
 def test_read_fn() -> None:
     result = read(sh.cat(), "in.txt")
     assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdFromFile)
-    assert inner.redirects[0].path == Path("in.txt")
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
+    )
 
 
-def test_feedfn() -> None:
+def test_feed_fn() -> None:
     result = feed(sh.cat(), "hello")
-    assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 1
-    assert isinstance(inner.redirects[0], ir.FdFromData)
-    assert inner.redirects[0].data == "hello"
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdFromData(STDIN,"hello"),),
+    )
 
 
 def test_chain_read_write() -> None:
     result = write(read(sh.cat(), "in.txt"), "out.txt")
-    assert isinstance(result, Cmd)
-    inner = unwrap(result)
-    assert len(inner.redirects) == 2
-    assert isinstance(inner.redirects[0], ir.FdFromFile)
-    assert isinstance(inner.redirects[1], ir.FdToFile)
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(
+            ir.FdFromFile(STDIN, Path("in.txt")),
+            ir.FdToFile(STDOUT, Path("out.txt")),
+        ),
+    )
+
+
+# =============================================================================
+# Process substitution
+# =============================================================================
 
 
 def test_sub_in() -> None:
-    sub = sub_in(sh.sort("a.txt"))
-    assert isinstance(sub, ir.SubIn)
-    assert isinstance(sub.cmd, ir.Cmd)
-    assert sub.cmd.args == ("sort", "a.txt")
+    assert sub_in(sh.sort("a.txt")) == ir.SubIn(ir.Cmd(("sort", "a.txt")))
 
 
 def test_sub_out() -> None:
-    sub = sub_out(sh.gzip())
-    assert isinstance(sub, ir.SubOut)
-    assert isinstance(sub.cmd, ir.Cmd)
-    assert sub.cmd.args == ("gzip",)
+    assert sub_out(sh.gzip()) == ir.SubOut(ir.Cmd(("gzip",)))
 
 
 def test_sub_in_with_pipeline() -> None:
-    sub = sub_in(sh.cat("a") | sh.sort())
-    assert isinstance(sub, ir.SubIn)
-    assert isinstance(sub.cmd, ir.Pipeline)
+    result = sub_in(sh.cat("a") | sh.sort())
+    assert result == ir.SubIn(
+        ir.Pipeline(
+            (
+                ir.Cmd(("cat", "a")),
+                ir.Cmd(("sort",)),
+            )
+        )
+    )
 
 
 def test_sub_out_with_redirect() -> None:
-    sub = sub_out(sh.gzip() > "out.gz")
-    assert isinstance(sub, ir.SubOut)
-    assert isinstance(sub.cmd, ir.Cmd)
-    assert sub.cmd.args == ("gzip",)
-    assert len(sub.cmd.redirects) == 1
-    assert isinstance(sub.cmd.redirects[0], ir.FdToFile)
+    result = sub_out(sh.gzip() > "out.gz")
+    assert result == ir.SubOut(
+        ir.Cmd(("gzip",), redirects=(ir.FdToFile(STDOUT, Path("out.gz")),))
+    )
