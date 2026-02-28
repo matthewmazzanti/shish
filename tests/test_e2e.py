@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from shish import out, run, sh, sub_in, sub_out
+from shish import STDERR, STDIN, STDOUT, close, out, run, sh, sub_in, sub_out, write
 from shish.ir import cmd
 
 # =============================================================================
@@ -464,3 +464,97 @@ async def test_builder_out_raises_on_failure() -> None:
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         await cmd("false").out()
     assert exc_info.value.returncode == 1
+
+
+# =============================================================================
+# Tuple fd syntax (DSL-only)
+# =============================================================================
+
+
+async def test_tuple_fd_stderr_to_file(tmp_path: Path) -> None:
+    """cmd > (STDERR, "file") — redirect stderr via tuple syntax."""
+    errfile = tmp_path / "err.txt"
+    result = await out(sh.sh("-c", "echo out; echo err >&2") > (STDERR, errfile))
+    assert result == "out\n"
+    assert errfile.read_text() == "err\n"
+
+
+async def test_tuple_fd_append(tmp_path: Path) -> None:
+    """cmd >> (STDERR, "file") — append stderr via tuple syntax."""
+    errfile = tmp_path / "err.txt"
+    await run(sh.sh("-c", "echo first >&2") > (STDERR, errfile))
+    await run(sh.sh("-c", "echo second >&2") >> (STDERR, errfile))
+    assert errfile.read_text() == "first\nsecond\n"
+
+
+# =============================================================================
+# close() combinator
+# =============================================================================
+
+
+async def test_close_stdin() -> None:
+    """close(cmd, STDIN) — cat with stdin closed exits non-zero."""
+    result = await run(close(sh.cat(), STDIN))
+    assert result == 1
+
+
+async def test_close_stdout(tmp_path: Path) -> None:
+    """close(cmd, STDOUT) — echo with stdout closed, stderr still works."""
+    errfile = tmp_path / "err.txt"
+    # echo fails when stdout is closed, redirect stderr to verify it ran
+    await run(close(sh.sh("-c", "echo err >&2"), STDOUT) > (STDERR, errfile))
+    assert errfile.read_text() == "err\n"
+
+
+# =============================================================================
+# write() combinator with subs
+# =============================================================================
+
+
+async def test_write_to_sub_out(tmp_path: Path) -> None:
+    """write(cmd, sub_out(...)) — combinator wiring to process substitution."""
+    outfile = tmp_path / "out.txt"
+    result = await out(write(sh.echo("hello"), sub_out(sh.cat() > outfile)))
+    assert outfile.read_text() == "hello\n"
+    assert result == ""
+
+
+# =============================================================================
+# Nested process substitution
+# =============================================================================
+
+
+async def test_nested_sub_in() -> None:
+    """cat <(cat <(echo hello)) — two levels of sub nesting."""
+    result = await out(sh.cat(sub_in(sh.cat(sub_in(sh.echo("hello"))))))
+    assert result == "hello\n"
+
+
+async def test_nested_sub_in_with_transform() -> None:
+    """cat <(tr a-z A-Z <(echo hello)) — nested sub with pipeline."""
+    inner = sub_in(sh.echo("hello"))
+    result = await out(sh.cat(sub_in(sh.cat(inner) | sh.tr("a-z", "A-Z"))))
+    assert result == "HELLO\n"
+
+
+# =============================================================================
+# Cancellation via DSL
+# =============================================================================
+
+
+async def test_cancel_await_cmd() -> None:
+    """Cancelling await sh.cmd() kills the child."""
+    task = asyncio.create_task(run(sh.sleep("60")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_cancel_pipeline() -> None:
+    """Cancelling a DSL pipeline kills all stages."""
+    task = asyncio.create_task(run(sh.sleep("60") | sh.sleep("60")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
