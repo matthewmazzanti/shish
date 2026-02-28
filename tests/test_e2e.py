@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from shish import out, run, sh, sub_from, sub_to
+from shish import out, run, sh, sub_in, sub_out
 
 # =============================================================================
 # Basic Execution
@@ -224,70 +224,73 @@ async def test_binary_data_through_pipeline(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# Process Substitution (sub_from / sub_to)
+# Process Substitution (sub_in / sub_out)
 # =============================================================================
 
 
-async def test_sub_from_single(tmp_path: Path) -> None:
+async def test_sub_in_single(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    await (sh.cat(sub_from(sh.echo("hello"))) > out)
+    await (sh.cat(sub_in(sh.echo("hello"))) > out)
     assert out.read_text() == "hello\n"
 
 
-async def test_sub_from_two_sources(tmp_path: Path) -> None:
+async def test_sub_in_two_sources(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     out = tmp_path / "out.txt"
     file1.write_text("b\na\nc\n")
     file2.write_text("b\na\nc\n")
-    result = await (sh.diff(sub_from(sh.sort(file1)), sub_from(sh.sort(file2))) > out)
+    result = await (sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2))) > out)
     assert result == 0
     assert out.read_text() == ""
 
 
-async def test_sub_from_diff_sources(tmp_path: Path) -> None:
+async def test_sub_in_diff_sources(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     file1.write_text("a\nb\n")
     file2.write_text("a\nc\n")
-    result = await sh.diff(sub_from(sh.sort(file1)), sub_from(sh.sort(file2)))
+    result = await sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2)))
     assert result == 1
 
 
-async def test_sub_from_with_pipeline(tmp_path: Path) -> None:
+async def test_sub_in_with_pipeline(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    await (sh.cat(sub_from(sh.echo("hello") | sh.tr("a-z", "A-Z"))) > out)
+    await (sh.cat(sub_in(sh.echo("hello") | sh.tr("a-z", "A-Z"))) > out)
     assert out.read_text() == "HELLO\n"
 
 
-async def test_sub_from_with_redirect(tmp_path: Path) -> None:
+async def test_sub_in_with_redirect(tmp_path: Path) -> None:
     inp = tmp_path / "in.txt"
     out = tmp_path / "out.txt"
     inp.write_text("from file\n")
-    await (sh.cat(sub_from(sh.cat() < inp)) > out)
+    await (sh.cat(sub_in(sh.cat() < inp)) > out)
     assert out.read_text() == "from file\n"
 
 
-async def test_sub_from_with_data_redirect(tmp_path: Path) -> None:
+async def test_sub_in_with_data_redirect(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    await (sh.cat(sub_from(sh.cat() << "injected data")) > out)
+    await (sh.cat(sub_in(sh.cat() << "injected data")) > out)
     assert out.read_text() == "injected data"
 
 
-async def test_sub_to_single(tmp_path: Path) -> None:
+async def test_sub_out_single(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    await ((sh.echo("hello") | sh.tee(sub_to(sh.cat() > out))) > main_out)
+    await ((sh.echo("hello") | sh.tee(sub_out(sh.cat() > out))) > main_out)
     assert out.read_text() == "hello\n"
     assert main_out.read_text() == "hello\n"
 
 
-async def test_sub_to_multiple(tmp_path: Path) -> None:
+async def test_sub_out_multiple(tmp_path: Path) -> None:
     out_a = tmp_path / "a.txt"
     out_b = tmp_path / "b.txt"
     main_out = tmp_path / "main.txt"
     await (
-        (sh.echo("hello") | sh.tee(sub_to(sh.cat() > out_a), sub_to(sh.cat() > out_b)))
+        (
+            sh.echo("hello")
+            | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
+        )
         > main_out
     )
     assert out_a.read_text() == "hello\n"
@@ -295,19 +298,19 @@ async def test_sub_to_multiple(tmp_path: Path) -> None:
     assert main_out.read_text() == "hello\n"
 
 
-async def test_sub_to_with_data_redirect(tmp_path: Path) -> None:
+async def test_sub_out_with_data_redirect(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    await ((sh.echo("from tee") | sh.tee(sub_to(sh.cat() > out))) > main_out)
+    await ((sh.echo("from tee") | sh.tee(sub_out(sh.cat() > out))) > main_out)
     assert out.read_text() == "from tee\n"
 
 
-async def test_mixed_sub_from_and_file_redirect(tmp_path: Path) -> None:
+async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     file1.write_text("c\na\nb\n")
     file2.write_text("a\nb\nc\n")
-    result = await sh.diff(sub_from(sh.sort(file1)), file2)
+    result = await sh.diff(sub_in(sh.sort(file1)), file2)
     assert result == 0  # sorted file1 == file2
 
 
@@ -383,8 +386,8 @@ async def test_out_with_data_redirect() -> None:
     assert result == "input data"
 
 
-async def test_out_with_sub_from() -> None:
-    result = await out(sh.cat(sub_from(sh.echo("nested"))))
+async def test_out_with_sub_in() -> None:
+    result = await out(sh.cat(sub_in(sh.echo("nested"))))
     assert result == "nested\n"
 
 

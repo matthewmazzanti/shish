@@ -10,8 +10,8 @@ from shish import (
     pipe,
     read,
     sh,
-    sub_from,
-    sub_to,
+    sub_in,
+    sub_out,
     unwrap,
     write,
 )
@@ -305,28 +305,28 @@ def test_chain_read_write() -> None:
     assert isinstance(node.redirects[1], ir.FdToFile)
 
 
-def test_sub_from() -> None:
-    sub = sub_from(sh.sort("a.txt"))
+def test_sub_in() -> None:
+    sub = sub_in(sh.sort("a.txt"))
     assert isinstance(sub, ir.SubIn)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("sort", "a.txt")
 
 
-def test_sub_to() -> None:
-    sub = sub_to(sh.gzip())
+def test_sub_out() -> None:
+    sub = sub_out(sh.gzip())
     assert isinstance(sub, ir.SubOut)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("gzip",)
 
 
-def test_sub_from_with_pipeline() -> None:
-    sub = sub_from(sh.cat("a") | sh.sort())
+def test_sub_in_with_pipeline() -> None:
+    sub = sub_in(sh.cat("a") | sh.sort())
     assert isinstance(sub, ir.SubIn)
     assert isinstance(sub.cmd, ir.Pipeline)
 
 
-def test_sub_to_with_redirect() -> None:
-    sub = sub_to(sh.gzip() > "out.gz")
+def test_sub_out_with_redirect() -> None:
+    sub = sub_out(sh.gzip() > "out.gz")
     assert isinstance(sub, ir.SubOut)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("gzip",)

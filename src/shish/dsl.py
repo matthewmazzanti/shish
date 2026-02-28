@@ -21,6 +21,7 @@ Arg = str | ir.Sub
 WriteDst = PathLike | ir.SubOut
 ReadSrc = PathLike | ir.SubIn
 
+
 class Cmd:
     """Immutable shell command builder with chainable syntax."""
 
@@ -286,12 +287,12 @@ def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
     return wrap(unwrap(cmd).close(fd))
 
 
-def sub_from(source: Runnable) -> ir.SubIn:
+def sub_in(source: Runnable) -> ir.SubIn:
     """Input process substitution: <(source)."""
     return ir.SubIn(unwrap(source))
 
 
-def sub_to(sink: Runnable) -> ir.SubOut:
+def sub_out(sink: Runnable) -> ir.SubOut:
     """Output process substitution: >(sink)."""
     return ir.SubOut(unwrap(sink))
 
