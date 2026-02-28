@@ -159,15 +159,13 @@ def test_pipeline_read() -> None:
 
 def test_sub_in() -> None:
     sub = cmd("sort", "a.txt").sub_in()
-    assert isinstance(sub, ir.Sub)
-    assert sub.write is False
+    assert isinstance(sub, ir.SubIn)
     assert sub.cmd == ir.Cmd(("sort", "a.txt"))
 
 
 def test_sub_out() -> None:
     sub = cmd("gzip").sub_out()
-    assert isinstance(sub, ir.Sub)
-    assert sub.write is True
+    assert isinstance(sub, ir.SubOut)
     assert sub.cmd == ir.Cmd(("gzip",))
 
 
@@ -175,7 +173,7 @@ def test_cmd_with_sub_arg() -> None:
     sub = cmd("sort", "a.txt").sub_in()
     node = cmd("cat", sub)
     assert isinstance(node, ir.Cmd)
-    assert node.args == ("cat", ir.Sub(ir.Cmd(("sort", "a.txt")), write=False))
+    assert node.args == ("cat", ir.SubIn(ir.Cmd(("sort", "a.txt"))))
 
 
 # =============================================================================
@@ -280,9 +278,8 @@ async def test_sub_from_diff(tmp_path: Path) -> None:
 async def test_sub_to_with_ir_sub(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    sink = ir.Sub(
+    sink = ir.SubOut(
         ir.Cmd(("cat",), redirects=(ir.FdToFile(1, outfile),)),
-        write=True,
     )
     await cmd("echo", "hello").pipe(cmd("tee", sink)).write(main_out).run()
     assert outfile.read_text() == "hello\n"

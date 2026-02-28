@@ -18,7 +18,8 @@ from shish.fdops import STDIN, STDOUT
 PathLike = Path | str
 Data = str | bytes
 Arg = str | ir.Sub
-Sub = ir.Sub
+WriteDst = PathLike | ir.SubOut
+ReadSrc = PathLike | ir.SubIn
 
 class Cmd:
     """Immutable shell command builder with chainable syntax."""
@@ -51,12 +52,16 @@ class Cmd:
         """cmd1 | cmd2 -> Pipeline."""
         return pipe(self, other)
 
-    def __gt__(self, path: PathLike | tuple[int, PathLike]) -> Cmd:
-        """cmd > "file" or cmd > (fd, "file")."""
-        match path:
-            case fd, target:
-                return write(self, target, fd=fd)
-            case _:
+    def __gt__(self, target: WriteDst | tuple[int, WriteDst]) -> Cmd:
+        """cmd > "file", cmd > sub, or cmd > (fd, target)."""
+        match target:
+            case fd, ir.SubOut() as sub:
+                return write_sub(self, sub, fd=fd)
+            case fd, path:
+                return write(self, path, fd=fd)
+            case ir.SubOut():
+                return write_sub(self, target)
+            case path:
                 return write(self, path)
 
     def __rshift__(self, path: PathLike | tuple[int, PathLike]) -> Cmd:
@@ -67,12 +72,16 @@ class Cmd:
             case _:
                 return write(self, path, append=True)
 
-    def __lt__(self, path: PathLike | tuple[int, PathLike]) -> Cmd:
-        """cmd < "file" or cmd < (fd, "file")."""
-        match path:
-            case fd, target:
-                return read(self, target, fd=fd)
-            case _:
+    def __lt__(self, target: ReadSrc | tuple[int, ReadSrc]) -> Cmd:
+        """cmd < "file", cmd < sub, or cmd < (fd, target)."""
+        match target:
+            case fd, ir.SubIn() as sub:
+                return read_sub(self, sub, fd=fd)
+            case fd, path:
+                return read(self, path, fd=fd)
+            case ir.SubIn():
+                return read_sub(self, target)
+            case path:
                 return read(self, path)
 
     def __lshift__(self, data: Data | tuple[int, Data]) -> Cmd:
@@ -106,12 +115,16 @@ class Pipeline:
         """cmd | pipeline -> Pipeline."""
         return pipe(other, self)
 
-    def __gt__(self, path: PathLike | tuple[int, PathLike]) -> Pipeline:
-        """pipeline > "file" or pipeline > (fd, "file")."""
-        match path:
-            case fd, target:
-                return write(self, target, fd=fd)
-            case _:
+    def __gt__(self, target: WriteDst | tuple[int, WriteDst]) -> Pipeline:
+        """pipeline > "file", pipeline > sub, or pipeline > (fd, target)."""
+        match target:
+            case fd, ir.SubOut() as sub:
+                return write_sub(self, sub, fd=fd)
+            case fd, path:
+                return write(self, path, fd=fd)
+            case ir.SubOut():
+                return write_sub(self, target)
+            case path:
                 return write(self, path)
 
     def __rshift__(self, path: PathLike | tuple[int, PathLike]) -> Pipeline:
@@ -122,12 +135,16 @@ class Pipeline:
             case _:
                 return write(self, path, append=True)
 
-    def __lt__(self, path: PathLike | tuple[int, PathLike]) -> Pipeline:
-        """pipeline < "file" or pipeline < (fd, "file")."""
-        match path:
-            case fd, target:
-                return read(self, target, fd=fd)
-            case _:
+    def __lt__(self, target: ReadSrc | tuple[int, ReadSrc]) -> Pipeline:
+        """pipeline < "file", pipeline < sub, or pipeline < (fd, target)."""
+        match target:
+            case fd, ir.SubIn() as sub:
+                return read_sub(self, sub, fd=fd)
+            case fd, path:
+                return read(self, path, fd=fd)
+            case ir.SubIn():
+                return read_sub(self, target)
+            case path:
                 return read(self, path)
 
     def __lshift__(self, data: Data | tuple[int, Data]) -> Pipeline:
@@ -205,6 +222,22 @@ def write(
 
 
 @overload
+def write_sub(cmd: Cmd, sub: ir.SubOut, *, fd: int = ...) -> Cmd: ...
+@overload
+def write_sub(cmd: Pipeline, sub: ir.SubOut, *, fd: int = ...) -> Pipeline: ...
+
+
+def write_sub(
+    cmd: Cmd | Pipeline,
+    sub: ir.SubOut,
+    *,
+    fd: int = STDOUT,
+) -> Cmd | Pipeline:
+    """Redirect fd to process substitution. Defaults to STDOUT."""
+    return wrap(unwrap(cmd).write_sub(sub, fd=fd))
+
+
+@overload
 def read(cmd: Cmd, path: PathLike, *, fd: int = ...) -> Cmd: ...
 @overload
 def read(cmd: Pipeline, path: PathLike, *, fd: int = ...) -> Pipeline: ...
@@ -213,6 +246,22 @@ def read(cmd: Pipeline, path: PathLike, *, fd: int = ...) -> Pipeline: ...
 def read(cmd: Cmd | Pipeline, path: PathLike, *, fd: int = STDIN) -> Cmd | Pipeline:
     """Read fd from file. Defaults to STDIN."""
     return wrap(unwrap(cmd).read(path, fd=fd))
+
+
+@overload
+def read_sub(cmd: Cmd, sub: ir.SubIn, *, fd: int = ...) -> Cmd: ...
+@overload
+def read_sub(cmd: Pipeline, sub: ir.SubIn, *, fd: int = ...) -> Pipeline: ...
+
+
+def read_sub(
+    cmd: Cmd | Pipeline,
+    sub: ir.SubIn,
+    *,
+    fd: int = STDIN,
+) -> Cmd | Pipeline:
+    """Redirect fd from process substitution. Defaults to STDIN."""
+    return wrap(unwrap(cmd).read_sub(sub, fd=fd))
 
 
 @overload
@@ -237,14 +286,14 @@ def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
     return wrap(unwrap(cmd).close(fd))
 
 
-def sub_from(source: Runnable) -> ir.Sub:
+def sub_from(source: Runnable) -> ir.SubIn:
     """Input process substitution: <(source)."""
-    return ir.Sub(unwrap(source), write=False)
+    return ir.SubIn(unwrap(source))
 
 
-def sub_to(sink: Runnable) -> ir.Sub:
+def sub_to(sink: Runnable) -> ir.SubOut:
     """Output process substitution: >(sink)."""
-    return ir.Sub(unwrap(sink), write=True)
+    return ir.SubOut(unwrap(sink))
 
 
 async def run(cmd: Cmd | Pipeline) -> int:

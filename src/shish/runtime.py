@@ -23,7 +23,8 @@ from shish.ir import (
     FdToSub,
     Pipeline,
     Runnable,
-    Sub,
+    SubIn,
+    SubOut,
 )
 
 
@@ -188,16 +189,16 @@ class Executor:
             match arg:
                 case str() as string:
                     resolved_args.append(string)
-                case Sub(cmd=inner, write=write):
+                case SubOut(cmd=inner):
                     read_fd, write_fd = self._alloc_pipe()
-                    if write:
-                        self._prepare(inner, read_fd, None)
-                        resolved_args.append(f"/dev/fd/{write_fd}")
-                        pass_fds.append(write_fd)
-                    else:
-                        self._prepare(inner, None, write_fd)
-                        resolved_args.append(f"/dev/fd/{read_fd}")
-                        pass_fds.append(read_fd)
+                    self._prepare(inner, read_fd, None)
+                    resolved_args.append(f"/dev/fd/{write_fd}")
+                    pass_fds.append(write_fd)
+                case SubIn(cmd=inner):
+                    read_fd, write_fd = self._alloc_pipe()
+                    self._prepare(inner, None, write_fd)
+                    resolved_args.append(f"/dev/fd/{read_fd}")
+                    pass_fds.append(read_fd)
 
         root_idx = len(self.prepared)
         self.prepared.append(

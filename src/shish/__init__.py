@@ -6,12 +6,12 @@ from shish.dsl import (
     Pipeline,
     Runnable,
     Sh,
-    Sub,
     close,
     feed,
     out,
     pipe,
     read,
+    read_sub,
     run,
     sh,
     sub_from,
@@ -19,8 +19,10 @@ from shish.dsl import (
     unwrap,
     wrap,
     write,
+    write_sub,
 )
 from shish.fdops import STDERR, STDIN, STDOUT
+from shish.ir import Sub, SubIn, SubOut
 from shish.runtime import Result
 
 __all__ = [
@@ -36,11 +38,14 @@ __all__ = [
     "Runnable",
     "Sh",
     "Sub",
+    "SubIn",
+    "SubOut",
     "close",
     "feed",
     "out",
     "pipe",
     "read",
+    "read_sub",
     "run",
     "sh",
     "sub_from",
@@ -48,4 +53,5 @@ __all__ = [
     "unwrap",
     "wrap",
     "write",
+    "write_sub",
 ]

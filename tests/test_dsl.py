@@ -5,7 +5,6 @@ import pytest
 from shish import (
     Cmd,
     Pipeline,
-    Sub,
     feed,
     ir,
     pipe,
@@ -308,29 +307,27 @@ def test_chain_read_write() -> None:
 
 def test_sub_from() -> None:
     sub = sub_from(sh.sort("a.txt"))
-    assert isinstance(sub, Sub)
-    assert sub.write is False
+    assert isinstance(sub, ir.SubIn)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("sort", "a.txt")
 
 
 def test_sub_to() -> None:
     sub = sub_to(sh.gzip())
-    assert isinstance(sub, Sub)
-    assert sub.write is True
+    assert isinstance(sub, ir.SubOut)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("gzip",)
 
 
 def test_sub_from_with_pipeline() -> None:
     sub = sub_from(sh.cat("a") | sh.sort())
-    assert isinstance(sub, Sub)
+    assert isinstance(sub, ir.SubIn)
     assert isinstance(sub.cmd, ir.Pipeline)
 
 
 def test_sub_to_with_redirect() -> None:
     sub = sub_to(sh.gzip() > "out.gz")
-    assert isinstance(sub, Sub)
+    assert isinstance(sub, ir.SubOut)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("gzip",)
     assert len(sub.cmd.redirects) == 1

@@ -45,11 +45,16 @@ def test_pipeline_frozen() -> None:
     assert node.stages == (cmd_a, cmd_b)
 
 
-def test_sub_frozen() -> None:
+def test_sub_in_frozen() -> None:
     cmd = ir.Cmd(("sort",))
-    sub = ir.Sub(cmd, write=False)
+    sub = ir.SubIn(cmd)
     assert sub.cmd == cmd
-    assert sub.write is False
+
+
+def test_sub_out_frozen() -> None:
+    cmd = ir.Cmd(("sort",))
+    sub = ir.SubOut(cmd)
+    assert sub.cmd == cmd
 
 
 # =============================================================================
@@ -104,20 +109,18 @@ def test_fd_close() -> None:
 
 def test_fd_from_sub() -> None:
     inner = ir.Cmd(("sort", "file.txt"))
-    sub = ir.Sub(inner, write=False)
+    sub = ir.SubIn(inner)
     node = ir.FdFromSub(0, sub)
     assert node.fd == 0
     assert node.sub.cmd == inner
-    assert node.sub.write is False
 
 
 def test_fd_to_sub() -> None:
     inner = ir.Cmd(("cat",))
-    sub = ir.Sub(inner, write=True)
+    sub = ir.SubOut(inner)
     node = ir.FdToSub(1, sub)
     assert node.fd == 1
     assert node.sub.cmd == inner
-    assert node.sub.write is True
 
 
 # =============================================================================

@@ -39,21 +39,32 @@ class FdClose:
 
 
 @dataclass(frozen=True)
-class Sub:
+class SubIn:
+    """Input process substitution: <(cmd)."""
+
     cmd: Runnable
-    write: bool
+
+
+@dataclass(frozen=True)
+class SubOut:
+    """Output process substitution: >(cmd)."""
+
+    cmd: Runnable
+
+
+Sub = SubIn | SubOut
 
 
 @dataclass(frozen=True)
 class FdFromSub:
     fd: int
-    sub: Sub
+    sub: SubIn
 
 
 @dataclass(frozen=True)
 class FdToSub:
     fd: int
-    sub: Sub
+    sub: SubOut
 
 
 Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | FdToSub
@@ -68,7 +79,7 @@ class Cmd:
         """Append positional arguments."""
         resolved: list[str | Sub] = []
         for item in args:
-            if isinstance(item, Sub):
+            if isinstance(item, (SubIn, SubOut)):
                 resolved.append(item)
             else:
                 resolved.append(str(item))
@@ -90,17 +101,25 @@ class Cmd:
         """Feed literal data into fd. Defaults to STDIN."""
         return Cmd(self.args, (*self.redirects, FdFromData(fd, data)))
 
+    def read_sub(self, sub: SubIn, *, fd: int = STDIN) -> Cmd:
+        """Redirect fd from process substitution: <(sub)."""
+        return Cmd(self.args, (*self.redirects, FdFromSub(fd, sub)))
+
+    def write_sub(self, sub: SubOut, *, fd: int = STDOUT) -> Cmd:
+        """Redirect fd to process substitution: >(sub)."""
+        return Cmd(self.args, (*self.redirects, FdToSub(fd, sub)))
+
     def close(self, fd: int) -> Cmd:
         """Close fd."""
         return Cmd(self.args, (*self.redirects, FdClose(fd)))
 
-    def sub_in(self) -> Sub:
+    def sub_in(self) -> SubIn:
         """Process substitution: <(cmd)."""
-        return Sub(self, write=False)
+        return SubIn(self)
 
-    def sub_out(self) -> Sub:
+    def sub_out(self) -> SubOut:
         """Process substitution: >(cmd)."""
-        return Sub(self, write=True)
+        return SubOut(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -139,6 +158,16 @@ class Pipeline:
         """Feed literal data into fd (first stage). Defaults to STDIN."""
         first = self.stages[0].feed(data, fd=fd)
         return Pipeline((first, *self.stages[1:]))
+
+    def read_sub(self, sub: SubIn, *, fd: int = STDIN) -> Pipeline:
+        """Redirect fd from process substitution (first stage). Defaults to STDIN."""
+        first = self.stages[0].read_sub(sub, fd=fd)
+        return Pipeline((first, *self.stages[1:]))
+
+    def write_sub(self, sub: SubOut, *, fd: int = STDOUT) -> Pipeline:
+        """Redirect fd to process substitution (last stage). Defaults to STDOUT."""
+        last = self.stages[-1].write_sub(sub, fd=fd)
+        return Pipeline((*self.stages[:-1], last))
 
     def close(self, fd: int) -> Pipeline:
         """Close fd (last stage)."""
