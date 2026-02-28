@@ -36,3 +36,4 @@
 - Arg-position subs use `/dev/fd/N` path via pass_fds; redirect-position
   subs go through FdOps move_fd — distinct mechanisms matching bash
 - Cleanup: SIGKILL live procs on error, shield reap from cancellation
+- Graceful shutdown: SIGTERM → timeout → SIGKILL (like Docker/systemd)

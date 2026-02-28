@@ -585,6 +585,52 @@ async def test_concurrent_file_writes(tmp_path: Path) -> None:
 
 
 # =============================================================================
+# Cancellation and cleanup
+# =============================================================================
+
+
+async def test_cancel_kills_child() -> None:
+    """Cancelling a running task kills the child process."""
+    task = asyncio.create_task(run(ir.Cmd(("sleep", "60"))))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_cancel_pipeline_kills_all_stages() -> None:
+    """Cancelling a pipeline kills all stages."""
+    task = asyncio.create_task(
+        run(ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Cmd(("sleep", "60")))))
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_cancel_no_fd_leak() -> None:
+    """No fds leak in the parent after cancellation."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    task = asyncio.create_task(
+        run(
+            ir.Pipeline((
+                ir.Cmd(("sleep", "60")),
+                ir.Cmd(("sleep", "60")),
+            ))
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
+
+
+# =============================================================================
 # Factory functions used by runtime
 # =============================================================================
 
