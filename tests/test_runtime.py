@@ -95,6 +95,11 @@ async def test_pipeline_sigpipe() -> None:
     assert result in (0, 141)
 
 
+async def test_empty_pipeline() -> None:
+    """Empty pipeline returns success."""
+    assert await run(ir.Pipeline(())) == 0
+
+
 # =============================================================================
 # File Redirects (on Cmd)
 # =============================================================================
@@ -539,6 +544,31 @@ async def test_out_binary() -> None:
     command = ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),))
     result = await out(command, encoding=None)
     assert result == data
+
+
+async def test_out_large_data() -> None:
+    """Data larger than pipe buffer (64K) exercises backpressure path."""
+    data = b"x" * (256 * 1024)
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),))
+    result = await out(command, encoding=None)
+    assert result == data
+
+
+async def test_out_large_data_pipeline() -> None:
+    """Multiple large data feeds in concurrent pipelines exercise interleaved writes."""
+    data = b"x" * (256 * 1024)
+    result_a, result_b = await asyncio.gather(
+        out(
+            ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),)),
+            encoding=None,
+        ),
+        out(
+            ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),)),
+            encoding=None,
+        ),
+    )
+    assert result_a == data
+    assert result_b == data
 
 
 async def test_out_raises_on_failure() -> None:
