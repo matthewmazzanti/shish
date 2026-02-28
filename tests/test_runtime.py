@@ -194,6 +194,49 @@ async def test_pipeline_stage_stdout_override(tmp_path: Path) -> None:
     assert result_file.read_text() == ""
 
 
+async def test_pipeline_first_stage_data(tmp_path: Path) -> None:
+    """(cat << "data") | grep — data redirect on first pipeline stage."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(
+                ("cat",),
+                redirects=(ir.FdFromData(STDIN, "hello\nworld\n"),),
+            ),
+            ir.Cmd(("grep", "world")),
+        )
+    )
+    result = await out(pipeline)
+    assert result == "world\n"
+
+
+async def test_pipeline_last_stage_file(tmp_path: Path) -> None:
+    """echo | cat > file — last stage redirects stdout to file."""
+    outfile = tmp_path / "out.txt"
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, outfile),)),
+        )
+    )
+    assert await run(pipeline) == 0
+    assert outfile.read_text() == "hello\n"
+
+
+async def test_pipeline_middle_stage_redirect(tmp_path: Path) -> None:
+    """a | (b > log) | c — middle stage redirect diverts to file."""
+    logfile = tmp_path / "log.txt"
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, logfile),)),
+            ir.Cmd(("cat",)),
+        )
+    )
+    result = await out(pipeline)
+    assert logfile.read_text() == "hello\n"
+    assert result == ""
+
+
 # =============================================================================
 # Fd-to-fd redirects (2>&1, etc.)
 # =============================================================================
@@ -267,6 +310,28 @@ async def test_fd_to_file_arbitrary_fd(tmp_path: Path) -> None:
     )
     assert await run(command) == 0
     assert outfile.read_text() == "hello\n"
+
+
+async def test_fd_from_file_arbitrary_fd(tmp_path: Path) -> None:
+    """cmd 3< file — redirect fd 3 from a file, then read it."""
+    infile = tmp_path / "in.txt"
+    infile.write_text("hello from fd3")
+    command = ir.Cmd(
+        ("sh", "-c", "cat <&3"),
+        redirects=(ir.FdFromFile(3, infile),),
+    )
+    result = await out(command)
+    assert result == "hello from fd3"
+
+
+async def test_fd_from_data_arbitrary_fd(tmp_path: Path) -> None:
+    """cmd 3<<< "data" — feed data into fd 3, then read it."""
+    command = ir.Cmd(
+        ("sh", "-c", "cat <&3"),
+        redirects=(ir.FdFromData(3, "hello from fd3"),),
+    )
+    result = await out(command)
+    assert result == "hello from fd3"
 
 
 # =============================================================================
@@ -455,6 +520,12 @@ async def test_out_pipeline() -> None:
     )
     result = await out(pipeline)
     assert result == "HELLO WORLD\n"
+
+
+async def test_out_empty() -> None:
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, ""),))
+    result = await out(command)
+    assert result == ""
 
 
 async def test_out_with_data() -> None:
