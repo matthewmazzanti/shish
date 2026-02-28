@@ -3,10 +3,12 @@ from pathlib import Path
 import pytest
 
 from shish import (
+    STDERR,
     STDIN,
     STDOUT,
     Cmd,
     Pipeline,
+    close,
     cmd,
     feed,
     ir,
@@ -75,6 +77,24 @@ def test_sh_deep_chain() -> None:
     )
 
 
+def test_sh_args_then_chain() -> None:
+    assert unwrap(sh.env("FOO=1").cat("file")) == ir.Cmd(
+        ("env", "FOO=1", "cat", "file")
+    )
+
+
+def test_sh_args_at_each_level() -> None:
+    assert unwrap(sh.kubectl("-n", "default").get.pods(o="json")) == ir.Cmd(
+        ("kubectl", "-n", "default", "get", "pods", "-o", "json")
+    )
+
+
+def test_sh_flags_then_chain() -> None:
+    assert unwrap(sh.git(no_pager=True).log(oneline=True)) == ir.Cmd(
+        ("git", "--no-pager", "log", "--oneline")
+    )
+
+
 def test_sh_mixed() -> None:
     assert unwrap(sh.git.commit("file.txt", m="fix", amend=True)) == ir.Cmd(
         ("git", "commit", "file.txt", "-m", "fix", "--amend")
@@ -83,6 +103,14 @@ def test_sh_mixed() -> None:
 
 def test_cmd_path_arg() -> None:
     assert unwrap(sh.cat(Path("/tmp/file.txt"))) == ir.Cmd(("cat", "/tmp/file.txt"))
+
+
+def test_sh_callable() -> None:
+    assert unwrap(sh("echo", "hello")) == ir.Cmd(("echo", "hello"))
+
+
+def test_sh_callable_with_flags() -> None:
+    assert unwrap(sh("ls", l=True)) == ir.Cmd(("ls", "-l"))
 
 
 # =============================================================================
@@ -213,20 +241,79 @@ def test_redirect_chain_stdout_stdin() -> None:
     )
 
 
-def test_redirect_pipeline() -> None:
-    result = (sh.cat() | sh.grep("x")) > "out.txt"
-    assert isinstance(result, Pipeline)
-    assert unwrap(result) == ir.Pipeline(
-        (
-            ir.Cmd(("cat",)),
-            ir.Cmd(("grep", "x"), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),)),
-        )
+def test_redirect_stdin_data_bytes() -> None:
+    result = sh.cat() << b"binary"
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdFromData(STDIN, b"binary"),),
     )
 
 
 def test_redirect_bool_raises() -> None:
     with pytest.raises(TypeError, match="parentheses"):
         bool(sh.cat() < "in.txt")
+
+
+def test_pipeline_bool_raises() -> None:
+    with pytest.raises(TypeError, match="parentheses"):
+        bool(sh.cat() | sh.grep("x"))
+
+
+def test_pipeline_gt_raises() -> None:
+    with pytest.raises(TypeError, match="cmd2 > target"):
+        (sh.a() | sh.b()) > "out.txt"  # noqa: B015  # type: ignore[operator]
+
+
+def test_pipeline_rshift_raises() -> None:
+    with pytest.raises(TypeError, match="cmd2 >> target"):
+        (sh.a() | sh.b()) >> "out.txt"  # type: ignore[operator]
+
+
+def test_pipeline_lt_raises() -> None:
+    with pytest.raises(TypeError, match="cmd1 < source"):
+        (sh.a() | sh.b()) < "in.txt"  # noqa: B015  # type: ignore[operator]
+
+
+def test_pipeline_lshift_raises() -> None:
+    with pytest.raises(TypeError, match="cmd1 << data"):
+        (sh.a() | sh.b()) << "hello"  # type: ignore[operator]
+
+
+# =============================================================================
+# Tuple fd syntax
+# =============================================================================
+
+
+def test_cmd_write_tuple_fd() -> None:
+    result = sh.foo() > (STDERR, "err.log")
+    assert unwrap(result) == ir.Cmd(
+        ("foo",),
+        redirects=(ir.FdToFile(STDERR, Path("err.log")),),
+    )
+
+
+def test_cmd_append_tuple_fd() -> None:
+    result = sh.foo() >> (STDERR, "err.log")
+    assert unwrap(result) == ir.Cmd(
+        ("foo",),
+        redirects=(ir.FdToFile(STDERR, Path("err.log"), append=True),),
+    )
+
+
+def test_cmd_read_tuple_fd() -> None:
+    result = sh.foo() < (3, "data.txt")
+    assert unwrap(result) == ir.Cmd(
+        ("foo",),
+        redirects=(ir.FdFromFile(3, Path("data.txt")),),
+    )
+
+
+def test_cmd_feed_tuple_fd() -> None:
+    result = sh.foo() << (3, "injected")
+    assert unwrap(result) == ir.Cmd(
+        ("foo",),
+        redirects=(ir.FdFromData(3, "injected"),),
+    )
 
 
 # =============================================================================
@@ -339,6 +426,23 @@ def test_feed_fn() -> None:
     )
 
 
+def test_feed_bytes_fn() -> None:
+    result = feed(sh.cat(), b"binary")
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdFromData(STDIN, b"binary"),),
+    )
+
+
+def test_close_fn() -> None:
+    result = close(sh.cat(), STDIN)
+    assert isinstance(result, Cmd)
+    assert unwrap(result) == ir.Cmd(
+        ("cat",),
+        redirects=(ir.FdClose(STDIN),),
+    )
+
+
 def test_chain_read_write() -> None:
     result = write(read(sh.cat(), "in.txt"), "out.txt")
     assert unwrap(result) == ir.Cmd(
@@ -373,6 +477,35 @@ def test_sub_in_with_pipeline() -> None:
             )
         )
     )
+
+
+def test_sub_in_as_arg() -> None:
+    result = sh.cat(sub_in(sh.echo("hello")))
+    assert unwrap(result) == ir.Cmd(
+        ("cat", ir.SubIn(ir.Cmd(("echo", "hello")))),
+    )
+
+
+def test_sub_in_multiple_args() -> None:
+    result = sh.diff(
+        sub_in(sh.sort("a.txt")),
+        sub_in(sh.sort("b.txt")),
+    )
+    assert unwrap(result) == ir.Cmd((
+        "diff",
+        ir.SubIn(ir.Cmd(("sort", "a.txt"))),
+        ir.SubIn(ir.Cmd(("sort", "b.txt"))),
+    ))
+
+
+def test_sub_out_as_arg() -> None:
+    result = sh.tee(sub_out(sh.cat() > "out.txt"))
+    assert unwrap(result) == ir.Cmd((
+        "tee",
+        ir.SubOut(
+            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
+        ),
+    ))
 
 
 def test_sub_out_with_redirect() -> None:

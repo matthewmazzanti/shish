@@ -56,23 +56,18 @@ async def test_pipeline_with_failing_middle_stage() -> None:
     assert result != 0
 
 
-async def test_pipeline_five_stages(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    result = await (
-        (sh.echo("hello") | sh.cat() | sh.cat() | sh.cat() | sh.cat() | sh.cat()) > out
+async def test_pipeline_five_stages() -> None:
+    result = await out(
+        sh.echo("hello") | sh.cat() | sh.cat() | sh.cat() | sh.cat() | sh.cat()
     )
-    assert result == 0
-    assert out.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
-async def test_pipeline_many_transforms(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    result = await (
-        (sh.echo("hello") | sh.tr("a-z", "A-Z") | sh.tr("H", "J") | sh.rev() | sh.rev())
-        > out
+async def test_pipeline_many_transforms() -> None:
+    result = await out(
+        sh.echo("hello") | sh.tr("a-z", "A-Z") | sh.tr("H", "J") | sh.rev() | sh.rev()
     )
-    assert result == 0
-    assert out.read_text() == "JELLO\n"
+    assert result == "JELLO\n"
 
 
 # =============================================================================
@@ -108,18 +103,16 @@ async def test_redirect_stdin_from_file(tmp_path: Path) -> None:
     assert out.read_text() == "hello from file"
 
 
-async def test_redirect_pipeline_stdout(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    await ((sh.echo("hello world") | sh.tr("a-z", "A-Z")) > out)
-    assert out.read_text() == "HELLO WORLD\n"
+async def test_redirect_pipeline_stdout() -> None:
+    result = await out(sh.echo("hello world") | sh.tr("a-z", "A-Z"))
+    assert result == "HELLO WORLD\n"
 
 
 async def test_redirect_pipeline_stdin(tmp_path: Path) -> None:
     inp = tmp_path / "in.txt"
-    out = tmp_path / "out.txt"
     inp.write_text("hello\nworld\n")
-    await (((sh.cat() | sh.grep("world")) < inp) > out)
-    assert out.read_text() == "world\n"
+    result = await out((sh.cat() < inp) | sh.grep("world"))
+    assert result == "world\n"
 
 
 async def test_redirect_chain_in_out(tmp_path: Path) -> None:
@@ -145,29 +138,26 @@ async def test_redirect_chain_reverse_order(tmp_path: Path) -> None:
 
 async def test_redirect_stage_stdout(tmp_path: Path) -> None:
     # (echo "hello" > file) | cat - stdout goes to file, cat gets nothing
-    out = tmp_path / "out.txt"
-    result = tmp_path / "result.txt"
-    await (((sh.echo("hello") > out) | sh.cat()) > result)
-    assert out.read_text() == "hello\n"
-    assert result.read_text() == ""
+    outfile = tmp_path / "out.txt"
+    result = await out((sh.echo("hello") > outfile) | sh.cat())
+    assert outfile.read_text() == "hello\n"
+    assert result == ""
 
 
 async def test_redirect_stage_stdin(tmp_path: Path) -> None:
     # echo "ignored" | (cat < file) - cat reads from file, not pipe
     inp = tmp_path / "in.txt"
-    out = tmp_path / "out.txt"
     inp.write_text("from file\n")
-    await ((sh.echo("ignored") | (sh.cat() < inp)) > out)
-    assert out.read_text() == "from file\n"
+    result = await out(sh.echo("ignored") | (sh.cat() < inp))
+    assert result == "from file\n"
 
 
 async def test_redirect_stage_tee_like(tmp_path: Path) -> None:
     # echo "hello" | (cat > log.txt) | cat - middle stage logs to file
     log = tmp_path / "log.txt"
-    out = tmp_path / "out.txt"
-    await (((sh.echo("hello") | (sh.cat() > log)) | sh.cat()) > out)
+    result = await out(sh.echo("hello") | (sh.cat() > log) | sh.cat())
     assert log.read_text() == "hello\n"
-    assert out.read_text() == ""
+    assert result == ""
 
 
 # =============================================================================
@@ -193,16 +183,14 @@ async def test_from_data_multiline(tmp_path: Path) -> None:
     assert out.read_text() == "line1\nline2\nline3\n"
 
 
-async def test_from_data_pipeline(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    await (((sh.cat() << "hello\nworld\n") | sh.grep("world")) > out)
-    assert out.read_text() == "world\n"
+async def test_from_data_pipeline() -> None:
+    result = await out((sh.cat() << "hello\nworld\n") | sh.grep("world"))
+    assert result == "world\n"
 
 
-async def test_from_data_in_stage(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    await ((sh.echo("ignored") | (sh.cat() << "injected")) > out)
-    assert out.read_text() == "injected"
+async def test_from_data_in_stage() -> None:
+    result = await out(sh.echo("ignored") | (sh.cat() << "injected"))
+    assert result == "injected"
 
 
 async def test_data_redirect_then_file_output(tmp_path: Path) -> None:
@@ -276,34 +264,32 @@ async def test_sub_in_with_data_redirect(tmp_path: Path) -> None:
 
 
 async def test_sub_out_single(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    main_out = tmp_path / "main.txt"
-    await ((sh.echo("hello") | sh.tee(sub_out(sh.cat() > out))) > main_out)
-    assert out.read_text() == "hello\n"
-    assert main_out.read_text() == "hello\n"
+    outfile = tmp_path / "out.txt"
+    result = await out(
+        sh.echo("hello") | sh.tee(sub_out(sh.cat() > outfile))
+    )
+    assert outfile.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
 async def test_sub_out_multiple(tmp_path: Path) -> None:
     out_a = tmp_path / "a.txt"
     out_b = tmp_path / "b.txt"
-    main_out = tmp_path / "main.txt"
-    await (
-        (
-            sh.echo("hello")
-            | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
-        )
-        > main_out
+    result = await out(
+        sh.echo("hello")
+        | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
     )
     assert out_a.read_text() == "hello\n"
     assert out_b.read_text() == "hello\n"
-    assert main_out.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
 async def test_sub_out_with_data_redirect(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    main_out = tmp_path / "main.txt"
-    await ((sh.echo("from tee") | sh.tee(sub_out(sh.cat() > out))) > main_out)
-    assert out.read_text() == "from tee\n"
+    outfile = tmp_path / "out.txt"
+    await out(
+        sh.echo("from tee") | sh.tee(sub_out(sh.cat() > outfile))
+    )
+    assert outfile.read_text() == "from tee\n"
 
 
 async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:

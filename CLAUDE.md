@@ -33,7 +33,10 @@ TODO.md         # planned features and known issues
 - `await cmd` or `await run(cmd)` - returns exit code
 - `await out(cmd)` - returns stdout as string (or bytes with `encoding=None`)
 - `sub_in(cmd)` / `sub_out(cmd)` - process substitution via `/dev/fd/N`
-- Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed
+- Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed (Cmd only, not Pipeline)
+- Redirect operators are Cmd-only to avoid precedence confusion: in Python `|` binds tighter
+  than `<`/`>`, so `cmd1 | cmd2 < "file"` would parse as `(cmd1 | cmd2) < "file"` (unlike bash).
+  Apply redirects on individual cmds: `cmd1 | (cmd2 < "file")`, or use combinators.
 - Tuple fd syntax: `cmd > (STDERR, "err.log")` targets specific fds
 - Combinators: `write`, `read`, `feed`, `close`, `pipe` — accept files or subs, with `fd=` kwarg
 - Pipefail by default (128 + signal for killed processes)

@@ -8,7 +8,7 @@ module-level combinator functions that unwrap to IR, delegate, and re-wrap.
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import overload
+from typing import Never, overload
 
 import shish.ir as ir
 from shish.fdops import STDIN, STDOUT
@@ -77,7 +77,7 @@ class Cmd:
             case _:
                 return feed(self, data)
 
-    def __bool__(self) -> bool:
+    def __bool__(self) -> Never:
         raise TypeError(
             "Cmd cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
@@ -100,39 +100,35 @@ class Pipeline:
         """cmd | pipeline -> Pipeline."""
         return pipe(other, self)
 
-    def __gt__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Pipeline:
-        """pipeline > "file", pipeline > sub, or pipeline > (fd, target)."""
-        match target:
-            case fd, dst:
-                return write(self, dst, fd=fd)
-            case dst:
-                return write(self, dst)
+    def __gt__(self, target: object) -> Never:
+        """Redirect operators are not supported on Pipeline."""
+        raise TypeError(
+            "Pipeline does not support >. "
+            "You probably wanted: cmd1 | (cmd2 > target)"
+        )
 
-    def __rshift__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Pipeline:
-        """pipeline >> "file", pipeline >> sub, or pipeline >> (fd, target)."""
-        match target:
-            case fd, dst:
-                return write(self, dst, append=True, fd=fd)
-            case dst:
-                return write(self, dst, append=True)
+    def __rshift__(self, target: object) -> Never:
+        """Redirect operators are not supported on Pipeline."""
+        raise TypeError(
+            "Pipeline does not support >>. "
+            "You probably wanted: cmd1 | (cmd2 >> target)"
+        )
 
-    def __lt__(self, target: ir.ReadSrc | tuple[int, ir.ReadSrc]) -> Pipeline:
-        """pipeline < "file", pipeline < sub, or pipeline < (fd, target)."""
-        match target:
-            case fd, src:
-                return read(self, src, fd=fd)
-            case src:
-                return read(self, src)
+    def __lt__(self, target: object) -> Never:
+        """Redirect operators are not supported on Pipeline."""
+        raise TypeError(
+            "Pipeline does not support <. "
+            "You probably wanted: (cmd1 < source) | cmd2"
+        )
 
-    def __lshift__(self, data: ir.Data | tuple[int, ir.Data]) -> Pipeline:
-        """pipeline << "data" or pipeline << (fd, "data")."""
-        match data:
-            case fd, payload:
-                return feed(self, payload, fd=fd)
-            case _:
-                return feed(self, data)
+    def __lshift__(self, data: object) -> Never:
+        """Redirect operators are not supported on Pipeline."""
+        raise TypeError(
+            "Pipeline does not support <<. "
+            "You probably wanted: (cmd1 << data) | cmd2"
+        )
 
-    def __bool__(self) -> bool:
+    def __bool__(self) -> Never:
         raise TypeError(
             "Pipeline cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
