@@ -33,7 +33,10 @@ TODO.md         # planned features and known issues
 - `await cmd` or `await run(cmd)` - returns exit code
 - `await out(cmd)` - returns stdout as string (or bytes with `encoding=None`)
 - `sub_in(cmd)` / `sub_out(cmd)` - process substitution via `/dev/fd/N`
-- Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed
+- Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed (Cmd only, not Pipeline)
+- Redirect operators are Cmd-only to avoid precedence confusion: in Python `|` binds tighter
+  than `<`/`>`, so `cmd1 | cmd2 < "file"` would parse as `(cmd1 | cmd2) < "file"` (unlike bash).
+  Apply redirects on individual cmds: `cmd1 | (cmd2 < "file")`, or use combinators.
 - Tuple fd syntax: `cmd > (STDERR, "err.log")` targets specific fds
 - Combinators: `write`, `read`, `feed`, `close`, `pipe` — accept files or subs, with `fd=` kwarg
 - Pipefail by default (128 + signal for killed processes)
@@ -59,3 +62,16 @@ TODO.md         # planned features and known issues
 - SIGKILL orphan processes on error, shield reap from cancellation
 - Async IO via event loop reader/writer callbacks (aio.py)
 - SIGPIPE propagates naturally for early termination
+
+## Test Organization
+
+Four test files with clear boundaries:
+
+- `test_ir.py` — IR layer: `cmd()` builder methods, `ir.pipeline()` flattening. Sync only, no execution.
+- `test_dsl.py` — `sh` magic + operators produce correct IR. Sync only, no execution.
+- `test_runtime.py` — Raw IR → run. No builders or DSL. Tests runtime behavior.
+- `test_e2e.py` — Full integration from DSL or builder → run.
+
+Rules for `test_runtime.py` and `test_e2e.py`:
+- Only use commands available in typical macOS/Linux environments (coreutils, util-linux, BSD)
+- Clean runs: use `tmp_path` for any file writes, no system side effects

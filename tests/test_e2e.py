@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from shish import out, run, sh, sub_in, sub_out
+from shish import STDERR, STDIN, STDOUT, close, out, run, sh, sub_in, sub_out, write
+from shish.ir import cmd
 
 # =============================================================================
 # Basic Execution
@@ -55,23 +56,18 @@ async def test_pipeline_with_failing_middle_stage() -> None:
     assert result != 0
 
 
-async def test_pipeline_five_stages(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    result = await (
-        (sh.echo("hello") | sh.cat() | sh.cat() | sh.cat() | sh.cat() | sh.cat()) > out
+async def test_pipeline_five_stages() -> None:
+    result = await out(
+        sh.echo("hello") | sh.cat() | sh.cat() | sh.cat() | sh.cat() | sh.cat()
     )
-    assert result == 0
-    assert out.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
-async def test_pipeline_many_transforms(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    result = await (
-        (sh.echo("hello") | sh.tr("a-z", "A-Z") | sh.tr("H", "J") | sh.rev() | sh.rev())
-        > out
+async def test_pipeline_many_transforms() -> None:
+    result = await out(
+        sh.echo("hello") | sh.tr("a-z", "A-Z") | sh.tr("H", "J") | sh.rev() | sh.rev()
     )
-    assert result == 0
-    assert out.read_text() == "JELLO\n"
+    assert result == "JELLO\n"
 
 
 # =============================================================================
@@ -107,18 +103,16 @@ async def test_redirect_stdin_from_file(tmp_path: Path) -> None:
     assert out.read_text() == "hello from file"
 
 
-async def test_redirect_pipeline_stdout(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    await ((sh.echo("hello world") | sh.tr("a-z", "A-Z")) > out)
-    assert out.read_text() == "HELLO WORLD\n"
+async def test_redirect_pipeline_stdout() -> None:
+    result = await out(sh.echo("hello world") | sh.tr("a-z", "A-Z"))
+    assert result == "HELLO WORLD\n"
 
 
 async def test_redirect_pipeline_stdin(tmp_path: Path) -> None:
     inp = tmp_path / "in.txt"
-    out = tmp_path / "out.txt"
     inp.write_text("hello\nworld\n")
-    await (((sh.cat() | sh.grep("world")) < inp) > out)
-    assert out.read_text() == "world\n"
+    result = await out((sh.cat() < inp) | sh.grep("world"))
+    assert result == "world\n"
 
 
 async def test_redirect_chain_in_out(tmp_path: Path) -> None:
@@ -144,29 +138,26 @@ async def test_redirect_chain_reverse_order(tmp_path: Path) -> None:
 
 async def test_redirect_stage_stdout(tmp_path: Path) -> None:
     # (echo "hello" > file) | cat - stdout goes to file, cat gets nothing
-    out = tmp_path / "out.txt"
-    result = tmp_path / "result.txt"
-    await (((sh.echo("hello") > out) | sh.cat()) > result)
-    assert out.read_text() == "hello\n"
-    assert result.read_text() == ""
+    outfile = tmp_path / "out.txt"
+    result = await out((sh.echo("hello") > outfile) | sh.cat())
+    assert outfile.read_text() == "hello\n"
+    assert result == ""
 
 
 async def test_redirect_stage_stdin(tmp_path: Path) -> None:
     # echo "ignored" | (cat < file) - cat reads from file, not pipe
     inp = tmp_path / "in.txt"
-    out = tmp_path / "out.txt"
     inp.write_text("from file\n")
-    await ((sh.echo("ignored") | (sh.cat() < inp)) > out)
-    assert out.read_text() == "from file\n"
+    result = await out(sh.echo("ignored") | (sh.cat() < inp))
+    assert result == "from file\n"
 
 
 async def test_redirect_stage_tee_like(tmp_path: Path) -> None:
     # echo "hello" | (cat > log.txt) | cat - middle stage logs to file
     log = tmp_path / "log.txt"
-    out = tmp_path / "out.txt"
-    await (((sh.echo("hello") | (sh.cat() > log)) | sh.cat()) > out)
+    result = await out(sh.echo("hello") | (sh.cat() > log) | sh.cat())
     assert log.read_text() == "hello\n"
-    assert out.read_text() == ""
+    assert result == ""
 
 
 # =============================================================================
@@ -192,16 +183,14 @@ async def test_from_data_multiline(tmp_path: Path) -> None:
     assert out.read_text() == "line1\nline2\nline3\n"
 
 
-async def test_from_data_pipeline(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    await (((sh.cat() << "hello\nworld\n") | sh.grep("world")) > out)
-    assert out.read_text() == "world\n"
+async def test_from_data_pipeline() -> None:
+    result = await out((sh.cat() << "hello\nworld\n") | sh.grep("world"))
+    assert result == "world\n"
 
 
-async def test_from_data_in_stage(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    await ((sh.echo("ignored") | (sh.cat() << "injected")) > out)
-    assert out.read_text() == "injected"
+async def test_from_data_in_stage() -> None:
+    result = await out(sh.echo("ignored") | (sh.cat() << "injected"))
+    assert result == "injected"
 
 
 async def test_data_redirect_then_file_output(tmp_path: Path) -> None:
@@ -275,34 +264,27 @@ async def test_sub_in_with_data_redirect(tmp_path: Path) -> None:
 
 
 async def test_sub_out_single(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    main_out = tmp_path / "main.txt"
-    await ((sh.echo("hello") | sh.tee(sub_out(sh.cat() > out))) > main_out)
-    assert out.read_text() == "hello\n"
-    assert main_out.read_text() == "hello\n"
+    outfile = tmp_path / "out.txt"
+    result = await out(sh.echo("hello") | sh.tee(sub_out(sh.cat() > outfile)))
+    assert outfile.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
 async def test_sub_out_multiple(tmp_path: Path) -> None:
     out_a = tmp_path / "a.txt"
     out_b = tmp_path / "b.txt"
-    main_out = tmp_path / "main.txt"
-    await (
-        (
-            sh.echo("hello")
-            | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
-        )
-        > main_out
+    result = await out(
+        sh.echo("hello") | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
     )
     assert out_a.read_text() == "hello\n"
     assert out_b.read_text() == "hello\n"
-    assert main_out.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
 async def test_sub_out_with_data_redirect(tmp_path: Path) -> None:
-    out = tmp_path / "out.txt"
-    main_out = tmp_path / "main.txt"
-    await ((sh.echo("from tee") | sh.tee(sub_out(sh.cat() > out))) > main_out)
-    assert out.read_text() == "from tee\n"
+    outfile = tmp_path / "out.txt"
+    await out(sh.echo("from tee") | sh.tee(sub_out(sh.cat() > outfile)))
+    assert outfile.read_text() == "from tee\n"
 
 
 async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:
@@ -412,3 +394,167 @@ async def test_out_binary() -> None:
     data = bytes(range(256))
     result = await out(sh.cat() << data, encoding=None)
     assert result == data
+
+
+# =============================================================================
+# Builder (cmd()) E2E
+# =============================================================================
+
+
+async def test_builder_run() -> None:
+    assert await cmd("true").run() == 0
+    assert await cmd("false").run() == 1
+
+
+async def test_builder_pipeline(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("echo", "hello world").pipe(cmd("tr", "a-z", "A-Z")).write(outfile).run()
+    assert outfile.read_text() == "HELLO WORLD\n"
+
+
+async def test_builder_write_and_append(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("echo", "first").write(outfile).run()
+    await cmd("echo", "second").write(outfile, append=True).run()
+    assert outfile.read_text() == "first\nsecond\n"
+
+
+async def test_builder_read(tmp_path: Path) -> None:
+    inp = tmp_path / "in.txt"
+    outfile = tmp_path / "out.txt"
+    inp.write_text("hello from file")
+    await cmd("cat").read(inp).write(outfile).run()
+    assert outfile.read_text() == "hello from file"
+
+
+async def test_builder_feed(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("cat").feed("hello world").write(outfile).run()
+    assert outfile.read_text() == "hello world"
+
+
+async def test_builder_feed_bytes(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.bin"
+    data = bytes(range(256))
+    await cmd("cat").feed(data).write(outfile).run()
+    assert outfile.read_bytes() == data
+
+
+async def test_builder_sub_in(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    await cmd("cat", cmd("echo", "hello").sub_in()).write(outfile).run()
+    assert outfile.read_text() == "hello\n"
+
+
+async def test_builder_sub_out(tmp_path: Path) -> None:
+    outfile = tmp_path / "out.txt"
+    main_out = tmp_path / "main.txt"
+    sink = cmd("cat").write(outfile).sub_out()
+    await cmd("echo", "hello").pipe(cmd("tee", sink)).write(main_out).run()
+    assert outfile.read_text() == "hello\n"
+    assert main_out.read_text() == "hello\n"
+
+
+async def test_builder_out() -> None:
+    result = await cmd("echo", "hello").out()
+    assert result == "hello\n"
+
+
+async def test_builder_out_raises_on_failure() -> None:
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        await cmd("false").out()
+    assert exc_info.value.returncode == 1
+
+
+# =============================================================================
+# Tuple fd syntax (DSL-only)
+# =============================================================================
+
+
+async def test_tuple_fd_stderr_to_file(tmp_path: Path) -> None:
+    """cmd > (STDERR, "file") — redirect stderr via tuple syntax."""
+    errfile = tmp_path / "err.txt"
+    result = await out(sh.sh("-c", "echo out; echo err >&2") > (STDERR, errfile))
+    assert result == "out\n"
+    assert errfile.read_text() == "err\n"
+
+
+async def test_tuple_fd_append(tmp_path: Path) -> None:
+    """cmd >> (STDERR, "file") — append stderr via tuple syntax."""
+    errfile = tmp_path / "err.txt"
+    await run(sh.sh("-c", "echo first >&2") > (STDERR, errfile))
+    await run(sh.sh("-c", "echo second >&2") >> (STDERR, errfile))
+    assert errfile.read_text() == "first\nsecond\n"
+
+
+# =============================================================================
+# close() combinator
+# =============================================================================
+
+
+async def test_close_stdin() -> None:
+    """close(cmd, STDIN) — cat with stdin closed exits non-zero."""
+    result = await run(close(sh.cat(), STDIN))
+    assert result == 1
+
+
+async def test_close_stdout(tmp_path: Path) -> None:
+    """close(cmd, STDOUT) — echo with stdout closed, stderr still works."""
+    errfile = tmp_path / "err.txt"
+    # echo fails when stdout is closed, redirect stderr to verify it ran
+    await run(close(sh.sh("-c", "echo err >&2"), STDOUT) > (STDERR, errfile))
+    assert errfile.read_text() == "err\n"
+
+
+# =============================================================================
+# write() combinator with subs
+# =============================================================================
+
+
+async def test_write_to_sub_out(tmp_path: Path) -> None:
+    """write(cmd, sub_out(...)) — combinator wiring to process substitution."""
+    outfile = tmp_path / "out.txt"
+    result = await out(write(sh.echo("hello"), sub_out(sh.cat() > outfile)))
+    assert outfile.read_text() == "hello\n"
+    assert result == ""
+
+
+# =============================================================================
+# Nested process substitution
+# =============================================================================
+
+
+async def test_nested_sub_in() -> None:
+    """cat <(cat <(echo hello)) — two levels of sub nesting."""
+    result = await out(sh.cat(sub_in(sh.cat(sub_in(sh.echo("hello"))))))
+    assert result == "hello\n"
+
+
+async def test_nested_sub_in_with_transform() -> None:
+    """cat <(tr a-z A-Z <(echo hello)) — nested sub with pipeline."""
+    inner = sub_in(sh.echo("hello"))
+    result = await out(sh.cat(sub_in(sh.cat(inner) | sh.tr("a-z", "A-Z"))))
+    assert result == "HELLO\n"
+
+
+# =============================================================================
+# Cancellation via DSL
+# =============================================================================
+
+
+async def test_cancel_await_cmd() -> None:
+    """Cancelling await sh.cmd() kills the child."""
+    task = asyncio.create_task(run(sh.sleep("60")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_cancel_pipeline() -> None:
+    """Cancelling a DSL pipeline kills all stages."""
+    task = asyncio.create_task(run(sh.sleep("60") | sh.sleep("60")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

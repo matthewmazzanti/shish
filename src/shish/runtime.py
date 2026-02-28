@@ -226,18 +226,21 @@ class Executor:
         return root_indices
 
     async def _create_processes(self) -> None:
-        """Spawn all prepared processes concurrently."""
-        coros = [
-            create_subprocess_exec(
+        """Spawn all prepared processes sequentially.
+
+        Sequential spawning ensures already-started processes are tracked
+        in self.procs before a later spawn failure, so the finally block
+        in execute() can kill and reap them.
+        """
+        for prep in self.prepared:
+            proc = await create_subprocess_exec(
                 *prep.args,
                 stdin=prep.stdin_fd,
                 stdout=prep.stdout_fd,
                 pass_fds=prep.pass_fds,
                 preexec_fn=prep.preexec,
             )
-            for prep in self.prepared
-        ]
-        self.procs = list(await asyncio.gather(*coros))
+            self.procs.append(proc)
 
     async def execute(
         self,
