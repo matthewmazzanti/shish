@@ -58,8 +58,7 @@ async def test_pipeline_with_failing_middle_stage() -> None:
 async def test_pipeline_five_stages(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     result = await (
-        (sh.echo("hello") | sh.cat() | sh.cat() | sh.cat() | sh.cat() | sh.cat())
-        > out
+        (sh.echo("hello") | sh.cat() | sh.cat() | sh.cat() | sh.cat() | sh.cat()) > out
     )
     assert result == 0
     assert out.read_text() == "hello\n"
@@ -68,13 +67,7 @@ async def test_pipeline_five_stages(tmp_path: Path) -> None:
 async def test_pipeline_many_transforms(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     result = await (
-        (
-            sh.echo("hello")
-            | sh.tr("a-z", "A-Z")
-            | sh.tr("H", "J")
-            | sh.rev()
-            | sh.rev()
-        )
+        (sh.echo("hello") | sh.tr("a-z", "A-Z") | sh.tr("H", "J") | sh.rev() | sh.rev())
         > out
     )
     assert result == 0
@@ -247,9 +240,7 @@ async def test_from_proc_two_sources(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     file1.write_text("b\na\nc\n")
     file2.write_text("b\na\nc\n")
-    result = await (
-        sh.diff(from_proc(sh.sort(file1)), from_proc(sh.sort(file2))) > out
-    )
+    result = await (sh.diff(from_proc(sh.sort(file1)), from_proc(sh.sort(file2))) > out)
     assert result == 0
     assert out.read_text() == ""
 
@@ -310,10 +301,7 @@ async def test_to_proc_multiple(tmp_path: Path) -> None:
 async def test_to_proc_with_data_redirect(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    await (
-        (sh.echo("from tee") | sh.tee(to_proc(sh.cat() > out)))
-        > main_out
-    )
+    await ((sh.echo("from tee") | sh.tee(to_proc(sh.cat() > out))) > main_out)
     assert out.read_text() == "from tee\n"
 
 

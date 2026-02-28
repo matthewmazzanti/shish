@@ -18,8 +18,10 @@ uv build        # build package
 ```
 src/shish/      # main package
   __init__.py   # re-exports from dsl + runtime
-  dsl.py        # Cmd, Pipeline, Redirect, Sub, sh, combinators
-  runtime.py    # Executor, run, out, Result
+  ir.py         # frozen dataclass IR: Cmd, Pipeline, per-fd redirects
+  dsl.py        # thin wrappers (Cmd, Pipeline), operators, combinators
+  fdops.py      # fd-table simulator for computing pass_fds
+  runtime.py    # executes IR nodes, run, out, Result
   aio.py        # async_read, async_write, fd utilities
 TODO.md         # planned features and known issues
 ```
@@ -31,7 +33,9 @@ TODO.md         # planned features and known issues
 - `await cmd` or `await run(cmd)` - returns exit code
 - `await out(cmd)` - returns stdout as string (or bytes with `encoding=None`)
 - `from_proc(cmd)` / `to_proc(cmd)` - process substitution via `/dev/fd/N`
-- Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` input
+- Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed
+- Tuple fd syntax: `cmd > (STDERR, "err.log")` targets specific fds
+- Combinators: `write`, `read`, `feed`, `close`, `pipe` with `fd=` kwargs
 - Pipefail by default (128 + signal for killed processes)
 
 ## Style
@@ -43,13 +47,15 @@ TODO.md         # planned features and known issues
 
 ## Implementation Notes
 
-- `Cmd` is immutable - chaining returns new instances
-- `Pipeline` holds `list[Stage]` (Stage = Cmd | Redirect)
-- `Redirect` wraps Cmd/Pipeline with stdin/stdout redirections
+- IR layer (`ir.py`): frozen dataclasses with builder methods (arg, read, write, feed, close, pipe)
+- DSL layer (`dsl.py`): thin wrappers with no public methods, operators delegate to combinators
+- `unwrap()`/`wrap()` bridge DSL and IR layers
+- Per-fd redirects: FdToFile, FdFromFile, FdFromData, FdToFd, FdClose, FdFromSub, FdToSub
 - `Sub` holds process substitution commands (resolved to `/dev/fd/N` at runtime)
-- `Executor` manages fd lifecycle and process spawning
+- `fdops.py` simulates fd table to compute `pass_fds` for subprocess
 - Uses `asyncio.subprocess.create_subprocess_exec` with `pass_fds`
 - Pipeline stages run concurrently via `os.pipe()` fds
 - Per-stage redirects override pipe connections
+- SIGKILL orphan processes on error, shield reap from cancellation
 - Async IO via event loop reader/writer callbacks (aio.py)
 - SIGPIPE propagates naturally for early termination

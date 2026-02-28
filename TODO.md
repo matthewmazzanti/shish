@@ -2,14 +2,9 @@
 
 ## Fixes
 
-- Double close fd in execute (fds closed in loop then again in finally)
-- CalledProcessError in `out` passes empty list for cmd arg, stdout is bytes not decoded
+- CalledProcessError in `out` passes empty list for cmd arg
 
 ## Features
-
-- stderr handling (capture, redirect, combine with stdout)
-- Allow fd redirects (e.g., `4>2`, `2>&1`)
-- Emulate bash's fd handling for from_proc/to_proc (move to high fds >= 10 via F_DUPFD)
 - env vars - per-command environment (e.g., `cmd.env(VAR="value")`)
 - cwd - working directory option for commands
 - Streaming output - async iteration over lines as they arrive
@@ -23,3 +18,21 @@
 - Bad return codes: map to something? raise exceptions? configurable?
 - Defaults vs explicit configuration - where's the line?
 - Configurable command builder: `sh = CommandBuilder(env={...}, cwd="...", raise_on_error=True)`
+
+## Open questions
+
+- **Process indices fragile.** Merge prepare+spawn into async `_spawn` that
+  returns Process objects directly. Fd closes accumulate during walk.
+- **Result tree.** Tree of per-stage codes mirroring command structure.
+  Encodes root-vs-ancillary naturally. Pipefail resolved at root.
+- **`out()` too involved.** Capture mode on execute, or method on process handle?
+- **Prepare walk mirrors IR.** Visitor pattern or composable FdOps transforms?
+  Risk: coupling IR to runtime.
+
+## Architecture notes
+
+- Pipefail (rightmost non-zero), sub exit codes ignored — matches bash
+- Prepare/spawn split: parent must close pipe fds after all spawns
+- Arg-position subs use `/dev/fd/N` path via pass_fds; redirect-position
+  subs go through FdOps move_fd — distinct mechanisms matching bash
+- Cleanup: SIGKILL live procs on error, shield reap from cancellation
