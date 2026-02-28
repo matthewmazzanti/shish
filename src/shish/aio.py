@@ -99,7 +99,7 @@ def iterencode(data: str | bytes, chunk_size: int) -> Generator[bytes]:
     # Bytes: simple slicing, no encoding needed
     if isinstance(data, bytes):
         for i in range(0, len(data), chunk_size):
-            yield data[i:i + chunk_size]
+            yield data[i : i + chunk_size]
         return
 
     # Strings: incremental UTF-8 encoding with output buffering
@@ -109,7 +109,7 @@ def iterencode(data: str | bytes, chunk_size: int) -> Generator[bytes]:
     # Process chunk_size characters at a time. Each char encodes to 1-4 bytes,
     # so buffer may grow up to 4x chunk_size before we drain it.
     for i in range(0, len(data), chunk_size):
-        buffer.extend(encoder.encode(data[i:i + chunk_size]))
+        buffer.extend(encoder.encode(data[i : i + chunk_size]))
         # Drain buffer in chunk_size pieces for consistent output sizing
         while len(buffer) >= chunk_size:
             yield bytes(buffer[:chunk_size])

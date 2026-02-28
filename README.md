@@ -98,15 +98,28 @@ await asyncio.wait_for(sh.long_running(), timeout=30)
 task = asyncio.create_task(sh.server())
 ```
 
+## Per-fd Redirects
+
+Tuple syntax targets specific file descriptors:
+
+```python
+await (sh.cmd() > (STDERR, "err.log"))         # stderr to file
+await (sh.cmd() >> (STDERR, "err.log"))        # stderr append
+await (sh.cmd() < (3, "data.txt"))        # fd 3 from file
+await (sh.cmd() << (3, "input"))          # fd 3 from string
+```
+
 ## Combinators
 
 Operators delegate to functions for when you need them:
 
 ```python
-from shish import out, pipe, write, append, read, input_, from_proc, to_proc
+from shish import out, run, pipe, write, read, feed, close, from_proc, to_proc
 
 pipe(sh.a(), sh.b(), sh.c())              # varargs pipeline
 write(read(sh.cat(), "in"), "out")        # functional composition
+write(sh.cmd(), "err.log", fd=STDERR)     # stderr to file
+close(sh.cmd(), STDERR)                   # close stderr
 stdout = await out(sh.ls())               # capture stdout as str
 ```
 
