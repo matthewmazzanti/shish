@@ -7,6 +7,9 @@ from pathlib import Path
 
 from shish.fdops import STDIN, STDOUT
 
+PathLike = Path | str
+Data = str | bytes
+
 
 @dataclass(frozen=True)
 class FdToFile:
@@ -24,7 +27,7 @@ class FdFromFile:
 @dataclass(frozen=True)
 class FdFromData:
     fd: int
-    data: str | bytes
+    data: Data
 
 
 @dataclass(frozen=True)
@@ -39,21 +42,35 @@ class FdClose:
 
 
 @dataclass(frozen=True)
-class Sub:
+class SubIn:
+    """Input process substitution: <(cmd)."""
+
     cmd: Runnable
-    write: bool
+
+
+@dataclass(frozen=True)
+class SubOut:
+    """Output process substitution: >(cmd)."""
+
+    cmd: Runnable
+
+
+Sub = SubIn | SubOut
+Arg = PathLike | Sub
+ReadSrc = PathLike | SubIn
+WriteDst = PathLike | SubOut
 
 
 @dataclass(frozen=True)
 class FdFromSub:
     fd: int
-    sub: Sub
+    sub: SubIn
 
 
 @dataclass(frozen=True)
 class FdToSub:
     fd: int
-    sub: Sub
+    sub: SubOut
 
 
 Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | FdToSub
@@ -64,11 +81,11 @@ class Cmd:
     args: tuple[str | Sub, ...]
     redirects: tuple[Redirect, ...] = ()
 
-    def arg(self, *args: str | Path | int | Sub) -> Cmd:
+    def arg(self, *args: Arg) -> Cmd:
         """Append positional arguments."""
         resolved: list[str | Sub] = []
         for item in args:
-            if isinstance(item, Sub):
+            if isinstance(item, (SubIn, SubOut)):
                 resolved.append(item)
             else:
                 resolved.append(str(item))
@@ -78,15 +95,24 @@ class Cmd:
         """Pipe this command into another."""
         return Pipeline((self, other))
 
-    def read(self, path: Path | str, *, fd: int = STDIN) -> Cmd:
-        """Read fd from a file. Defaults to STDIN."""
-        return Cmd(self.args, (*self.redirects, FdFromFile(fd, Path(path))))
+    def read(self, src: ReadSrc, *, fd: int = STDIN) -> Cmd:
+        """Read fd from file or process substitution. Defaults to STDIN."""
+        match src:
+            case SubIn():
+                return Cmd(self.args, (*self.redirects, FdFromSub(fd, src)))
+            case path:
+                return Cmd(self.args, (*self.redirects, FdFromFile(fd, Path(path))))
 
-    def write(self, path: Path | str, *, append: bool = False, fd: int = STDOUT) -> Cmd:
-        """Write fd to a file. Defaults to STDOUT."""
-        return Cmd(self.args, (*self.redirects, FdToFile(fd, Path(path), append)))
+    def write(self, dst: WriteDst, *, append: bool = False, fd: int = STDOUT) -> Cmd:
+        """Write fd to file or process substitution. Defaults to STDOUT."""
+        match dst:
+            case SubOut():
+                return Cmd(self.args, (*self.redirects, FdToSub(fd, dst)))
+            case path:
+                redirect = FdToFile(fd, Path(path), append)
+                return Cmd(self.args, (*self.redirects, redirect))
 
-    def feed(self, data: str | bytes, *, fd: int = STDIN) -> Cmd:
+    def feed(self, data: Data, *, fd: int = STDIN) -> Cmd:
         """Feed literal data into fd. Defaults to STDIN."""
         return Cmd(self.args, (*self.redirects, FdFromData(fd, data)))
 
@@ -94,13 +120,13 @@ class Cmd:
         """Close fd."""
         return Cmd(self.args, (*self.redirects, FdClose(fd)))
 
-    def sub_in(self) -> Sub:
+    def sub_in(self) -> SubIn:
         """Process substitution: <(cmd)."""
-        return Sub(self, write=False)
+        return SubIn(self)
 
-    def sub_out(self) -> Sub:
+    def sub_out(self) -> SubOut:
         """Process substitution: >(cmd)."""
-        return Sub(self, write=True)
+        return SubOut(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -123,19 +149,19 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def read(self, path: Path | str, *, fd: int = STDIN) -> Pipeline:
-        """Read fd from a file (first stage). Defaults to STDIN."""
-        first = self.stages[0].read(path, fd=fd)
+    def read(self, src: ReadSrc, *, fd: int = STDIN) -> Pipeline:
+        """Read fd from file or sub (first stage). Defaults to STDIN."""
+        first = self.stages[0].read(src, fd=fd)
         return Pipeline((first, *self.stages[1:]))
 
     def write(
-        self, path: Path | str, *, append: bool = False, fd: int = STDOUT
+        self, dst: WriteDst, *, append: bool = False, fd: int = STDOUT
     ) -> Pipeline:
-        """Write fd to a file (last stage). Defaults to STDOUT."""
-        last = self.stages[-1].write(path, append=append, fd=fd)
+        """Write fd to file or sub (last stage). Defaults to STDOUT."""
+        last = self.stages[-1].write(dst, append=append, fd=fd)
         return Pipeline((*self.stages[:-1], last))
 
-    def feed(self, data: str | bytes, *, fd: int = STDIN) -> Pipeline:
+    def feed(self, data: Data, *, fd: int = STDIN) -> Pipeline:
         """Feed literal data into fd (first stage). Defaults to STDIN."""
         first = self.stages[0].feed(data, fd=fd)
         return Pipeline((first, *self.stages[1:]))
@@ -161,11 +187,11 @@ class Pipeline:
 Runnable = Cmd | Pipeline
 
 
-def cmd(*args: str | Path | int | Sub) -> Cmd:
+def cmd(*args: Arg) -> Cmd:
     """Create a command from positional arguments."""
     resolved: list[str | Sub] = []
     for arg in args:
-        if isinstance(arg, Sub):
+        if isinstance(arg, (SubIn, SubOut)):
             resolved.append(arg)
         else:
             resolved.append(str(arg))

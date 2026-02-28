@@ -27,8 +27,8 @@ def test_cmd_path_arg() -> None:
     assert cmd("cat", Path("/tmp/file.txt")) == ir.Cmd(("cat", "/tmp/file.txt"))
 
 
-def test_cmd_int_arg() -> None:
-    assert cmd("head", "-n", 5) == ir.Cmd(("head", "-n", "5"))
+def test_cmd_numeric_str_arg() -> None:
+    assert cmd("head", "-n", "5") == ir.Cmd(("head", "-n", "5"))
 
 
 def test_cmd_returns_new_instance() -> None:
@@ -44,17 +44,17 @@ def test_cmd_returns_new_instance() -> None:
 
 
 def test_pipe_two() -> None:
-    node = cmd("echo", "hello").pipe(cmd("cat"))
-    assert isinstance(node, ir.Pipeline)
-    assert len(node.stages) == 2
-    assert node.stages[0] == ir.Cmd(("echo", "hello"))
-    assert node.stages[1] == ir.Cmd(("cat",))
+    pipeline = cmd("echo", "hello").pipe(cmd("cat"))
+    assert isinstance(pipeline, ir.Pipeline)
+    assert len(pipeline.stages) == 2
+    assert pipeline.stages[0] == ir.Cmd(("echo", "hello"))
+    assert pipeline.stages[1] == ir.Cmd(("cat",))
 
 
 def test_pipe_chain() -> None:
-    node = cmd("echo", "hello").pipe(cmd("grep", "h")).pipe(cmd("wc", "-l"))
-    assert isinstance(node, ir.Pipeline)
-    assert len(node.stages) == 3
+    pipeline = cmd("echo", "hello").pipe(cmd("grep", "h")).pipe(cmd("wc", "-l"))
+    assert isinstance(pipeline, ir.Pipeline)
+    assert len(pipeline.stages) == 3
 
 
 def test_pipe_returns_pipeline() -> None:
@@ -133,23 +133,23 @@ def test_feed_explicit_fd() -> None:
 
 
 def test_pipeline_write() -> None:
-    node = cmd("echo", "hello").pipe(cmd("tr", "a-z", "A-Z")).write("out.txt")
-    assert isinstance(node, ir.Pipeline)
-    assert len(node.stages) == 2
-    assert node.stages[0] == ir.Cmd(("echo", "hello"))
-    assert node.stages[1] == ir.Cmd(
+    pipeline = cmd("echo", "hello").pipe(cmd("tr", "a-z", "A-Z")).write("out.txt")
+    assert isinstance(pipeline, ir.Pipeline)
+    assert len(pipeline.stages) == 2
+    assert pipeline.stages[0] == ir.Cmd(("echo", "hello"))
+    assert pipeline.stages[1] == ir.Cmd(
         ("tr", "a-z", "A-Z"), redirects=(ir.FdToFile(1, Path("out.txt")),)
     )
 
 
 def test_pipeline_read() -> None:
-    node = cmd("cat").pipe(cmd("grep", "x")).read("in.txt")
-    assert isinstance(node, ir.Pipeline)
-    assert len(node.stages) == 2
-    assert node.stages[0] == ir.Cmd(
+    pipeline = cmd("cat").pipe(cmd("grep", "x")).read("in.txt")
+    assert isinstance(pipeline, ir.Pipeline)
+    assert len(pipeline.stages) == 2
+    assert pipeline.stages[0] == ir.Cmd(
         ("cat",), redirects=(ir.FdFromFile(0, Path("in.txt")),)
     )
-    assert node.stages[1] == ir.Cmd(("grep", "x"))
+    assert pipeline.stages[1] == ir.Cmd(("grep", "x"))
 
 
 # =============================================================================
@@ -159,23 +159,21 @@ def test_pipeline_read() -> None:
 
 def test_sub_in() -> None:
     sub = cmd("sort", "a.txt").sub_in()
-    assert isinstance(sub, ir.Sub)
-    assert sub.write is False
+    assert isinstance(sub, ir.SubIn)
     assert sub.cmd == ir.Cmd(("sort", "a.txt"))
 
 
 def test_sub_out() -> None:
     sub = cmd("gzip").sub_out()
-    assert isinstance(sub, ir.Sub)
-    assert sub.write is True
+    assert isinstance(sub, ir.SubOut)
     assert sub.cmd == ir.Cmd(("gzip",))
 
 
 def test_cmd_with_sub_arg() -> None:
     sub = cmd("sort", "a.txt").sub_in()
-    node = cmd("cat", sub)
-    assert isinstance(node, ir.Cmd)
-    assert node.args == ("cat", ir.Sub(ir.Cmd(("sort", "a.txt")), write=False))
+    command = cmd("cat", sub)
+    assert isinstance(command, ir.Cmd)
+    assert command.args == ("cat", ir.SubIn(ir.Cmd(("sort", "a.txt"))))
 
 
 # =============================================================================
@@ -184,13 +182,13 @@ def test_cmd_with_sub_arg() -> None:
 
 
 def test_redirect_pipe() -> None:
-    node = cmd("cat").read("in.txt").pipe(cmd("grep", "x"))
-    assert isinstance(node, ir.Pipeline)
-    assert len(node.stages) == 2
-    assert node.stages[0] == ir.Cmd(
+    pipeline = cmd("cat").read("in.txt").pipe(cmd("grep", "x"))
+    assert isinstance(pipeline, ir.Pipeline)
+    assert len(pipeline.stages) == 2
+    assert pipeline.stages[0] == ir.Cmd(
         ("cat",), redirects=(ir.FdFromFile(0, Path("in.txt")),)
     )
-    assert node.stages[1] == ir.Cmd(("grep", "x"))
+    assert pipeline.stages[1] == ir.Cmd(("grep", "x"))
 
 
 # =============================================================================
@@ -252,13 +250,13 @@ async def test_feed_bytes_e2e(tmp_path: Path) -> None:
     assert outfile.read_bytes() == data
 
 
-async def test_from_proc_single(tmp_path: Path) -> None:
+async def test_sub_in_single(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     await cmd("cat", cmd("echo", "hello").sub_in()).write(outfile).run()
     assert outfile.read_text() == "hello\n"
 
 
-async def test_from_proc_diff(tmp_path: Path) -> None:
+async def test_sub_in_diff(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     outfile = tmp_path / "out.txt"
@@ -277,12 +275,11 @@ async def test_from_proc_diff(tmp_path: Path) -> None:
     assert outfile.read_text() == ""
 
 
-async def test_to_proc_with_ir_sub(tmp_path: Path) -> None:
+async def test_sub_out_with_ir_sub(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    sink = ir.Sub(
+    sink = ir.SubOut(
         ir.Cmd(("cat",), redirects=(ir.FdToFile(1, outfile),)),
-        write=True,
     )
     await cmd("echo", "hello").pipe(cmd("tee", sink)).write(main_out).run()
     assert outfile.read_text() == "hello\n"

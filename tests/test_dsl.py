@@ -5,37 +5,37 @@ import pytest
 from shish import (
     Cmd,
     Pipeline,
-    Sub,
+    cmd,
     feed,
-    from_proc,
     ir,
     pipe,
     read,
     sh,
-    to_proc,
+    sub_in,
+    sub_out,
     unwrap,
     write,
 )
 
 
 def test_cmd_getattr() -> None:
-    assert unwrap(Cmd().echo).args == ("echo",)
+    assert unwrap(cmd().echo).args == ("echo",)
 
 
 def test_cmd_chain() -> None:
-    assert unwrap(Cmd().git.status).args == ("git", "status")
+    assert unwrap(cmd().git.status).args == ("git", "status")
 
 
 def test_cmd_call_args() -> None:
-    assert unwrap(Cmd().echo("hello", "world")).args == ("echo", "hello", "world")
+    assert unwrap(cmd().echo("hello", "world")).args == ("echo", "hello", "world")
 
 
 def test_cmd_call_short_flag() -> None:
-    assert unwrap(Cmd().ls(l=True, a=True)).args == ("ls", "-l", "-a")
+    assert unwrap(cmd().ls(l=True, a=True)).args == ("ls", "-l", "-a")
 
 
 def test_cmd_call_long_flag() -> None:
-    assert unwrap(Cmd().git.commit(message="fix")).args == (
+    assert unwrap(cmd().git.commit(message="fix")).args == (
         "git",
         "commit",
         "--message",
@@ -44,11 +44,11 @@ def test_cmd_call_long_flag() -> None:
 
 
 def test_cmd_call_flag_false() -> None:
-    assert unwrap(Cmd().ls(l=True, a=False)).args == ("ls", "-l")
+    assert unwrap(cmd().ls(l=True, a=False)).args == ("ls", "-l")
 
 
 def test_cmd_underscore_to_dash() -> None:
-    assert unwrap(Cmd().foo(some_flag="value")).args == (
+    assert unwrap(cmd().foo(some_flag="value")).args == (
         "foo",
         "--some-flag",
         "value",
@@ -138,56 +138,56 @@ def test_pipe_flattens_both() -> None:
 def test_redirect_stdout() -> None:
     result = sh.echo("hello") > "out.txt"
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdToFile)
-    assert node.redirects[0].path == Path("out.txt")
-    assert node.redirects[0].append is False
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdToFile)
+    assert inner.redirects[0].path == Path("out.txt")
+    assert inner.redirects[0].append is False
 
 
 def test_redirect_stdout_append() -> None:
     result = sh.echo("hello") >> "out.txt"
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdToFile)
-    assert node.redirects[0].append is True
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdToFile)
+    assert inner.redirects[0].append is True
 
 
 def test_redirect_stdin_file() -> None:
     result = sh.cat() < "in.txt"
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdFromFile)
-    assert node.redirects[0].path == Path("in.txt")
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdFromFile)
+    assert inner.redirects[0].path == Path("in.txt")
 
 
 def test_redirect_stdin_data() -> None:
     result = sh.cat() << "hello"
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdFromData)
-    assert node.redirects[0].data == "hello"
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdFromData)
+    assert inner.redirects[0].data == "hello"
 
 
 def test_redirect_chain_stdin_stdout() -> None:
     result = (sh.cat() < "in.txt") > "out.txt"
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 2
-    assert isinstance(node.redirects[0], ir.FdFromFile)
-    assert isinstance(node.redirects[1], ir.FdToFile)
+    inner = unwrap(result)
+    assert len(inner.redirects) == 2
+    assert isinstance(inner.redirects[0], ir.FdFromFile)
+    assert isinstance(inner.redirects[1], ir.FdToFile)
 
 
 def test_redirect_chain_stdout_stdin() -> None:
     result = (sh.cat() > "out.txt") < "in.txt"
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 2
-    assert isinstance(node.redirects[0], ir.FdToFile)
-    assert isinstance(node.redirects[1], ir.FdFromFile)
+    inner = unwrap(result)
+    assert len(inner.redirects) == 2
+    assert isinstance(inner.redirects[0], ir.FdToFile)
+    assert isinstance(inner.redirects[1], ir.FdFromFile)
 
 
 def test_redirect_pipeline() -> None:
@@ -263,74 +263,72 @@ def test_pipe_flattens() -> None:
 def test_write_fn() -> None:
     result = write(sh.echo("hello"), "out.txt")
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdToFile)
-    assert node.redirects[0].path == Path("out.txt")
-    assert node.redirects[0].append is False
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdToFile)
+    assert inner.redirects[0].path == Path("out.txt")
+    assert inner.redirects[0].append is False
 
 
 def test_write_append_fn() -> None:
     result = write(sh.echo("hello"), "out.txt", append=True)
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdToFile)
-    assert node.redirects[0].append is True
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdToFile)
+    assert inner.redirects[0].append is True
 
 
 def test_read_fn() -> None:
     result = read(sh.cat(), "in.txt")
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdFromFile)
-    assert node.redirects[0].path == Path("in.txt")
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdFromFile)
+    assert inner.redirects[0].path == Path("in.txt")
 
 
 def test_feedfn() -> None:
     result = feed(sh.cat(), "hello")
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 1
-    assert isinstance(node.redirects[0], ir.FdFromData)
-    assert node.redirects[0].data == "hello"
+    inner = unwrap(result)
+    assert len(inner.redirects) == 1
+    assert isinstance(inner.redirects[0], ir.FdFromData)
+    assert inner.redirects[0].data == "hello"
 
 
 def test_chain_read_write() -> None:
     result = write(read(sh.cat(), "in.txt"), "out.txt")
     assert isinstance(result, Cmd)
-    node = unwrap(result)
-    assert len(node.redirects) == 2
-    assert isinstance(node.redirects[0], ir.FdFromFile)
-    assert isinstance(node.redirects[1], ir.FdToFile)
+    inner = unwrap(result)
+    assert len(inner.redirects) == 2
+    assert isinstance(inner.redirects[0], ir.FdFromFile)
+    assert isinstance(inner.redirects[1], ir.FdToFile)
 
 
-def test_from_proc() -> None:
-    sub = from_proc(sh.sort("a.txt"))
-    assert isinstance(sub, Sub)
-    assert sub.write is False
+def test_sub_in() -> None:
+    sub = sub_in(sh.sort("a.txt"))
+    assert isinstance(sub, ir.SubIn)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("sort", "a.txt")
 
 
-def test_to_proc() -> None:
-    sub = to_proc(sh.gzip())
-    assert isinstance(sub, Sub)
-    assert sub.write is True
+def test_sub_out() -> None:
+    sub = sub_out(sh.gzip())
+    assert isinstance(sub, ir.SubOut)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("gzip",)
 
 
-def test_from_proc_with_pipeline() -> None:
-    sub = from_proc(sh.cat("a") | sh.sort())
-    assert isinstance(sub, Sub)
+def test_sub_in_with_pipeline() -> None:
+    sub = sub_in(sh.cat("a") | sh.sort())
+    assert isinstance(sub, ir.SubIn)
     assert isinstance(sub.cmd, ir.Pipeline)
 
 
-def test_to_proc_with_redirect() -> None:
-    sub = to_proc(sh.gzip() > "out.gz")
-    assert isinstance(sub, Sub)
+def test_sub_out_with_redirect() -> None:
+    sub = sub_out(sh.gzip() > "out.gz")
+    assert isinstance(sub, ir.SubOut)
     assert isinstance(sub.cmd, ir.Cmd)
     assert sub.cmd.args == ("gzip",)
     assert len(sub.cmd.redirects) == 1

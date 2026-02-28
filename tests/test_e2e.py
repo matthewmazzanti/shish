@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from shish import from_proc, out, run, sh, to_proc
+from shish import out, run, sh, sub_in, sub_out
 
 # =============================================================================
 # Basic Execution
@@ -46,7 +46,7 @@ async def test_pipeline_pipefail() -> None:
 
 async def test_pipeline_sigpipe() -> None:
     # yes | head -1: yes gets SIGPIPE when head exits
-    result = await asyncio.wait_for(sh.yes() | sh.head(n=1), timeout=2.0)
+    result = await asyncio.wait_for(sh.yes() | sh.head(n="1"), timeout=2.0)
     assert result in (0, 141)  # head exits 0, yes gets SIGPIPE (128+13)
 
 
@@ -224,72 +224,72 @@ async def test_binary_data_through_pipeline(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# Process Substitution (from_proc / to_proc)
+# Process Substitution (sub_in / sub_out)
 # =============================================================================
 
 
-async def test_from_proc_single(tmp_path: Path) -> None:
+async def test_sub_in_single(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    await (sh.cat(from_proc(sh.echo("hello"))) > out)
+    await (sh.cat(sub_in(sh.echo("hello"))) > out)
     assert out.read_text() == "hello\n"
 
 
-async def test_from_proc_two_sources(tmp_path: Path) -> None:
+async def test_sub_in_two_sources(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     out = tmp_path / "out.txt"
     file1.write_text("b\na\nc\n")
     file2.write_text("b\na\nc\n")
-    result = await (sh.diff(from_proc(sh.sort(file1)), from_proc(sh.sort(file2))) > out)
+    result = await (sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2))) > out)
     assert result == 0
     assert out.read_text() == ""
 
 
-async def test_from_proc_diff_sources(tmp_path: Path) -> None:
+async def test_sub_in_diff_sources(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     file1.write_text("a\nb\n")
     file2.write_text("a\nc\n")
-    result = await sh.diff(from_proc(sh.sort(file1)), from_proc(sh.sort(file2)))
+    result = await sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2)))
     assert result == 1
 
 
-async def test_from_proc_with_pipeline(tmp_path: Path) -> None:
+async def test_sub_in_with_pipeline(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    await (sh.cat(from_proc(sh.echo("hello") | sh.tr("a-z", "A-Z"))) > out)
+    await (sh.cat(sub_in(sh.echo("hello") | sh.tr("a-z", "A-Z"))) > out)
     assert out.read_text() == "HELLO\n"
 
 
-async def test_from_proc_with_redirect(tmp_path: Path) -> None:
+async def test_sub_in_with_redirect(tmp_path: Path) -> None:
     inp = tmp_path / "in.txt"
     out = tmp_path / "out.txt"
     inp.write_text("from file\n")
-    await (sh.cat(from_proc(sh.cat() < inp)) > out)
+    await (sh.cat(sub_in(sh.cat() < inp)) > out)
     assert out.read_text() == "from file\n"
 
 
-async def test_from_proc_with_data_redirect(tmp_path: Path) -> None:
+async def test_sub_in_with_data_redirect(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    await (sh.cat(from_proc(sh.cat() << "injected data")) > out)
+    await (sh.cat(sub_in(sh.cat() << "injected data")) > out)
     assert out.read_text() == "injected data"
 
 
-async def test_to_proc_single(tmp_path: Path) -> None:
+async def test_sub_out_single(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    await ((sh.echo("hello") | sh.tee(to_proc(sh.cat() > out))) > main_out)
+    await ((sh.echo("hello") | sh.tee(sub_out(sh.cat() > out))) > main_out)
     assert out.read_text() == "hello\n"
     assert main_out.read_text() == "hello\n"
 
 
-async def test_to_proc_multiple(tmp_path: Path) -> None:
+async def test_sub_out_multiple(tmp_path: Path) -> None:
     out_a = tmp_path / "a.txt"
     out_b = tmp_path / "b.txt"
     main_out = tmp_path / "main.txt"
     await (
         (
             sh.echo("hello")
-            | sh.tee(to_proc(sh.cat() > out_a), to_proc(sh.cat() > out_b))
+            | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
         )
         > main_out
     )
@@ -298,19 +298,19 @@ async def test_to_proc_multiple(tmp_path: Path) -> None:
     assert main_out.read_text() == "hello\n"
 
 
-async def test_to_proc_with_data_redirect(tmp_path: Path) -> None:
+async def test_sub_out_with_data_redirect(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     main_out = tmp_path / "main.txt"
-    await ((sh.echo("from tee") | sh.tee(to_proc(sh.cat() > out))) > main_out)
+    await ((sh.echo("from tee") | sh.tee(sub_out(sh.cat() > out))) > main_out)
     assert out.read_text() == "from tee\n"
 
 
-async def test_mixed_from_proc_and_file_redirect(tmp_path: Path) -> None:
+async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:
     file1 = tmp_path / "file1.txt"
     file2 = tmp_path / "file2.txt"
     file1.write_text("c\na\nb\n")
     file2.write_text("a\nb\nc\n")
-    result = await sh.diff(from_proc(sh.sort(file1)), file2)
+    result = await sh.diff(sub_in(sh.sort(file1)), file2)
     assert result == 0  # sorted file1 == file2
 
 
@@ -386,8 +386,8 @@ async def test_out_with_data_redirect() -> None:
     assert result == "input data"
 
 
-async def test_out_with_from_proc() -> None:
-    result = await out(sh.cat(from_proc(sh.echo("nested"))))
+async def test_out_with_sub_in() -> None:
+    result = await out(sh.cat(sub_in(sh.echo("nested"))))
     assert result == "nested\n"
 
 

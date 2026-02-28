@@ -20,8 +20,12 @@ await (sh.echo("line") >> "log.txt")                 # append
 await (sh.grep("error") < "input.txt")               # stdin from file
 await (sh.grep("error") << "line1\nline2\n")         # stdin from string
 
-# Process substitution
-await sh.diff(from_proc(sh.sort("a.txt")), from_proc(sh.sort("b.txt")))
+# Process substitution (as args)
+await sh.diff(sub_in(sh.sort("a.txt")), sub_in(sh.sort("b.txt")))
+
+# Process substitution (as redirect targets)
+await (sh.cat() < sub_in(sh.sort("a.txt")))    # <(sort a.txt)
+await (sh.echo("hi") > sub_out(sh.gzip() > "out.gz"))  # >(gzip > out.gz)
 
 # Kwargs to flags
 await sh.git.commit(message="fix bug", amend=True)
@@ -29,7 +33,7 @@ await sh.git.commit(message="fix bug", amend=True)
 
 # Capture output (returns str, decoded as utf-8)
 stdout = await out(sh.ls("-la"))
-stdout = await out(sh.cmd(), encoding=None)  # raw bytes
+stdout = await out(sh.cat(), encoding=None)  # raw bytes
 ```
 
 ## Why Not stdlib?
@@ -103,10 +107,10 @@ task = asyncio.create_task(sh.server())
 Tuple syntax targets specific file descriptors:
 
 ```python
-await (sh.cmd() > (STDERR, "err.log"))         # stderr to file
-await (sh.cmd() >> (STDERR, "err.log"))        # stderr append
-await (sh.cmd() < (3, "data.txt"))        # fd 3 from file
-await (sh.cmd() << (3, "input"))          # fd 3 from string
+await (sh.make() > (STDERR, "err.log"))        # stderr to file
+await (sh.make() >> (STDERR, "err.log"))       # stderr append
+await (sh.cat() < (3, "data.txt"))             # fd 3 from file
+await (sh.cat() << (3, "input"))               # fd 3 from string
 ```
 
 ## Combinators
@@ -114,12 +118,14 @@ await (sh.cmd() << (3, "input"))          # fd 3 from string
 Operators delegate to functions for when you need them:
 
 ```python
-from shish import out, run, pipe, write, read, feed, close, from_proc, to_proc
+from shish import out, run, pipe, write, read, feed, close, sub_in, sub_out
 
 pipe(sh.a(), sh.b(), sh.c())              # varargs pipeline
 write(read(sh.cat(), "in"), "out")        # functional composition
-write(sh.cmd(), "err.log", fd=STDERR)     # stderr to file
-close(sh.cmd(), STDERR)                   # close stderr
+write(sh.make(), "err.log", fd=STDERR)    # stderr to file
+read(sh.cat(), sub_in(sh.sort("a.txt")))  # read from process sub
+write(sh.tee(), sub_out(sh.gzip() > "a.gz"))  # write to process sub
+close(sh.make(), STDERR)                  # close stderr
 stdout = await out(sh.ls())               # capture stdout as str
 ```
 
