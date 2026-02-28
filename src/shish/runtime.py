@@ -209,9 +209,9 @@ class Executor:
         return [root_idx]
 
     def _prepare_pipeline(
-        self, pipeline_node: Pipeline, stdin_fd: int | None, stdout_fd: int | None
+        self, pipeline: Pipeline, stdin_fd: int | None, stdout_fd: int | None
     ) -> list[int]:
-        stages = pipeline_node.stages
+        stages = pipeline.stages
         if not stages:
             return []
 
@@ -322,13 +322,12 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
 
     Raises subprocess.CalledProcessError on non-zero exit code.
     """
-    node = cmd
     read_fd, write_fd = os.pipe()
     executor = Executor()
     try:
         # Read and execute concurrently to avoid deadlock
         result, stdout = await asyncio.gather(
-            executor.execute(node, stdout_fd=write_fd),
+            executor.execute(cmd, stdout_fd=write_fd),
             async_read(read_fd),
         )
         if result.code != 0:

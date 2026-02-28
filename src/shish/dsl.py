@@ -155,23 +155,23 @@ def unwrap(cmd: Pipeline) -> ir.Pipeline: ...
 
 
 def unwrap(cmd: Cmd | Pipeline) -> ir.Cmd | ir.Pipeline:
-    """Extract the IR node from a DSL wrapper."""
+    """Extract the IR from a DSL wrapper."""
     return cmd._shish_ir  # pyright: ignore[reportPrivateUsage]
 
 
 @overload
-def wrap(node: ir.Cmd) -> Cmd: ...
+def wrap(inner: ir.Cmd) -> Cmd: ...
 @overload
-def wrap(node: ir.Pipeline) -> Pipeline: ...
+def wrap(inner: ir.Pipeline) -> Pipeline: ...
 
 
-def wrap(node: ir.Cmd | ir.Pipeline) -> Cmd | Pipeline:
-    """Wrap an IR node in its DSL counterpart."""
-    match node:
+def wrap(inner: ir.Cmd | ir.Pipeline) -> Cmd | Pipeline:
+    """Wrap an IR in its DSL counterpart."""
+    match inner:
         case ir.Cmd():
-            return Cmd(node)
+            return Cmd(inner)
         case ir.Pipeline():
-            return Pipeline(node)
+            return Pipeline(inner)
 
 
 def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
