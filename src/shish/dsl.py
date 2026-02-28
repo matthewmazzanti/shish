@@ -65,12 +65,16 @@ class Cmd:
             case path:
                 return write(self, path)
 
-    def __rshift__(self, path: PathLike | tuple[int, PathLike]) -> Cmd:
-        """cmd >> "file" or cmd >> (fd, "file")."""
-        match path:
-            case fd, target:
-                return write(self, target, append=True, fd=fd)
-            case _:
+    def __rshift__(self, target: WriteDst | tuple[int, WriteDst]) -> Cmd:
+        """cmd >> "file", cmd >> sub, or cmd >> (fd, target)."""
+        match target:
+            case fd, ir.SubOut() as sub:
+                return write_sub(self, sub, fd=fd)
+            case fd, path:
+                return write(self, path, append=True, fd=fd)
+            case ir.SubOut():
+                return write_sub(self, target)
+            case path:
                 return write(self, path, append=True)
 
     def __lt__(self, target: ReadSrc | tuple[int, ReadSrc]) -> Cmd:
@@ -128,12 +132,16 @@ class Pipeline:
             case path:
                 return write(self, path)
 
-    def __rshift__(self, path: PathLike | tuple[int, PathLike]) -> Pipeline:
-        """pipeline >> "file" or pipeline >> (fd, "file")."""
-        match path:
-            case fd, target:
-                return write(self, target, append=True, fd=fd)
-            case _:
+    def __rshift__(self, target: WriteDst | tuple[int, WriteDst]) -> Pipeline:
+        """pipeline >> "file", pipeline >> sub, or pipeline >> (fd, target)."""
+        match target:
+            case fd, ir.SubOut() as sub:
+                return write_sub(self, sub, fd=fd)
+            case fd, path:
+                return write(self, path, append=True, fd=fd)
+            case ir.SubOut():
+                return write_sub(self, target)
+            case path:
                 return write(self, path, append=True)
 
     def __lt__(self, target: ReadSrc | tuple[int, ReadSrc]) -> Pipeline:
