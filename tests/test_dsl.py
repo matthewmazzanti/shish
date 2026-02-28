@@ -215,7 +215,7 @@ def test_redirect_stdin_data() -> None:
     assert isinstance(result, Cmd)
     assert unwrap(result) == ir.Cmd(
         ("cat",),
-        redirects=(ir.FdFromData(STDIN,"hello"),),
+        redirects=(ir.FdFromData(STDIN, "hello"),),
     )
 
 
@@ -422,7 +422,7 @@ def test_feed_fn() -> None:
     result = feed(sh.cat(), "hello")
     assert unwrap(result) == ir.Cmd(
         ("cat",),
-        redirects=(ir.FdFromData(STDIN,"hello"),),
+        redirects=(ir.FdFromData(STDIN, "hello"),),
     )
 
 
@@ -491,21 +491,25 @@ def test_sub_in_multiple_args() -> None:
         sub_in(sh.sort("a.txt")),
         sub_in(sh.sort("b.txt")),
     )
-    assert unwrap(result) == ir.Cmd((
-        "diff",
-        ir.SubIn(ir.Cmd(("sort", "a.txt"))),
-        ir.SubIn(ir.Cmd(("sort", "b.txt"))),
-    ))
+    assert unwrap(result) == ir.Cmd(
+        (
+            "diff",
+            ir.SubIn(ir.Cmd(("sort", "a.txt"))),
+            ir.SubIn(ir.Cmd(("sort", "b.txt"))),
+        )
+    )
 
 
 def test_sub_out_as_arg() -> None:
     result = sh.tee(sub_out(sh.cat() > "out.txt"))
-    assert unwrap(result) == ir.Cmd((
-        "tee",
-        ir.SubOut(
-            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
-        ),
-    ))
+    assert unwrap(result) == ir.Cmd(
+        (
+            "tee",
+            ir.SubOut(
+                ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
+            ),
+        )
+    )
 
 
 def test_sub_out_with_redirect() -> None:

@@ -265,9 +265,7 @@ async def test_sub_in_with_data_redirect(tmp_path: Path) -> None:
 
 async def test_sub_out_single(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    result = await out(
-        sh.echo("hello") | sh.tee(sub_out(sh.cat() > outfile))
-    )
+    result = await out(sh.echo("hello") | sh.tee(sub_out(sh.cat() > outfile)))
     assert outfile.read_text() == "hello\n"
     assert result == "hello\n"
 
@@ -276,8 +274,7 @@ async def test_sub_out_multiple(tmp_path: Path) -> None:
     out_a = tmp_path / "a.txt"
     out_b = tmp_path / "b.txt"
     result = await out(
-        sh.echo("hello")
-        | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
+        sh.echo("hello") | sh.tee(sub_out(sh.cat() > out_a), sub_out(sh.cat() > out_b))
     )
     assert out_a.read_text() == "hello\n"
     assert out_b.read_text() == "hello\n"
@@ -286,9 +283,7 @@ async def test_sub_out_multiple(tmp_path: Path) -> None:
 
 async def test_sub_out_with_data_redirect(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    await out(
-        sh.echo("from tee") | sh.tee(sub_out(sh.cat() > outfile))
-    )
+    await out(sh.echo("from tee") | sh.tee(sub_out(sh.cat() > outfile)))
     assert outfile.read_text() == "from tee\n"
 
 

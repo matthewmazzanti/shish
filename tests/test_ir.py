@@ -34,19 +34,23 @@ def test_cmd_numeric_str_arg() -> None:
 def test_pipe_two() -> None:
     result = cmd("echo", "hello").pipe(cmd("cat"))
     assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline((
-        ir.Cmd(("echo", "hello")),
-        ir.Cmd(("cat",)),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("cat",)),
+        )
+    )
 
 
 def test_pipe_chain() -> None:
     result = cmd("echo", "hello").pipe(cmd("grep", "h")).pipe(cmd("wc", "-l"))
-    assert result == ir.Pipeline((
-        ir.Cmd(("echo", "hello")),
-        ir.Cmd(("grep", "h")),
-        ir.Cmd(("wc", "-l")),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("grep", "h")),
+            ir.Cmd(("wc", "-l")),
+        )
+    )
 
 
 # =============================================================================
@@ -86,9 +90,7 @@ def test_feed_stdin_bytes() -> None:
 
 
 def test_close_fd() -> None:
-    assert cmd("cat").close(STDIN) == ir.Cmd(
-        ("cat",), redirects=(ir.FdClose(STDIN),)
-    )
+    assert cmd("cat").close(STDIN) == ir.Cmd(("cat",), redirects=(ir.FdClose(STDIN),))
 
 
 def test_redirect_chain_read_write() -> None:
@@ -148,33 +150,39 @@ def test_feed_explicit_fd() -> None:
 
 def test_redirect_in_pipeline_first() -> None:
     result = cmd("cat").read("in.txt").pipe(cmd("grep", "x"))
-    assert result == ir.Pipeline((
-        ir.Cmd(("cat",), redirects=(ir.FdFromFile(STDIN, Path("in.txt")),)),
-        ir.Cmd(("grep", "x")),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("cat",), redirects=(ir.FdFromFile(STDIN, Path("in.txt")),)),
+            ir.Cmd(("grep", "x")),
+        )
+    )
 
 
 def test_redirect_in_pipeline_last() -> None:
     result = cmd("echo", "hello").pipe(cmd("cat").write("out.txt"))
-    assert result == ir.Pipeline((
-        ir.Cmd(("echo", "hello")),
-        ir.Cmd(
-            ("cat",),
-            redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
-        ),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(
+                ("cat",),
+                redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+            ),
+        )
+    )
 
 
 def test_redirect_in_pipeline_middle() -> None:
     result = cmd("a").pipe(cmd("b").write("log.txt")).pipe(cmd("c"))
-    assert result == ir.Pipeline((
-        ir.Cmd(("a",)),
-        ir.Cmd(
-            ("b",),
-            redirects=(ir.FdToFile(STDOUT, Path("log.txt")),),
-        ),
-        ir.Cmd(("c",)),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(
+                ("b",),
+                redirects=(ir.FdToFile(STDOUT, Path("log.txt")),),
+            ),
+            ir.Cmd(("c",)),
+        )
+    )
 
 
 # =============================================================================
@@ -196,10 +204,12 @@ def test_sub_out() -> None:
 
 def test_sub_in_as_arg() -> None:
     result = cmd("cat", cmd("echo", "hello").sub_in())
-    assert result == ir.Cmd((
-        "cat",
-        ir.SubIn(ir.Cmd(("echo", "hello"))),
-    ))
+    assert result == ir.Cmd(
+        (
+            "cat",
+            ir.SubIn(ir.Cmd(("echo", "hello"))),
+        )
+    )
 
 
 def test_sub_in_multiple_args() -> None:
@@ -208,24 +218,28 @@ def test_sub_in_multiple_args() -> None:
         cmd("sort", "a.txt").sub_in(),
         cmd("sort", "b.txt").sub_in(),
     )
-    assert result == ir.Cmd((
-        "diff",
-        ir.SubIn(ir.Cmd(("sort", "a.txt"))),
-        ir.SubIn(ir.Cmd(("sort", "b.txt"))),
-    ))
+    assert result == ir.Cmd(
+        (
+            "diff",
+            ir.SubIn(ir.Cmd(("sort", "a.txt"))),
+            ir.SubIn(ir.Cmd(("sort", "b.txt"))),
+        )
+    )
 
 
 def test_sub_out_as_arg() -> None:
     result = cmd("tee", cmd("cat").write("out.txt").sub_out())
-    assert result == ir.Cmd((
-        "tee",
-        ir.SubOut(
-            ir.Cmd(
-                ("cat",),
-                redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
-            )
-        ),
-    ))
+    assert result == ir.Cmd(
+        (
+            "tee",
+            ir.SubOut(
+                ir.Cmd(
+                    ("cat",),
+                    redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+                )
+            ),
+        )
+    )
 
 
 def test_sub_out_with_redirect() -> None:
@@ -244,9 +258,7 @@ def test_sub_out_with_redirect() -> None:
 
 
 def test_cmd_arg() -> None:
-    assert cmd("echo").arg("hello", "world") == ir.Cmd(
-        ("echo", "hello", "world")
-    )
+    assert cmd("echo").arg("hello", "world") == ir.Cmd(("echo", "hello", "world"))
 
 
 def test_cmd_arg_returns_new_instance() -> None:
@@ -262,47 +274,51 @@ def test_cmd_arg_returns_new_instance() -> None:
 
 
 def test_pipeline_write_last_stage() -> None:
-    result = (
-        cmd("echo", "hello")
-        .pipe(cmd("tr", "a-z", "A-Z"))
-        .write("out.txt")
-    )
+    result = cmd("echo", "hello").pipe(cmd("tr", "a-z", "A-Z")).write("out.txt")
     assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline((
-        ir.Cmd(("echo", "hello")),
-        ir.Cmd(
-            ("tr", "a-z", "A-Z"),
-            redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
-        ),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(
+                ("tr", "a-z", "A-Z"),
+                redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+            ),
+        )
+    )
 
 
 def test_pipeline_read_first_stage() -> None:
     result = cmd("cat").pipe(cmd("grep", "x")).read("in.txt")
     assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline((
-        ir.Cmd(
-            ("cat",),
-            redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
-        ),
-        ir.Cmd(("grep", "x")),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(
+                ("cat",),
+                redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
+            ),
+            ir.Cmd(("grep", "x")),
+        )
+    )
 
 
 def test_pipeline_feed_first_stage() -> None:
     result = cmd("cat").pipe(cmd("grep", "x")).feed("hello")
-    assert result == ir.Pipeline((
-        ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "hello"),)),
-        ir.Cmd(("grep", "x")),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "hello"),)),
+            ir.Cmd(("grep", "x")),
+        )
+    )
 
 
 def test_pipeline_close_last_stage() -> None:
     result = cmd("cat").pipe(cmd("grep", "x")).close(STDOUT)
-    assert result == ir.Pipeline((
-        ir.Cmd(("cat",)),
-        ir.Cmd(("grep", "x"), redirects=(ir.FdClose(STDOUT),)),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("cat",)),
+            ir.Cmd(("grep", "x"), redirects=(ir.FdClose(STDOUT),)),
+        )
+    )
 
 
 # =============================================================================
@@ -318,28 +334,30 @@ def test_pipeline_factory_flat() -> None:
 def test_pipeline_factory_flattens_nested() -> None:
     inner = ir.Pipeline((ir.Cmd(("a",)), ir.Cmd(("b",))))
     result = ir.pipeline(inner, ir.Cmd(("c",)))
-    assert result == ir.Pipeline((
-        ir.Cmd(("a",)),
-        ir.Cmd(("b",)),
-        ir.Cmd(("c",)),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+        )
+    )
 
 
 def test_pipeline_factory_flattens_both_sides() -> None:
     left = ir.Pipeline((ir.Cmd(("a",)), ir.Cmd(("b",))))
     right = ir.Pipeline((ir.Cmd(("c",)), ir.Cmd(("d",))))
     result = ir.pipeline(left, right)
-    assert result == ir.Pipeline((
-        ir.Cmd(("a",)),
-        ir.Cmd(("b",)),
-        ir.Cmd(("c",)),
-        ir.Cmd(("d",)),
-    ))
+    assert result == ir.Pipeline(
+        (
+            ir.Cmd(("a",)),
+            ir.Cmd(("b",)),
+            ir.Cmd(("c",)),
+            ir.Cmd(("d",)),
+        )
+    )
 
 
 def test_pipeline_factory_preserves_redirects() -> None:
-    cmd_b = ir.Cmd(
-        ("b",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),)
-    )
+    cmd_b = ir.Cmd(("b",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
     result = ir.pipeline(ir.Cmd(("a",)), cmd_b)
     assert result == ir.Pipeline((ir.Cmd(("a",)), cmd_b))

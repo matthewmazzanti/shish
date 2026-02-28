@@ -103,29 +103,25 @@ class Pipeline:
     def __gt__(self, target: object) -> Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
-            "Pipeline does not support >. "
-            "You probably wanted: cmd1 | (cmd2 > target)"
+            "Pipeline does not support >. You probably wanted: cmd1 | (cmd2 > target)"
         )
 
     def __rshift__(self, target: object) -> Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
-            "Pipeline does not support >>. "
-            "You probably wanted: cmd1 | (cmd2 >> target)"
+            "Pipeline does not support >>. You probably wanted: cmd1 | (cmd2 >> target)"
         )
 
     def __lt__(self, target: object) -> Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
-            "Pipeline does not support <. "
-            "You probably wanted: (cmd1 < source) | cmd2"
+            "Pipeline does not support <. You probably wanted: (cmd1 < source) | cmd2"
         )
 
     def __lshift__(self, data: object) -> Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
-            "Pipeline does not support <<. "
-            "You probably wanted: (cmd1 << data) | cmd2"
+            "Pipeline does not support <<. You probably wanted: (cmd1 << data) | cmd2"
         )
 
     def __bool__(self) -> Never:
