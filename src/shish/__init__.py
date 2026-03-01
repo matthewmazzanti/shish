@@ -11,6 +11,7 @@ from shish.dsl import (
     feed,
     out,
     pipe,
+    prepare,
     read,
     run,
     sh,
@@ -22,7 +23,7 @@ from shish.dsl import (
 )
 from shish.fdops import STDERR, STDIN, STDOUT
 from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
-from shish.runtime import Result
+from shish.runtime import Execution
 
 __all__ = [
     "STDERR",
@@ -31,11 +32,11 @@ __all__ = [
     "Arg",
     "Cmd",
     "Data",
+    "Execution",
     "Flag",
     "PathLike",
     "Pipeline",
     "ReadSrc",
-    "Result",
     "Runnable",
     "Sh",
     "Sub",
@@ -49,6 +50,7 @@ __all__ = [
     "feed",
     "out",
     "pipe",
+    "prepare",
     "read",
     "run",
     "sh",

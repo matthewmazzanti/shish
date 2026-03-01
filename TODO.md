@@ -19,17 +19,15 @@
 
 ## Open questions
 
-- **Process indices fragile.** Merge prepare+spawn into async `_spawn` that
-  returns Process objects directly. Fd closes accumulate during walk.
-- **Result tree.** Tree of per-stage codes mirroring command structure.
-  Encodes root-vs-ancillary naturally. Pipefail resolved at root.
 - **`out()` too involved.** Capture mode on execute, or method on process handle?
 - **Prepare walk mirrors IR.** Visitor pattern or composable FdOps transforms?
   Risk: coupling IR to runtime.
 
 ## Architecture notes
 
-- Pipefail (rightmost non-zero), sub exit codes ignored — matches bash
+- Process tree: CmdNode (proc + fds + subs) / PipelineNode (stages)
+  - `root_procs()` for pipefail, `all_procs()`/`all_fds()` for cleanup
+  - Subs excluded from pipefail — matches bash process substitution semantics
 - Prepare/spawn split: parent must close pipe fds after all spawns
 - Arg-position subs use `/dev/fd/N` path via pass_fds; redirect-position
   subs go through FdOps move_fd — distinct mechanisms matching bash

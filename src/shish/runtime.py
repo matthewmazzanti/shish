@@ -6,8 +6,8 @@ import asyncio
 import os
 import subprocess
 from asyncio.subprocess import Process, create_subprocess_exec
-from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from collections.abc import Callable, Coroutine, Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import overload
 
@@ -30,32 +30,161 @@ from shish.ir import (
 
 
 @dataclass
-class PreparedProcess:
-    """Process ready to start with resolved fds."""
-
-    args: list[str]
-    stdin_fd: int | None = None
-    stdout_fd: int | None = None
-    pass_fds: tuple[int, ...] = ()
-    preexec: Callable[[], None] | None = None
-    cwd: Path | None = None
-    env: dict[str, str] | None = None
-
-
-@dataclass
-class FdEntry:
-    """Tracked file descriptor with optional data to write before closing."""
+class OwnedFd:
+    """Tracked file descriptor with idempotent close and optional data to write."""
 
     fd: int
     data: str | bytes | None = None
+    closed: bool = False
+
+    def close(self) -> None:
+        """Close the fd if not already closed."""
+        if not self.closed:
+            self.closed = True
+            close_fd(self.fd)
 
 
 @dataclass
-class Result:
-    """Execution result with exit code and optional captured stdout."""
+class CmdNode:
+    """Process tree node for a single spawned command.
 
-    code: int
-    stdout: bytes | None = None
+    Holds the main process, owned fds allocated during spawn, and any
+    substitution sub-processes (from FdToSub, FdFromSub, SubOut, SubIn
+    redirects/args). Sub-processes are excluded from pipefail — only
+    the main proc participates in exit code reporting.
+    """
+
+    proc: Process
+    fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
+    subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
+
+    def root_procs(self) -> Generator[Process]:
+        """Yield the main process only (for pipefail exit code reporting)."""
+        yield self.proc
+
+    def all_procs(self) -> Generator[Process]:
+        """Yield all processes in the subtree (main + subs, recursive)."""
+        yield self.proc
+        for sub in self.subs:
+            yield from sub.all_procs()
+
+    def all_fds(self) -> Generator[OwnedFd]:
+        """Yield all owned fds in the subtree (own + subs, recursive)."""
+        yield from self.fds
+        for sub in self.subs:
+            yield from sub.all_fds()
+
+
+@dataclass
+class PipelineNode:
+    """Process tree node for a pipeline (cmd1 | cmd2 | ...).
+
+    Each stage is a CmdNode. Pipefail semantics: root_procs yields
+    all stage procs left-to-right. Sub-processes within each stage
+    are excluded from pipefail.
+    """
+
+    stages: list[CmdNode]
+
+    def root_procs(self) -> Generator[Process]:
+        """Yield stage main procs left-to-right for pipefail reporting."""
+        for stage in self.stages:
+            yield stage.proc
+
+    def all_procs(self) -> Generator[Process]:
+        """Yield all processes across all stages (recursive)."""
+        for stage in self.stages:
+            yield from stage.all_procs()
+
+    def all_fds(self) -> Generator[OwnedFd]:
+        """Yield all owned fds across all stages (recursive)."""
+        for stage in self.stages:
+            yield from stage.all_fds()
+
+
+ProcessNode = CmdNode | PipelineNode
+
+
+def _normalize_returncode(code: int | None) -> int:
+    """Convert returncode to bash-style: 128 + signal for killed processes."""
+    if code is None:
+        return 0
+    if code < 0:
+        return 128 + (-code)
+    return code
+
+
+async def _kill_and_reap(*procs: Process) -> None:
+    """SIGKILL all still-running processes and wait for them to exit.
+
+    Shielded from cancellation so that cleanup completes even if the
+    calling task is cancelled — without this, orphan zombies would
+    accumulate. Only processes with returncode=None (not yet reaped)
+    are killed; already-exited processes are skipped.
+    """
+    reap: list[Coroutine[None, None, int]] = []
+    for proc in procs:
+        if proc.returncode is None:
+            proc.kill()
+            reap.append(proc.wait())
+    if reap:
+        await asyncio.shield(asyncio.gather(*reap))
+
+
+@dataclass
+class Execution:
+    """Handle for a spawned process tree with a wait() method.
+
+    Returned by prepare(). Callers can inspect the process tree via
+    root before calling wait(). wait() derives processes and fds by
+    recursing the tree, then gathers exits, computes pipefail, and
+    cleans up.
+    """
+
+    root: ProcessNode
+
+    async def wait(self) -> int:
+        """Wait for all processes and return the pipefail exit code.
+
+        Gathers all process waits and data writes concurrently, then
+        computes pipefail (rightmost non-zero from root_procs).
+        Finally: SIGKILL+reap + close all fds (idempotent, shielded).
+        """
+        procs = list(self.root.all_procs())
+        fds = list(self.root.all_fds())
+        try:
+            await asyncio.gather(
+                *[proc.wait() for proc in procs],
+                *self._data_writes(fds),
+            )
+
+            return self._pipefail_code()
+        finally:
+            await _kill_and_reap(*procs)
+            for fd_entry in fds:
+                fd_entry.close()
+
+    def _pipefail_code(self) -> int:
+        """Compute pipefail exit code: rightmost non-zero from root procs."""
+        code = 0
+        for proc in self.root.root_procs():
+            proc_code = _normalize_returncode(proc.returncode)
+            if proc_code != 0:
+                code = proc_code
+        return code
+
+    @staticmethod
+    def _data_writes(fds: list[OwnedFd]) -> list[Coroutine[None, None, None]]:
+        """Collect async_write coroutines for fds carrying data payloads.
+
+        Marks each consumed fd as closed — async_write takes ownership.
+        """
+        writes: list[Coroutine[None, None, None]] = []
+        for fd_entry in fds:
+            if fd_entry.data is not None and not fd_entry.closed:
+                writes.append(async_write(fd_entry.fd, fd_entry.data))
+                fd_entry.closed = True
+        return writes
 
 
 def _build_preexec(
@@ -90,244 +219,312 @@ def _build_preexec(
     return _preexec
 
 
-class Executor:
-    """Prepares and executes a Runnable."""
+@dataclass
+class PrepareCtx:
+    """Tracks fds and procs during spawn for cleanup and ownership transfer."""
 
-    fds: list[FdEntry]
-    prepared: list[PreparedProcess]
-    procs: list[Process]
+    fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
+    procs: list[Process] = field(default_factory=lambda: list[Process]())
 
-    def __init__(self) -> None:
-        self.fds = []
-        self.prepared = []
-        self.procs = []
+    async def exec_(
+        self,
+        *args: str,
+        stdin: int | None = None,
+        stdout: int | None = None,
+        pass_fds: tuple[int, ...] = (),
+        preexec_fn: Callable[[], None] | None = None,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> Process:
+        """Spawn a subprocess via create_subprocess_exec and register it.
 
-    def _alloc_pipe(self) -> tuple[int, int]:
+        stdin/stdout are raw fds (or None for inherit); Popen does
+        dup2 to wire them to fds 0/1 in the child. pass_fds keeps
+        additional fds open across exec (fds > 2 used by redirects
+        and process substitutions). preexec_fn runs between fork and
+        exec to apply user redirect ops (open, dup2, close).
+        """
+        proc = await create_subprocess_exec(
+            *args,
+            stdin=stdin,
+            stdout=stdout,
+            pass_fds=pass_fds,
+            preexec_fn=preexec_fn,
+            cwd=cwd,
+            env=env,
+        )
+        self.procs.append(proc)
+        return proc
+
+    def pipe(self) -> tuple[OwnedFd, OwnedFd]:
+        """Allocate an os.pipe(), tracking both ends for cleanup.
+
+        Returns (read_end, write_end). Both are registered so the
+        finally block can close them even if spawn fails before the
+        caller gets to close them after fork inheritance.
+        """
         read_fd, write_fd = os.pipe()
-        self.fds.append(FdEntry(read_fd))
-        self.fds.append(FdEntry(write_fd))
-        return read_fd, write_fd
+        read_entry = OwnedFd(read_fd)
+        write_entry = OwnedFd(write_fd)
+        self.fds.append(read_entry)
+        self.fds.append(write_entry)
+        return read_entry, write_entry
 
-    def _alloc_data_pipe(self, data: str | bytes) -> int:
+    def data_pipe(self, data: str | bytes) -> tuple[OwnedFd, OwnedFd]:
+        """Allocate a pipe for feeding data (<<< "string" / FdFromData).
+
+        Returns (read_end, write_end). The read end is wired into the
+        child's stdin (or target fd). The write end carries the data
+        payload — wait() later hands it to async_write, which takes
+        ownership and closes it after writing.
+
+        The write end is set non-blocking so async_write can use the
+        event loop's writer callbacks without stalling.
+        """
         read_fd, write_fd = os.pipe()
         os.set_blocking(write_fd, False)
-        self.fds.append(FdEntry(read_fd))
-        self.fds.append(FdEntry(write_fd, data))
-        return read_fd
+        read_entry = OwnedFd(read_fd)
+        write_entry = OwnedFd(write_fd, data)
+        self.fds.append(read_entry)
+        self.fds.append(write_entry)
+        return read_entry, write_entry
 
-    def _prepare(
-        self, cmd: Runnable, stdin_fd: int | None, stdout_fd: int | None
-    ) -> list[int]:
-        """Prepare a Runnable, returning indices of root processes."""
-        match cmd:
-            case Cmd():
-                return self._prepare_cmd(cmd, stdin_fd, stdout_fd)
-            case Pipeline():
-                return self._prepare_pipeline(cmd, stdin_fd, stdout_fd)
 
-    def _prepare_cmd(
-        self, cmd: Cmd, outer_stdin_fd: int | None, outer_stdout_fd: int | None
-    ) -> list[int]:
-        """Prepare a Cmd, resolving redirects and Sub arguments.
+async def _spawn(
+    ctx: PrepareCtx, cmd: Runnable, stdin_fd: int | None, stdout_fd: int | None
+) -> ProcessNode:
+    """Dispatch a Runnable to _spawn_cmd or _spawn_pipeline.
 
-        Two-layer redirect model matching POSIX semantics:
+    stdin_fd/stdout_fd are the outer pipe fds from a parent
+    pipeline (or None for inherit/capture). Returns a ProcessNode
+    for tree-based pipefail reporting.
+    """
+    match cmd:
+        case Cmd():
+            return await _spawn_cmd(ctx, cmd, stdin_fd, stdout_fd)
+        case Pipeline():
+            return await _spawn_pipeline(ctx, cmd, stdin_fd, stdout_fd)
 
-        Layer 1 — pipe wiring (Popen kwargs): stdin=/stdout= from outer
-        pipeline. Popen does dup2(pipe_rd, 0) and dup2(pipe_wr, 1).
 
-        Layer 2 — user redirects (preexec_fn via FdOps): ordered ops that
-        execute after Popen's pipe dup2, so user redirects naturally
-        override pipe wiring.
-        """
-        # Build FdOps simulation with initial live fds from pipeline
-        fdo = FdOps(live={STDIN, STDOUT, STDERR})
+async def _spawn_cmd(
+    ctx: PrepareCtx,
+    cmd: Cmd,
+    outer_stdin_fd: int | None,
+    outer_stdout_fd: int | None,
+) -> CmdNode:
+    """Spawn a single Cmd with all its redirects and sub-processes.
 
-        # Feed IR redirects into FdOps
-        for redirect in cmd.redirects:
-            match redirect:
-                case FdToFd(src=src_fd, dst=dst_fd):  # 2>&1
-                    fdo.dup2(src_fd, dst_fd)
+    Redirect resolution follows a two-layer model matching POSIX:
 
-                case FdToFile(
-                    fd=target_fd, path=path, append=do_append
-                ):  # > file, >> file, 2> file
-                    flags = os.O_WRONLY | os.O_CREAT
-                    flags |= os.O_APPEND if do_append else os.O_TRUNC
-                    fdo.open(target_fd, path, flags)
+    Layer 1 — pipe wiring (Popen kwargs): outer_stdin_fd/outer_stdout_fd from the parent
+    pipeline become stdin=/stdout= on the subprocess call. Popen internally does
+    dup2(pipe_rd, 0) / dup2(pipe_wr, 1).
 
-                case FdToSub(fd=target_fd, sub=sub):  # 1> >(cmd), 3> >(cmd)
-                    read_fd, write_fd = self._alloc_pipe()
-                    self._prepare(sub.cmd, read_fd, None)
-                    fdo.add_live(write_fd)
-                    fdo.move_fd(write_fd, target_fd)
+    Layer 2 — user redirects (preexec_fn via FdOps): ordered fd ops that execute in the
+    child after Popen's pipe dup2, so user redirects (>, <, 2>&1, etc.) naturally
+    override pipe wiring.
 
-                case FdFromFile(fd=target_fd, path=path):  # < file, 3< file
-                    fdo.open(target_fd, path, os.O_RDONLY)
+    Process substitutions (FdToSub, FdFromSub) and Sub arguments (SubOut, SubIn) each
+    allocate a pipe and register a spawn coroutine. All sub spawns are deferred and run
+    concurrently with the main process spawn via nested asyncio.gather — this is safe
+    because pipe fds are allocated eagerly (before any spawn), so all processes inherit
+    the correct fds regardless of spawn order.
 
-                case FdFromData(fd=target_fd, data=data):  # <<< "string"
-                    pipe_read = self._alloc_data_pipe(data)
-                    fdo.add_live(pipe_read)
-                    fdo.move_fd(pipe_read, target_fd)
+    After all processes have been spawned, local_fds (pipe ends used only for child
+    inheritance) are closed in the parent — children have inherited them via fork, so
+    the parent must close its copies to allow EOF propagation.
+    """
+    # Build FdOps simulation with initial live fds from pipeline
+    fdo = FdOps(live={STDIN, STDOUT, STDERR})
+    node_fds: list[OwnedFd] = []
+    local_fds: list[OwnedFd] = []
+    sub_spawns: list[Coroutine[None, None, ProcessNode]] = []
 
-                case FdFromSub(fd=target_fd, sub=sub):  # < <(cmd), 3< <(cmd)
-                    read_fd, write_fd = self._alloc_pipe()
-                    self._prepare(sub.cmd, None, write_fd)
-                    fdo.add_live(read_fd)
-                    fdo.move_fd(read_fd, target_fd)
+    # Feed IR redirects into FdOps
+    for redirect in cmd.redirects:
+        match redirect:
+            case FdToFd(src=src_fd, dst=dst_fd):  # 2>&1
+                fdo.dup2(src_fd, dst_fd)
 
-                case FdClose(fd=close_fd):  # 3>&-
-                    fdo.close(close_fd)
+            case FdToFile(
+                fd=target_fd, path=path, append=do_append
+            ):  # > file, >> file, 2> file
+                flags = os.O_WRONLY | os.O_CREAT
+                flags |= os.O_APPEND if do_append else os.O_TRUNC
+                fdo.open(target_fd, path, flags)
 
-        preexec_fn = _build_preexec(fdo.ops)
+            case FdToSub(fd=target_fd, sub=sub):  # 1> >(cmd), 3> >(cmd)
+                pipe_r, pipe_w = ctx.pipe()
+                node_fds.extend([pipe_r, pipe_w])
+                local_fds.extend([pipe_r, pipe_w])
+                sub_spawns.append(_spawn(ctx, sub.cmd, pipe_r.fd, None))
+                fdo.add_live(pipe_w.fd)
+                fdo.move_fd(pipe_w.fd, target_fd)
 
-        # Resolve Sub arguments to /dev/fd/N paths
-        resolved_args: list[str] = []
-        # pass_fds: live fds > 2 (subprocess handles 0/1/2 via stdin=/stdout=)
-        pass_fds = [fd for fd in fdo.keep_fds() if fd > STDERR]
+            case FdFromFile(fd=target_fd, path=path):  # < file, 3< file
+                fdo.open(target_fd, path, os.O_RDONLY)
 
-        for arg in cmd.args:
-            match arg:
-                case str() as string:
-                    resolved_args.append(string)
-                case SubOut(cmd=inner):
-                    read_fd, write_fd = self._alloc_pipe()
-                    self._prepare(inner, read_fd, None)
-                    resolved_args.append(f"/dev/fd/{write_fd}")
-                    pass_fds.append(write_fd)
-                case SubIn(cmd=inner):
-                    read_fd, write_fd = self._alloc_pipe()
-                    self._prepare(inner, None, write_fd)
-                    resolved_args.append(f"/dev/fd/{read_fd}")
-                    pass_fds.append(read_fd)
+            case FdFromData(fd=target_fd, data=data):  # <<< "string"
+                pipe_r, data_w = ctx.data_pipe(data)
+                node_fds.extend([pipe_r, data_w])
+                local_fds.append(pipe_r)
+                fdo.add_live(pipe_r.fd)
+                fdo.move_fd(pipe_r.fd, target_fd)
 
-        # Build env overlay and resolve working directory
-        proc_env: dict[str, str] | None = None
-        if cmd.env_vars or cmd.working_dir is not None:
-            proc_env = dict(os.environ)
-            for key, value in cmd.env_vars:
-                if value is None:
-                    proc_env.pop(key, None)
-                else:
-                    proc_env[key] = value
-            if cmd.working_dir is not None:
-                proc_env["PWD"] = str(cmd.working_dir)
+            case FdFromSub(fd=target_fd, sub=sub):  # < <(cmd), 3< <(cmd)
+                pipe_r, pipe_w = ctx.pipe()
+                node_fds.extend([pipe_r, pipe_w])
+                local_fds.extend([pipe_r, pipe_w])
+                sub_spawns.append(_spawn(ctx, sub.cmd, None, pipe_w.fd))
+                fdo.add_live(pipe_r.fd)
+                fdo.move_fd(pipe_r.fd, target_fd)
 
-        root_idx = len(self.prepared)
-        self.prepared.append(
-            PreparedProcess(
-                resolved_args,
-                outer_stdin_fd,
-                outer_stdout_fd,
-                tuple(pass_fds),
-                preexec_fn,
-                cwd=cmd.working_dir,
-                env=proc_env,
-            )
-        )
-        return [root_idx]
+            case FdClose(fd=closed_fd):  # 3>&-
+                fdo.close(closed_fd)
 
-    def _prepare_pipeline(
-        self, pipeline: Pipeline, stdin_fd: int | None, stdout_fd: int | None
-    ) -> list[int]:
-        stages = pipeline.stages
-        if not stages:
-            return []
+    preexec_fn = _build_preexec(fdo.ops)
 
-        root_indices: list[int] = []
-        inter_pipes = [self._alloc_pipe() for _ in range(len(stages) - 1)]
+    # Resolve Sub arguments to /dev/fd/N paths
+    resolved_args: list[str] = []
+    # pass_fds: live fds > 2 (subprocess handles 0/1/2 via stdin=/stdout=)
+    pass_fds = [fd for fd in fdo.keep_fds() if fd > STDERR]
 
-        for idx, stage in enumerate(stages):
-            stage_stdin = stdin_fd if idx == 0 else inter_pipes[idx - 1][0]
-            is_last = idx == len(stages) - 1
-            stage_stdout = stdout_fd if is_last else inter_pipes[idx][1]
-            root_indices.extend(self._prepare_cmd(stage, stage_stdin, stage_stdout))
-        return root_indices
+    for arg in cmd.args:
+        match arg:
+            case str() as string:
+                resolved_args.append(string)
+            case SubOut(cmd=inner):
+                pipe_r, pipe_w = ctx.pipe()
+                node_fds.extend([pipe_r, pipe_w])
+                local_fds.extend([pipe_r, pipe_w])
+                sub_spawns.append(_spawn(ctx, inner, pipe_r.fd, None))
+                resolved_args.append(f"/dev/fd/{pipe_w.fd}")
+                pass_fds.append(pipe_w.fd)
+            case SubIn(cmd=inner):
+                pipe_r, pipe_w = ctx.pipe()
+                node_fds.extend([pipe_r, pipe_w])
+                local_fds.extend([pipe_r, pipe_w])
+                sub_spawns.append(_spawn(ctx, inner, None, pipe_w.fd))
+                resolved_args.append(f"/dev/fd/{pipe_r.fd}")
+                pass_fds.append(pipe_r.fd)
 
-    async def _create_processes(self) -> None:
-        """Spawn all prepared processes sequentially.
+    # Build env overlay and resolve working directory
+    proc_env: dict[str, str] | None = None
+    if cmd.env_vars or cmd.working_dir is not None:
+        proc_env = dict(os.environ)
+        for key, value in cmd.env_vars:
+            if value is None:
+                proc_env.pop(key, None)
+            else:
+                proc_env[key] = value
+        if cmd.working_dir is not None:
+            proc_env["PWD"] = str(cmd.working_dir)
 
-        Sequential spawning ensures already-started processes are tracked
-        in self.procs before a later spawn failure, so the finally block
-        in execute() can kill and reap them.
-        """
-        for prep in self.prepared:
-            proc = await create_subprocess_exec(
-                *prep.args,
-                stdin=prep.stdin_fd,
-                stdout=prep.stdout_fd,
-                pass_fds=prep.pass_fds,
-                preexec_fn=prep.preexec,
-                cwd=prep.cwd,
-                env=prep.env,
-            )
-            self.procs.append(proc)
+    # Spawn main process and sub-processes concurrently
+    proc, sub_nodes = await asyncio.gather(
+        ctx.exec_(
+            *resolved_args,
+            stdin=outer_stdin_fd,
+            stdout=outer_stdout_fd,
+            pass_fds=tuple(pass_fds),
+            preexec_fn=preexec_fn,
+            cwd=cmd.working_dir,
+            env=proc_env,
+        ),
+        asyncio.gather(*sub_spawns),
+    )
 
-    async def execute(
-        self,
-        cmd: Runnable,
-        stdout_fd: int | None = None,
-    ) -> Result:
-        """Execute a command and return Result with exit code.
+    # Close non-data fds (children have inherited them)
+    for fd_entry in local_fds:
+        fd_entry.close()
 
-        Args:
-            cmd: Command or pipeline to execute.
-            stdout_fd: File descriptor for process stdout (e.g., write end of pipe).
-        """
-        try:
-            if stdout_fd is not None:
-                self.fds.append(FdEntry(stdout_fd))
-            root_indices = self._prepare(cmd, None, stdout_fd)
-            await self._create_processes()
+    return CmdNode(proc=proc, fds=node_fds, subs=sub_nodes)
 
-            data_writes: list[Coroutine[None, None, None]] = []
-            for entry in self.fds:
-                if entry.data is None:
-                    os.close(entry.fd)
-                else:
-                    data_writes.append(async_write(entry.fd, entry.data))
 
-            await asyncio.gather(
-                *[proc.wait() for proc in self.procs],
-                *data_writes,
-            )
+async def _spawn_pipeline(
+    ctx: PrepareCtx,
+    pipeline: Pipeline,
+    stdin_fd: int | None,
+    stdout_fd: int | None,
+) -> PipelineNode:
+    """Spawn all stages of a pipeline, connected by inter-stage pipes.
 
-            # Pipefail: rightmost non-zero from root procs only.
-            # Sub-process exit codes (process substitutions) are ignored.
-            code = 0
-            for idx in root_indices:
-                proc_code = self._normalize_returncode(self.procs[idx].returncode)
-                if proc_code != 0:
-                    code = proc_code
-            return Result(code)
-        finally:
-            # Kill live processes and reap. Shield from cancellation
-            # to prevent zombies if our caller's task is cancelled.
-            reap: list[Coroutine[None, None, int]] = []
-            for proc in self.procs:
-                if proc.returncode is None:
-                    proc.kill()
-                    reap.append(proc.wait())
-            if reap:
-                await asyncio.shield(asyncio.gather(*reap))
+    Pipes are allocated eagerly before any spawns, then all stages
+    are spawned concurrently via asyncio.gather. This is safe
+    because each stage only needs its stdin/stdout fds to be valid
+    at spawn time, and pipe allocation is synchronous.
 
-            # TODO: fds closed in loop above get double-closed here; track closed state
-            for entry in self.fds:
-                close_fd(entry.fd)
+    Outer stdin_fd/stdout_fd are wired to the first/last stage
+    respectively, with inter-stage pipes connecting the rest.
+    After all children have forked, inter-stage pipe fds are
+    closed in the parent so EOF propagates when stages exit.
+    """
+    stages = pipeline.stages
+    if not stages:
+        return PipelineNode(stages=[])
 
-    @staticmethod
-    def _normalize_returncode(code: int | None) -> int:
-        """Convert returncode to bash-style: 128 + signal for killed processes."""
-        if code is None:
-            return 0
-        if code < 0:
-            return 128 + (-code)
-        return code
+    # Allocate inter-stage pipes
+    inter_pipes = [ctx.pipe() for _ in range(len(stages) - 1)]
+
+    # Per-stage stdin/stdout: outer fds at the edges, pipes in between
+    stage_stdins = [stdin_fd] + [pipe_r.fd for pipe_r, _ in inter_pipes]
+    stage_stdouts = [pipe_w.fd for _, pipe_w in inter_pipes] + [stdout_fd]
+
+    # Spawn stages concurrently
+    spawn_tasks: list[Coroutine[None, None, CmdNode]] = []
+    for stage, sin, sout in zip(stages, stage_stdins, stage_stdouts, strict=True):
+        spawn_tasks.append(_spawn_cmd(ctx, stage, sin, sout))
+    stage_nodes = list(await asyncio.gather(*spawn_tasks))
+
+    # Close inter-stage pipe fds (children have inherited them)
+    for pipe_r, pipe_w in inter_pipes:
+        pipe_r.close()
+        pipe_w.close()
+
+    return PipelineNode(stages=stage_nodes)
+
+
+async def prepare(
+    cmd: Runnable,
+    stdin_fd: int | None = None,
+    stdout_fd: int | None = None,
+) -> Execution:
+    """Spawn a process tree and return an Execution handle.
+
+    Creates a PrepareCtx, spawns all processes, closes the capture fd
+    (child inherited it), and returns an Execution whose wait() method
+    gathers exits and computes pipefail. On spawn failure, cleans up
+    before re-raising.
+
+    Args:
+        cmd: Command or pipeline to spawn.
+        stdin_fd: Read end of a pipe for feeding stdin.
+            Caller owns the write end; this function closes the
+            read end after fork so writers see SIGPIPE/EPIPE.
+        stdout_fd: Write end of a pipe for capturing stdout.
+            Caller owns the read end; this function closes the
+            write end after fork so readers see EOF.
+    """
+    caller_fds = [OwnedFd(fd) for fd in (stdin_fd, stdout_fd) if fd is not None]
+    ctx = PrepareCtx(fds=list(caller_fds))
+    try:
+        root = await _spawn(ctx, cmd, stdin_fd, stdout_fd)
+    except BaseException:
+        await _kill_and_reap(*ctx.procs)
+        for fd_entry in ctx.fds:
+            fd_entry.close()
+        raise
+
+    # Close caller fds — children have inherited them via fork
+    for fd_entry in caller_fds:
+        fd_entry.close()
+
+    return Execution(root=root)
 
 
 async def run(cmd: Runnable) -> int:
     """Execute a command or pipeline and return exit code."""
-    result = await Executor().execute(cmd)
-    return result.code
+    return await (await prepare(cmd)).wait()
 
 
 @overload
@@ -337,24 +534,30 @@ async def out(cmd: Runnable, encoding: str = "utf-8") -> str: ...
 
 
 async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
-    """Execute command and return stdout.
+    """Execute a command and return its captured stdout.
+
+    Allocates a pipe, spawns via prepare(), then reads stdout
+    concurrently with wait(). Concurrency is required to avoid
+    deadlock: if the child fills the pipe buffer, it blocks until
+    someone reads, but if we wait() first we never read.
 
     Args:
         cmd: Command to execute.
         encoding: Decode stdout with this encoding. None for raw bytes.
 
-    Raises subprocess.CalledProcessError on non-zero exit code.
+    Raises:
+        subprocess.CalledProcessError: On non-zero exit code, with
+            the captured stdout attached for diagnostic use.
     """
     read_fd, write_fd = os.pipe()
-    executor = Executor()
     try:
-        # Read and execute concurrently to avoid deadlock
-        result, stdout = await asyncio.gather(
-            executor.execute(cmd, stdout_fd=write_fd),
+        execution = await prepare(cmd, stdout_fd=write_fd)
+        code, stdout = await asyncio.gather(
+            execution.wait(),
             async_read(read_fd),
         )
-        if result.code != 0:
-            raise subprocess.CalledProcessError(result.code, [], stdout)
+        if code != 0:
+            raise subprocess.CalledProcessError(code, [], stdout)
         if encoding is None:
             return stdout
         return stdout.decode(encoding)

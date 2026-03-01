@@ -1,13 +1,15 @@
-"""Runtime tests using IR nodes directly — verifies executor consumes IR correctly."""
+"""Runtime tests using IR nodes directly — verifies runtime consumes IR correctly."""
 
 import asyncio
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from shish import STDERR, STDIN, STDOUT, ir
-from shish.runtime import out, run
+from shish.aio import async_read, async_write, close_fd
+from shish.runtime import Execution, out, prepare, run
 
 # =============================================================================
 # Basic Execution
@@ -665,6 +667,48 @@ async def test_out_large_data_multi_fd(tmp_path: Path) -> None:
     assert out4.read_bytes() == data
 
 
+# =============================================================================
+# prepare() with stdin_fd
+# =============================================================================
+
+
+async def test_prepare_stdin_fd() -> None:
+    """prepare(stdin_fd=...) feeds stdin via caller-owned pipe."""
+    read_fd, write_fd = os.pipe()
+    try:
+        execution = await prepare(ir.Cmd(("cat",)), stdin_fd=read_fd)
+        await async_write(write_fd, b"hello from pipe")
+        close_fd(write_fd)
+        write_fd = -1
+        assert await execution.wait() == 0
+    finally:
+        if write_fd >= 0:
+            close_fd(write_fd)
+
+
+async def test_prepare_stdin_fd_with_stdout_fd() -> None:
+    """prepare() with both stdin_fd and stdout_fd wires through correctly."""
+    stdin_r, stdin_w = os.pipe()
+    stdout_r, stdout_w = os.pipe()
+    try:
+        execution = await prepare(
+            ir.Cmd(("cat",)), stdin_fd=stdin_r, stdout_fd=stdout_w
+        )
+        await async_write(stdin_w, b"round trip")
+        close_fd(stdin_w)
+        stdin_w = -1
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            async_read(stdout_r),
+        )
+        assert code == 0
+        assert captured == b"round trip"
+    finally:
+        if stdin_w >= 0:
+            close_fd(stdin_w)
+        close_fd(stdout_r)
+
+
 async def test_out_raises_on_failure() -> None:
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         await out(ir.Cmd(("false",)))
@@ -890,3 +934,70 @@ async def test_working_dir_pwd_synced(tmp_path: Path) -> None:
     command = ir.Cmd(("printenv", "PWD"), working_dir=tmp_path)
     result = await out(command)
     assert result.strip() == str(tmp_path)
+
+
+# =============================================================================
+# prepare() + wait() lifecycle
+# =============================================================================
+
+
+async def test_prepare_returns_execution() -> None:
+    """prepare() returns an Execution with a root ProcessNode."""
+    execution = await prepare(ir.Cmd(("true",)))
+    assert isinstance(execution, Execution)
+    assert execution.root is not None
+    code = await execution.wait()
+    assert code == 0
+
+
+async def test_prepare_wait_exit_code() -> None:
+    """wait() returns the correct exit code."""
+    execution = await prepare(ir.Cmd(("false",)))
+    assert await execution.wait() == 1
+
+
+async def test_prepare_wait_pipeline() -> None:
+    """prepare()+wait() works with pipelines."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("tr", "a-z", "A-Z")),
+        )
+    )
+    execution = await prepare(pipeline)
+    assert await execution.wait() == 0
+
+
+async def test_prepare_wait_pipefail() -> None:
+    """Pipefail semantics work through prepare()+wait()."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("sh", "-c", "exit 1")),
+            ir.Cmd(("sh", "-c", "exit 0")),
+            ir.Cmd(("sh", "-c", "exit 2")),
+        )
+    )
+    execution = await prepare(pipeline)
+    assert await execution.wait() == 2
+
+
+async def test_prepare_cleanup_on_spawn_failure() -> None:
+    """prepare() cleans up fds on spawn failure."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    with pytest.raises(FileNotFoundError):
+        await prepare(ir.Cmd(("nonexistent_command_xyz_12345",)))
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
+
+
+async def test_prepare_wait_no_fd_leak() -> None:
+    """No fds leak after prepare()+wait() completes."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    execution = await prepare(ir.Cmd(("true",)))
+    await execution.wait()
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
