@@ -484,7 +484,11 @@ async def _spawn_pipeline(
     return PipelineNode(stages=stage_nodes)
 
 
-async def prepare(cmd: Runnable, stdout_fd: int | None = None) -> Execution:
+async def prepare(
+    cmd: Runnable,
+    stdin_fd: int | None = None,
+    stdout_fd: int | None = None,
+) -> Execution:
     """Spawn a process tree and return an Execution handle.
 
     Creates a PrepareCtx, spawns all processes, closes the capture fd
@@ -494,26 +498,26 @@ async def prepare(cmd: Runnable, stdout_fd: int | None = None) -> Execution:
 
     Args:
         cmd: Command or pipeline to spawn.
+        stdin_fd: Read end of a pipe for feeding stdin.
+            Caller owns the write end; this function closes the
+            read end after fork so writers see SIGPIPE/EPIPE.
         stdout_fd: Write end of a pipe for capturing stdout.
             Caller owns the read end; this function closes the
             write end after fork so readers see EOF.
     """
-    ctx = PrepareCtx()
-    capture_fd: OwnedFd | None = None
-    if stdout_fd is not None:
-        capture_fd = OwnedFd(stdout_fd)
-        ctx.fds.append(capture_fd)
+    caller_fds = [OwnedFd(fd) for fd in (stdin_fd, stdout_fd) if fd is not None]
+    ctx = PrepareCtx(fds=list(caller_fds))
     try:
-        root = await _spawn(ctx, cmd, None, stdout_fd)
+        root = await _spawn(ctx, cmd, stdin_fd, stdout_fd)
     except BaseException:
         await _kill_and_reap(*ctx.procs)
         for fd_entry in ctx.fds:
             fd_entry.close()
         raise
 
-    # Close capture fd — child has inherited it
-    if capture_fd is not None:
-        capture_fd.close()
+    # Close caller fds — children have inherited them via fork
+    for fd_entry in caller_fds:
+        fd_entry.close()
 
     return Execution(root=root)
 
