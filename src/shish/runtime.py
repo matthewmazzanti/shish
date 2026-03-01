@@ -6,6 +6,8 @@ import asyncio
 import contextlib
 import os
 import subprocess
+import sys
+import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Awaitable, Callable, Coroutine, Generator
 from dataclasses import dataclass, field
@@ -153,9 +155,6 @@ class FnNode:
             ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
             self.returncode = await self._func(ctx)
         except Exception:
-            import sys
-            import traceback
-
             traceback.print_exc(file=sys.stderr)
             self.returncode = 1
         finally:
