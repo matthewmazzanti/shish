@@ -7,6 +7,7 @@ from shish import (
     STDIN,
     STDOUT,
     Cmd,
+    Fn,
     Pipeline,
     close,
     cmd,
@@ -23,7 +24,7 @@ from shish import (
     unwrap,
     write,
 )
-from shish.aio import ByteStageCtx
+from shish.aio import ByteStageCtx, TextStageCtx
 
 # =============================================================================
 # Magic cmd() builder
@@ -632,12 +633,12 @@ def test_pipeline_rmod_raises() -> None:
 # =============================================================================
 
 
-async def _noop(ctx: ByteStageCtx) -> int:
+async def _noop(ctx: TextStageCtx) -> int:
     return 0
 
 
 _noop_fn = fn(_noop)
-_noop_ir = ir.Fn(_noop)
+_noop_ir = unwrap(_noop_fn)
 
 
 def test_fn_constructor() -> None:
@@ -645,48 +646,87 @@ def test_fn_constructor() -> None:
 
 
 def test_fn_pipe_cmd() -> None:
-    assert unwrap(fn(_noop) | sh.cat()) == ir.Pipeline((_noop_ir, ir.Cmd(("cat",))))
+    assert unwrap(_noop_fn | sh.cat()) == ir.Pipeline((_noop_ir, ir.Cmd(("cat",))))
 
 
 def test_cmd_pipe_fn() -> None:
-    assert unwrap(sh.echo("hi") | fn(_noop)) == ir.Pipeline(
+    assert unwrap(sh.echo("hi") | _noop_fn) == ir.Pipeline(
         (ir.Cmd(("echo", "hi")), _noop_ir)
     )
 
 
 def test_pipeline_pipe_fn() -> None:
-    assert unwrap((sh.a() | sh.b()) | fn(_noop)) == ir.Pipeline(
+    assert unwrap((sh.a() | sh.b()) | _noop_fn) == ir.Pipeline(
         (ir.Cmd(("a",)), ir.Cmd(("b",)), _noop_ir)
     )
 
 
 def test_fn_pipe_fn() -> None:
-    assert unwrap(fn(_noop) | fn(_noop)) == ir.Pipeline((_noop_ir, _noop_ir))
+    assert unwrap(_noop_fn | _noop_fn) == ir.Pipeline((_noop_ir, _noop_ir))
 
 
 def test_cmd_gt_fn() -> None:
-    assert unwrap(sh.echo("hi") > sub_out(fn(_noop))) == ir.Cmd(
+    assert unwrap(sh.echo("hi") > sub_out(_noop_fn)) == ir.Cmd(
         ("echo", "hi")
     ).write(ir.SubOut(_noop_ir))
 
 
 def test_cmd_lt_fn() -> None:
-    assert unwrap(sh.cat() < sub_in(fn(_noop))) == ir.Cmd(("cat",)).read(
+    assert unwrap(sh.cat() < sub_in(_noop_fn)) == ir.Cmd(("cat",)).read(
         ir.SubIn(_noop_ir)
     )
 
 
 def test_sub_in_fn() -> None:
-    assert sub_in(fn(_noop)) == ir.SubIn(_noop_ir)
+    assert sub_in(_noop_fn) == ir.SubIn(_noop_ir)
 
 
 def test_sub_out_fn() -> None:
-    assert sub_out(fn(_noop)) == ir.SubOut(_noop_ir)
+    assert sub_out(_noop_fn) == ir.SubOut(_noop_ir)
 
 
 def test_unwrap_fn() -> None:
-    assert unwrap(fn(_noop)) == _noop_ir
+    assert unwrap(_noop_fn) == _noop_ir
 
 
 def test_fn_await() -> None:
-    assert hasattr(fn(_noop), "__await__")
+    assert hasattr(_noop_fn, "__await__")
+
+
+def test_fn_call_no_args() -> None:
+    """@fn() produces an Fn wrapping the function."""
+    @fn()
+    async def noop(ctx: TextStageCtx) -> int:
+        return 0
+
+    assert isinstance(noop, Fn)
+
+
+def test_fn_encoding_none_decorator() -> None:
+    """@fn(encoding=None) stores the raw byte function."""
+
+    async def raw(ctx: ByteStageCtx) -> int:
+        return 0
+
+    result = fn(raw, encoding=None)
+    assert unwrap(result) == ir.Fn(raw)
+
+
+def test_fn_encoding_none_direct() -> None:
+    """fn(f, encoding=None) stores the raw byte function."""
+
+    async def raw(ctx: ByteStageCtx) -> int:
+        return 0
+
+    result = fn(raw, encoding=None)
+    assert unwrap(result) == ir.Fn(raw)
+
+
+def test_fn_encoding_str_wraps() -> None:
+    """@fn(encoding="latin-1") wraps — stored func differs from original."""
+
+    async def noop(ctx: TextStageCtx) -> int:
+        return 0
+
+    result = fn(noop, encoding="latin-1")
+    assert unwrap(result).func is not noop

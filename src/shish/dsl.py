@@ -8,16 +8,20 @@ module-level combinator functions that unwrap to IR, delegate, and re-wrap.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Generator, Mapping
-from typing import TYPE_CHECKING, Never, overload
+from typing import TYPE_CHECKING, Never, cast, overload
 
 import shish.ir as ir
+from shish.aio import make_byte_wrapper
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
-    from shish.aio import ByteStageCtx
+    from shish.aio import ByteStageCtx, TextStageCtx
     from shish.runtime import Execution
 
 Flag = ir.PathLike | bool
+
+TextFn = Callable[["TextStageCtx"], Awaitable[int]]
+ByteFn = Callable[["ByteStageCtx"], Awaitable[int]]
 
 
 class Cmd:
@@ -214,9 +218,54 @@ def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
     return Cmd(ir.cmd())(*args, **kwargs)
 
 
-def fn(func: Callable[[ByteStageCtx], Awaitable[int]]) -> Fn:
-    """Create an Fn from an async callable."""
-    return Fn(ir.Fn(func))
+@overload
+def fn(func: TextFn, /) -> Fn: ...
+@overload
+def fn(func: TextFn, /, *, encoding: str) -> Fn: ...
+@overload
+def fn(func: ByteFn, /, *, encoding: None) -> Fn: ...
+@overload
+def fn(*, encoding: None) -> Callable[[ByteFn], Fn]: ...
+@overload
+def fn(*, encoding: str = ...) -> Callable[[TextFn], Fn]: ...
+
+
+def fn(
+    func: TextFn | ByteFn | None = None,
+    *,
+    encoding: str | None = "utf-8",
+) -> Fn | Callable[[ByteFn], Fn] | Callable[[TextFn], Fn]:
+    """Create an Fn from an async callable.
+
+    Forms:
+        @fn                         — text mode, utf-8
+        @fn()                       — text mode, utf-8
+        fn(f, encoding="latin-1")   — text mode, custom encoding
+        @fn(encoding="latin-1")     — text mode, custom encoding
+        fn(f, encoding=None)        — byte mode, no decoding
+        @fn(encoding=None)          — byte mode, no decoding
+    """
+    match func, encoding:
+        case None, None:  # @fn(encoding=None)
+            def byte_decorator(inner: ByteFn) -> Fn:
+                return Fn(ir.Fn(inner))
+
+            return byte_decorator
+
+        case None, enc:  # @fn() or @fn(encoding="...")
+            def text_decorator(inner: TextFn) -> Fn:
+                return Fn(ir.Fn(make_byte_wrapper(inner, enc)))
+
+            return text_decorator
+
+        case func_, None:  # fn(f, encoding=None)
+            # cast: overloads guarantee ByteFn here, but pyright
+            # can't narrow the func/encoding correlation
+            return Fn(ir.Fn(cast("ByteFn", func_)))
+
+        case func_, enc:  # @fn or fn(f) or fn(f, encoding="...")
+            # cast: same — overloads guarantee TextFn here
+            return Fn(ir.Fn(make_byte_wrapper(cast("TextFn", func_), enc)))
 
 
 def pipe(*cmds: Runnable) -> Pipeline:

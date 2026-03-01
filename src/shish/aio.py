@@ -424,19 +424,19 @@ def decode(
     """
     if callable(func):
         # @decode without parens: func is the decorated function
-        return _make_byte_wrapper(func, "utf-8")
+        return make_byte_wrapper(func, "utf-8")
     # @decode() or @decode("latin-1"): func is encoding or None
     encoding = func if isinstance(func, str) else "utf-8"
 
     def decorator(
         inner: Callable[[TextStageCtx], Awaitable[int]],
     ) -> Callable[[ByteStageCtx], Awaitable[int]]:
-        return _make_byte_wrapper(inner, encoding)
+        return make_byte_wrapper(inner, encoding)
 
     return decorator
 
 
-def _make_byte_wrapper(
+def make_byte_wrapper(
     func: Callable[[TextStageCtx], Awaitable[int]],
     encoding: str,
 ) -> Callable[[ByteStageCtx], Awaitable[int]]:

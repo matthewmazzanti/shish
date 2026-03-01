@@ -13,7 +13,6 @@ from shish import (
     TextStageCtx,
     close,
     cwd,
-    decode,
     env,
     fn,
     out,
@@ -678,7 +677,7 @@ async def test_prepare_builder_method() -> None:
 
 
 @fn
-async def _upper(ctx: ByteStageCtx) -> int:
+async def _upper(ctx: TextStageCtx) -> int:
     """Read stdin, uppercase, write to stdout."""
     data = await ctx.stdin.read()
     await ctx.stdout.write(data.upper())
@@ -686,14 +685,13 @@ async def _upper(ctx: ByteStageCtx) -> int:
 
 
 @fn
-async def _generate(ctx: ByteStageCtx) -> int:
+async def _generate(ctx: TextStageCtx) -> int:
     """Write fixed data to stdout."""
-    await ctx.stdout.write(b"generated\n")
+    await ctx.stdout.write("generated\n")
     return 0
 
 
 @fn
-@decode
 async def _text_upper(ctx: TextStageCtx) -> int:
     """Text-mode upper: read text, uppercase, write text."""
     data = await ctx.stdin.read()
@@ -702,18 +700,18 @@ async def _text_upper(ctx: TextStageCtx) -> int:
 
 
 @fn
-async def _exit_code(ctx: ByteStageCtx) -> int:
+async def _exit_code(ctx: TextStageCtx) -> int:
     """Return non-zero."""
     return 42
 
 
 @fn
-async def _line_counter(ctx: ByteStageCtx) -> int:
+async def _line_counter(ctx: TextStageCtx) -> int:
     """Count lines from stdin, write count to stdout."""
     count = 0
     async for _line in ctx.stdin:
         count += 1
-    await ctx.stdout.write(f"{count}\n".encode())
+    await ctx.stdout.write(f"{count}\n")
     return 0
 
 
@@ -787,7 +785,7 @@ async def test_fn_exception() -> None:
     """fn that raises returns exit code 1."""
 
     @fn
-    async def _raises(ctx: ByteStageCtx) -> int:
+    async def _raises(ctx: TextStageCtx) -> int:
         raise ValueError("boom")
 
     assert await run(_raises) == 1
@@ -815,3 +813,69 @@ async def test_fn_to_fn_pipeline() -> None:
     """fn | fn pipeline: _generate | _upper."""
     result = await out(_generate | _upper)
     assert result == "GENERATED\n"
+
+
+# =============================================================================
+# Fn encoding modes
+# =============================================================================
+
+
+async def test_fn_call_no_args() -> None:
+    """@fn() behaves the same as @fn — text mode, utf-8."""
+
+    @fn()
+    async def upper(ctx: TextStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    result = await out(sh.echo("hello") | upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_encoding_none_decorator() -> None:
+    """@fn(encoding=None) — byte mode, no decoding."""
+
+    @fn(encoding=None)
+    async def upper(ctx: ByteStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    result = await out(sh.echo("hello") | upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_encoding_none_direct() -> None:
+    """fn(f, encoding=None) — byte mode via direct call."""
+
+    async def upper(ctx: ByteStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    result = await out(sh.echo("hello") | fn(upper, encoding=None))
+    assert result == "HELLO\n"
+
+
+async def test_fn_encoding_latin1_decorator() -> None:
+    """@fn(encoding="latin-1") — text mode, custom encoding."""
+
+    @fn(encoding="latin-1")
+    async def echo_latin(ctx: TextStageCtx) -> int:
+        await ctx.stdout.write("caf\xe9\n")
+        return 0
+
+    result = await out(echo_latin, encoding=None)
+    assert result == b"caf\xe9\n"
+
+
+async def test_fn_encoding_latin1_direct() -> None:
+    """fn(f, encoding="latin-1") — text mode, custom encoding via direct call."""
+
+    async def echo_latin(ctx: TextStageCtx) -> int:
+        await ctx.stdout.write("caf\xe9\n")
+        return 0
+
+    result = await out(fn(echo_latin, encoding="latin-1"), encoding=None)
+    assert result == b"caf\xe9\n"
