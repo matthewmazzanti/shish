@@ -361,3 +361,68 @@ def test_pipeline_factory_preserves_redirects() -> None:
     cmd_b = ir.Cmd(("b",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
     result = ir.pipeline(ir.Cmd(("a",)), cmd_b)
     assert result == ir.Pipeline((ir.Cmd(("a",)), cmd_b))
+
+
+# =============================================================================
+# Environment variables
+# =============================================================================
+
+
+def test_env_single() -> None:
+    assert cmd("echo").env(FOO="bar") == ir.Cmd(
+        ("echo",), env_vars=(("FOO", "bar"),)
+    )
+
+
+def test_env_multiple() -> None:
+    result = cmd("echo").env(FOO="bar", BAZ="qux")
+    assert result.env_vars == (("FOO", "bar"), ("BAZ", "qux"))
+
+
+def test_env_unset() -> None:
+    result = cmd("echo").env(FOO=None)
+    assert result.env_vars == (("FOO", None),)
+
+
+def test_env_additive() -> None:
+    result = cmd("echo").env(FOO="bar").env(BAZ="qux")
+    assert result.env_vars == (("FOO", "bar"), ("BAZ", "qux"))
+
+
+# =============================================================================
+# Working directory
+# =============================================================================
+
+
+def test_cwd_string() -> None:
+    result = cmd("echo").cwd("/tmp")
+    assert result.working_dir == Path("/tmp")
+
+
+def test_cwd_path() -> None:
+    result = cmd("echo").cwd(Path("/tmp"))
+    assert result.working_dir == Path("/tmp")
+
+
+def test_cwd_overrides() -> None:
+    result = cmd("echo").cwd("/tmp").cwd("/var")
+    assert result.working_dir == Path("/var")
+
+
+# =============================================================================
+# _replace preserves fields
+# =============================================================================
+
+
+def test_replace_preserves_env_and_cwd() -> None:
+    base = cmd("echo").env(FOO="bar").cwd("/tmp")
+    extended = base.arg("hello")
+    assert extended.env_vars == (("FOO", "bar"),)
+    assert extended.working_dir == Path("/tmp")
+    assert extended.args == ("echo", "hello")
+
+
+def test_replace_preserves_redirects() -> None:
+    base = cmd("echo").write("out.txt").env(FOO="bar")
+    assert base.redirects == (ir.FdToFile(STDOUT, Path("out.txt")),)
+    assert base.env_vars == (("FOO", "bar"),)

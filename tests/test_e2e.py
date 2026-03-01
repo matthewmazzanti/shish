@@ -4,7 +4,20 @@ from pathlib import Path
 
 import pytest
 
-from shish import STDERR, STDIN, STDOUT, close, out, run, sh, sub_in, sub_out, write
+from shish import (
+    STDERR,
+    STDIN,
+    STDOUT,
+    close,
+    cwd,
+    env,
+    out,
+    run,
+    sh,
+    sub_in,
+    sub_out,
+    write,
+)
 from shish.ir import cmd
 
 # =============================================================================
@@ -558,3 +571,46 @@ async def test_cancel_pipeline() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# =============================================================================
+# Environment Variables (env combinator)
+# =============================================================================
+
+
+async def test_env_single_var() -> None:
+    result = await out(env(sh.printenv("FOO"), FOO="bar"))
+    assert result == "bar\n"
+
+
+async def test_env_multiple_vars() -> None:
+    result = await out(env(sh.sh("-c", "echo $FOO $BAZ"), FOO="hello", BAZ="world"))
+    assert result == "hello world\n"
+
+
+async def test_env_unset_var() -> None:
+    result = await out(env(sh.sh("-c", "echo ${HOME-unset}"), HOME=None))
+    assert result == "unset\n"
+
+
+async def test_env_in_pipeline() -> None:
+    """Env vars are per-cmd, not shared across pipeline stages."""
+    result = await out(env(sh.printenv("FOO"), FOO="bar") | sh.cat())
+    assert result == "bar\n"
+
+
+# =============================================================================
+# Working Directory (cwd combinator)
+# =============================================================================
+
+
+async def test_cwd_changes_dir(tmp_path: Path) -> None:
+    result = await out(cwd(sh.pwd(), tmp_path))
+    assert result.strip() == str(tmp_path.resolve())
+
+
+async def test_cwd_with_file_operations(tmp_path: Path) -> None:
+    """Command can operate on files relative to cwd."""
+    (tmp_path / "test.txt").write_text("hello from cwd\n")
+    result = await out(cwd(sh.cat("test.txt"), tmp_path))
+    assert result == "hello from cwd\n"

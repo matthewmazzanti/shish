@@ -815,3 +815,78 @@ async def test_pipeline_factory_execution() -> None:
     )
     result = await out(pipeline)
     assert result == "HELLO\n"
+
+
+# =============================================================================
+# Environment Variables
+# =============================================================================
+
+
+async def test_env_vars() -> None:
+    """Child process sees env vars set via env_vars."""
+    command = ir.Cmd(("printenv", "FOO"), env_vars=(("FOO", "bar"),))
+    result = await out(command)
+    assert result == "bar\n"
+
+
+async def test_env_vars_multiple() -> None:
+    """Child process sees multiple env vars."""
+    command = ir.Cmd(
+        ("sh", "-c", "echo $FOO $BAZ"),
+        env_vars=(("FOO", "hello"), ("BAZ", "world")),
+    )
+    result = await out(command)
+    assert result == "hello world\n"
+
+
+async def test_env_vars_unset() -> None:
+    """None value unsets an env var."""
+    command = ir.Cmd(
+        ("sh", "-c", "echo ${HOME-unset}"),
+        env_vars=(("HOME", None),),
+    )
+    result = await out(command)
+    assert result == "unset\n"
+
+
+async def test_env_vars_override() -> None:
+    """Env vars override inherited values."""
+    import os
+
+    original = os.environ.get("HOME", "")
+    command = ir.Cmd(("printenv", "HOME"), env_vars=(("HOME", "/fake/home"),))
+    result = await out(command)
+    assert result == "/fake/home\n"
+    # Verify parent env is not affected
+    assert os.environ.get("HOME", "") == original
+
+
+async def test_env_vars_pipeline_per_cmd() -> None:
+    """Env vars are per-cmd in a pipeline, not shared."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("printenv", "FOO"), env_vars=(("FOO", "first"),)),
+            ir.Cmd(("cat",)),
+        )
+    )
+    result = await out(pipeline)
+    assert result == "first\n"
+
+
+# =============================================================================
+# Working Directory
+# =============================================================================
+
+
+async def test_working_dir(tmp_path: Path) -> None:
+    """Child process runs in the specified working directory."""
+    command = ir.Cmd(("pwd",), working_dir=tmp_path)
+    result = await out(command)
+    assert result.strip() == str(tmp_path.resolve())
+
+
+async def test_working_dir_pwd_synced(tmp_path: Path) -> None:
+    """PWD env var is synced when working_dir is set."""
+    command = ir.Cmd(("printenv", "PWD"), working_dir=tmp_path)
+    result = await out(command)
+    assert result.strip() == str(tmp_path)

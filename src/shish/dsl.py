@@ -228,6 +228,16 @@ def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
     return wrap(unwrap(cmd).close(fd))
 
 
+def env(cmd: Cmd, **kwargs: str | None) -> Cmd:
+    """Set environment variables on a command. None values unset variables."""
+    return Cmd(unwrap(cmd).env(**kwargs))
+
+
+def cwd(cmd: Cmd, path: ir.PathLike) -> Cmd:
+    """Set working directory for a command."""
+    return Cmd(unwrap(cmd).cwd(path))
+
+
 def sub_in(source: Runnable) -> ir.SubIn:
     """Input process substitution: <(source)."""
     return ir.SubIn(unwrap(source))

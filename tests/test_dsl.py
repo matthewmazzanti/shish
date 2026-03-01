@@ -10,6 +10,8 @@ from shish import (
     Pipeline,
     close,
     cmd,
+    cwd,
+    env,
     feed,
     ir,
     pipe,
@@ -517,3 +519,35 @@ def test_sub_out_with_redirect() -> None:
     assert result == ir.SubOut(
         ir.Cmd(("gzip",), redirects=(ir.FdToFile(STDOUT, Path("out.gz")),))
     )
+
+
+# =============================================================================
+# env() and cwd() combinators
+# =============================================================================
+
+
+def test_env_combinator() -> None:
+    result = env(sh.echo(), FOO="bar")
+    assert isinstance(result, Cmd)
+    assert unwrap(result).env_vars == (("FOO", "bar"),)
+
+
+def test_env_combinator_multiple() -> None:
+    result = env(sh.echo(), FOO="bar", BAZ="qux")
+    assert unwrap(result).env_vars == (("FOO", "bar"), ("BAZ", "qux"))
+
+
+def test_env_combinator_unset() -> None:
+    result = env(sh.echo(), FOO=None)
+    assert unwrap(result).env_vars == (("FOO", None),)
+
+
+def test_cwd_combinator() -> None:
+    result = cwd(sh.echo(), "/tmp")
+    assert isinstance(result, Cmd)
+    assert unwrap(result).working_dir == Path("/tmp")
+
+
+def test_cwd_combinator_path() -> None:
+    result = cwd(sh.echo(), Path("/tmp"))
+    assert unwrap(result).working_dir == Path("/tmp")
