@@ -7,7 +7,7 @@ import os
 import subprocess
 from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Callable, Coroutine, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import overload
 
@@ -49,6 +49,7 @@ class CmdNode:
     """A spawned command process (for pipefail tracking)."""
 
     proc: Process
+    subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
 
     def root_procs(self) -> Generator[Process]:
         """Just the main process."""
@@ -205,6 +206,7 @@ class Executor:
         # Build FdOps simulation with initial live fds from pipeline
         fdo = FdOps(live={STDIN, STDOUT, STDERR})
         local_fds: list[OwnedFd] = []
+        sub_spawns: list[Coroutine[None, None, ProcessNode]] = []
 
         # Feed IR redirects into FdOps
         for redirect in cmd.redirects:
@@ -222,7 +224,7 @@ class Executor:
                 case FdToSub(fd=target_fd, sub=sub):  # 1> >(cmd), 3> >(cmd)
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    await self._spawn(sub.cmd, pipe_r.fd, None)
+                    sub_spawns.append(self._spawn(sub.cmd, pipe_r.fd, None))
                     fdo.add_live(pipe_w.fd)
                     fdo.move_fd(pipe_w.fd, target_fd)
 
@@ -238,7 +240,7 @@ class Executor:
                 case FdFromSub(fd=target_fd, sub=sub):  # < <(cmd), 3< <(cmd)
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    await self._spawn(sub.cmd, None, pipe_w.fd)
+                    sub_spawns.append(self._spawn(sub.cmd, None, pipe_w.fd))
                     fdo.add_live(pipe_r.fd)
                     fdo.move_fd(pipe_r.fd, target_fd)
 
@@ -259,13 +261,13 @@ class Executor:
                 case SubOut(cmd=inner):
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    await self._spawn(inner, pipe_r.fd, None)
+                    sub_spawns.append(self._spawn(inner, pipe_r.fd, None))
                     resolved_args.append(f"/dev/fd/{pipe_w.fd}")
                     pass_fds.append(pipe_w.fd)
                 case SubIn(cmd=inner):
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    await self._spawn(inner, None, pipe_w.fd)
+                    sub_spawns.append(self._spawn(inner, None, pipe_w.fd))
                     resolved_args.append(f"/dev/fd/{pipe_r.fd}")
                     pass_fds.append(pipe_r.fd)
 
@@ -281,22 +283,25 @@ class Executor:
             if cmd.working_dir is not None:
                 proc_env["PWD"] = str(cmd.working_dir)
 
-        # Spawn main process
-        proc = await self._exec(
-            *resolved_args,
-            stdin=outer_stdin_fd,
-            stdout=outer_stdout_fd,
-            pass_fds=tuple(pass_fds),
-            preexec_fn=preexec_fn,
-            cwd=cmd.working_dir,
-            env=proc_env,
+        # Spawn main process and sub-processes concurrently
+        proc, sub_nodes = await asyncio.gather(
+            self._exec(
+                *resolved_args,
+                stdin=outer_stdin_fd,
+                stdout=outer_stdout_fd,
+                pass_fds=tuple(pass_fds),
+                preexec_fn=preexec_fn,
+                cwd=cmd.working_dir,
+                env=proc_env,
+            ),
+            asyncio.gather(*sub_spawns),
         )
 
         # Close non-data fds (children have inherited them)
         for fd_entry in local_fds:
             fd_entry.close()
 
-        return CmdNode(proc=proc)
+        return CmdNode(proc=proc, subs=sub_nodes)
 
     async def _spawn_pipeline(
         self, pipeline: Pipeline, stdin_fd: int | None, stdout_fd: int | None
