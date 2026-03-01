@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 from asyncio.subprocess import Process, create_subprocess_exec
@@ -109,52 +110,6 @@ class PipelineNode:
 
 
 @dataclass
-class WriteNode:
-    """Process tree node for an async data write (<<<).
-
-    Leaf node — no process, just an fd and data to write. Participates
-    in tree traversal (all_fds for cleanup) but contributes no processes
-    to pipefail.
-    """
-
-    fd: OwnedFd
-    data: str | bytes
-
-    def root_procs(self) -> Generator[Process]:
-        """No processes — data writes don't participate in pipefail."""
-        yield from ()
-
-    def root_returncodes(self) -> Generator[int]:
-        """No returncodes — data writes don't participate in pipefail."""
-        yield from ()
-
-    def all_procs(self) -> Generator[Process]:
-        """No processes."""
-        yield from ()
-
-    def all_fds(self) -> Generator[OwnedFd]:
-        """Yield the write fd for cleanup."""
-        yield self.fd
-
-    def tasks(self) -> Generator[Coroutine[None, None, object]]:
-        """Yield the data write coroutine."""
-        yield self._write()
-
-    async def _write(self) -> None:
-        """Write data to the fd, then close."""
-        writer = ByteWriteStream(self.fd)
-        try:
-            payload = (
-                self.data.encode("utf-8") if isinstance(self.data, str) else self.data
-            )
-            await writer.write(payload)
-        except OSError:
-            pass
-        finally:
-            await writer.close()
-
-
-@dataclass
 class FnNode:
     """Process tree node for an in-process Python function.
 
@@ -208,7 +163,7 @@ class FnNode:
             await stdin_stream.close()
 
 
-ProcessNode = CmdNode | PipelineNode | WriteNode | FnNode
+ProcessNode = CmdNode | PipelineNode | FnNode
 
 
 def _normalize_returncode(code: int | None) -> int:
@@ -455,12 +410,19 @@ async def _spawn_cmd(
         return pipe_r, pipe_w
 
     def feed_with_pipe(data: str | bytes) -> OwnedFd:
-        """Allocate pipe, schedule async data write, return read end."""
+        """Allocate pipe, schedule FnNode data write, return read end."""
         pipe_r, pipe_w = ctx.pipe()
         owned_fds.extend([pipe_r, pipe_w])
-        close_after_spawn.append(pipe_r)
+        close_after_spawn.extend([pipe_r, pipe_w])
         fdo.add_live(pipe_r.fd)
-        children.append(WriteNode(fd=pipe_w, data=data))
+
+        async def write_data(stage: ByteStageCtx) -> int:
+            payload = data.encode("utf-8") if isinstance(data, str) else data
+            with contextlib.suppress(OSError):
+                await stage.stdout.write(payload)
+            return 0
+
+        children.append(_spawn_fn(ctx, Fn(write_data), None, pipe_w.fd))
         return pipe_r
 
     # Feed IR redirects into FdOps
