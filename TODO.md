@@ -9,6 +9,9 @@
 - Shell renderer - serialize Cmd/Pipeline back to shell string (complex: quoting, escaping)
 - Process handle - `async with start(cmd) as handle:` for lifecycle control (signal, wait, timeout, auto-kill on exit)
 - Python stages - functions as pipeline stages with stdin/stdout/stderr/exit code interface
+- Fn redirects - read/feed/write/close on Fn stages (fd 0/1 only). May want
+  to leverage the emulated fd table to provide a `dict[int, WriteStream]` interface
+  rather than just stdin/stdout. Needs more design thought.
 
 ## Design
 
