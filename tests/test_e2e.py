@@ -677,6 +677,7 @@ async def test_prepare_builder_method() -> None:
 # =============================================================================
 
 
+@fn
 async def _upper(ctx: ByteStageCtx) -> int:
     """Read stdin, uppercase, write to stdout."""
     data = await ctx.stdin.read()
@@ -684,12 +685,14 @@ async def _upper(ctx: ByteStageCtx) -> int:
     return 0
 
 
+@fn
 async def _generate(ctx: ByteStageCtx) -> int:
     """Write fixed data to stdout."""
     await ctx.stdout.write(b"generated\n")
     return 0
 
 
+@fn
 @decode
 async def _text_upper(ctx: TextStageCtx) -> int:
     """Text-mode upper: read text, uppercase, write text."""
@@ -698,11 +701,13 @@ async def _text_upper(ctx: TextStageCtx) -> int:
     return 0
 
 
+@fn
 async def _exit_code(ctx: ByteStageCtx) -> int:
     """Return non-zero."""
     return 42
 
 
+@fn
 async def _line_counter(ctx: ByteStageCtx) -> int:
     """Count lines from stdin, write count to stdout."""
     count = 0
@@ -713,99 +718,100 @@ async def _line_counter(ctx: ByteStageCtx) -> int:
 
 
 async def test_fn_in_pipeline() -> None:
-    """fn in pipeline: echo | fn(_upper) uppercases output."""
-    result = await out(sh.echo("hello") | fn(_upper))
+    """fn in pipeline: echo | _upper uppercases output."""
+    result = await out(sh.echo("hello") | _upper)
     assert result == "HELLO\n"
 
 
 async def test_fn_as_first_stage() -> None:
-    """fn as first pipeline stage: fn(_generate) | cat."""
-    result = await out(fn(_generate) | sh.cat())
+    """fn as first pipeline stage: _generate | cat."""
+    result = await out(_generate | sh.cat())
     assert result == "generated\n"
 
 
 async def test_fn_standalone() -> None:
     """Await fn directly returns exit code."""
-    result = await fn(_generate)
+    result = await _generate
     assert result == 0
 
 
 async def test_fn_standalone_out() -> None:
     """out(fn) captures stdout."""
-    result = await out(fn(_generate))
+    result = await out(_generate)
     assert result == "generated\n"
 
 
 async def test_fn_with_decode() -> None:
     """@decode wraps text-mode fn for byte pipeline."""
-    result = await out(sh.echo("hello") | fn(_text_upper))
+    result = await out(sh.echo("hello") | _text_upper)
     assert result == "HELLO\n"
 
 
-async def test_fn_auto_wrap_pipe() -> None:
-    """cmd | callable auto-wraps bare callable to Fn."""
+async def test_fn_pipe() -> None:
+    """cmd | fn(...) pipes through Python function."""
     result = await out(sh.echo("hello") | _upper)
     assert result == "HELLO\n"
 
 
-async def test_fn_auto_wrap_gt() -> None:
-    """cmd > callable auto-wraps to SubOut(Fn(...))."""
-    result = await run(sh.echo("hello") > _upper)
+async def test_fn_gt() -> None:
+    """cmd > sub_out(fn(...)) redirects to Python function."""
+    result = await run(sh.echo("hello") > sub_out(_upper))
     assert result == 0
 
 
-async def test_fn_auto_wrap_lt() -> None:
-    """cmd < callable auto-wraps to SubIn(Fn(...))."""
-    result = await out(sh.cat() < _generate)
+async def test_fn_lt() -> None:
+    """cmd < sub_in(fn(...)) reads from Python function."""
+    result = await out(sh.cat() < sub_in(_generate))
     assert result == "generated\n"
 
 
 async def test_fn_sub_in() -> None:
     """sub_in(fn(...)) as process substitution argument."""
-    result = await out(sh.cat(sub_in(fn(_generate))))
-    assert result == "generated\n"
-
-
-async def test_fn_sub_in_callable() -> None:
-    """sub_in(callable) auto-wraps bare callable."""
     result = await out(sh.cat(sub_in(_generate)))
     assert result == "generated\n"
 
 
 async def test_fn_exit_code() -> None:
     """fn exit code propagates."""
-    result = await run(fn(_exit_code))
+    result = await run(_exit_code)
     assert result == 42
 
 
 async def test_fn_pipefail_rightmost() -> None:
     """Pipefail: rightmost non-zero wins; fn(42) is the rightmost failure."""
-    result = await (fn(_exit_code) | sh.cat())
+    result = await (_exit_code | sh.cat())
     assert result == 42
 
 
 async def test_fn_exception() -> None:
     """fn that raises returns exit code 1."""
 
+    @fn
     async def _raises(ctx: ByteStageCtx) -> int:
         raise ValueError("boom")
 
-    assert await run(fn(_raises)) == 1
+    assert await run(_raises) == 1
 
 
 async def test_fn_line_processing() -> None:
     """fn with async iteration over stdin lines."""
-    result = await out(sh.printf("a\\nb\\nc\\n") | fn(_line_counter))
+    result = await out(sh.printf("a\\nb\\nc\\n") | _line_counter)
     assert result == "3\n"
 
 
-async def test_fn_pipeline_auto_wrap() -> None:
-    """pipeline | callable auto-wraps bare callable in multi-stage pipeline."""
+async def test_fn_pipeline_pipe() -> None:
+    """pipeline | fn(...) extends pipeline with Python function."""
     result = await out(sh.echo("hello") | sh.cat() | _upper)
     assert result == "HELLO\n"
 
 
+async def test_fn_pipe_cmd() -> None:
+    """fn(...) | cmd pipes Python function output to command."""
+    result = await out(_generate | sh.cat())
+    assert result == "generated\n"
+
+
 async def test_fn_to_fn_pipeline() -> None:
-    """fn | fn pipeline: fn(_generate) | fn(_upper)."""
-    result = await out(fn(_generate) | fn(_upper))
+    """fn | fn pipeline: _generate | _upper."""
+    result = await out(_generate | _upper)
     assert result == "GENERATED\n"

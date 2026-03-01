@@ -7,7 +7,6 @@ from shish import (
     STDIN,
     STDOUT,
     Cmd,
-    Fn,
     Pipeline,
     close,
     cmd,
@@ -637,120 +636,57 @@ async def _noop(ctx: ByteStageCtx) -> int:
     return 0
 
 
+_noop_fn = fn(_noop)
+_noop_ir = ir.Fn(_noop)
+
+
 def test_fn_constructor() -> None:
-    result = fn(_noop)
-    assert isinstance(result, Fn)
-    assert unwrap(result) == ir.Fn(_noop)
+    assert unwrap(_noop_fn) == _noop_ir
 
 
 def test_fn_pipe_cmd() -> None:
-    result = fn(_noop) | sh.cat()
-    assert isinstance(result, Pipeline)
-    ir_pipeline = unwrap(result)
-    assert isinstance(ir_pipeline, ir.Pipeline)
-    assert len(ir_pipeline.stages) == 2
-    assert isinstance(ir_pipeline.stages[0], ir.Fn)
-    assert ir_pipeline.stages[0].func is _noop
-    assert ir_pipeline.stages[1] == ir.Cmd(("cat",))
+    assert unwrap(fn(_noop) | sh.cat()) == ir.Pipeline((_noop_ir, ir.Cmd(("cat",))))
 
 
 def test_cmd_pipe_fn() -> None:
-    result = sh.echo("hi") | fn(_noop)
-    assert isinstance(result, Pipeline)
-    ir_pipeline = unwrap(result)
-    assert isinstance(ir_pipeline, ir.Pipeline)
-    assert len(ir_pipeline.stages) == 2
-    assert ir_pipeline.stages[0] == ir.Cmd(("echo", "hi"))
-    assert isinstance(ir_pipeline.stages[1], ir.Fn)
-    assert ir_pipeline.stages[1].func is _noop
+    assert unwrap(sh.echo("hi") | fn(_noop)) == ir.Pipeline(
+        (ir.Cmd(("echo", "hi")), _noop_ir)
+    )
 
 
-def test_cmd_pipe_bare_callable() -> None:
-    result = sh.echo("hi") | _noop
-    assert isinstance(result, Pipeline)
-    ir_pipeline = unwrap(result)
-    assert isinstance(ir_pipeline, ir.Pipeline)
-    assert len(ir_pipeline.stages) == 2
-    assert ir_pipeline.stages[0] == ir.Cmd(("echo", "hi"))
-    assert isinstance(ir_pipeline.stages[1], ir.Fn)
-    assert ir_pipeline.stages[1].func is _noop
+def test_pipeline_pipe_fn() -> None:
+    assert unwrap((sh.a() | sh.b()) | fn(_noop)) == ir.Pipeline(
+        (ir.Cmd(("a",)), ir.Cmd(("b",)), _noop_ir)
+    )
 
 
-def test_pipeline_pipe_bare_callable() -> None:
-    result = (sh.a() | sh.b()) | _noop
-    assert isinstance(result, Pipeline)
-    ir_pipeline = unwrap(result)
-    assert isinstance(ir_pipeline, ir.Pipeline)
-    assert len(ir_pipeline.stages) == 3
-    assert ir_pipeline.stages[0] == ir.Cmd(("a",))
-    assert ir_pipeline.stages[1] == ir.Cmd(("b",))
-    assert isinstance(ir_pipeline.stages[2], ir.Fn)
-    assert ir_pipeline.stages[2].func is _noop
+def test_fn_pipe_fn() -> None:
+    assert unwrap(fn(_noop) | fn(_noop)) == ir.Pipeline((_noop_ir, _noop_ir))
 
 
-def test_fn_pipe_bare_callable() -> None:
-    result = fn(_noop) | _noop
-    assert isinstance(result, Pipeline)
-    ir_pipeline = unwrap(result)
-    assert isinstance(ir_pipeline, ir.Pipeline)
-    assert len(ir_pipeline.stages) == 2
-    assert isinstance(ir_pipeline.stages[0], ir.Fn)
-    assert ir_pipeline.stages[0].func is _noop
-    assert isinstance(ir_pipeline.stages[1], ir.Fn)
-    assert ir_pipeline.stages[1].func is _noop
+def test_cmd_gt_fn() -> None:
+    assert unwrap(sh.echo("hi") > sub_out(fn(_noop))) == ir.Cmd(
+        ("echo", "hi")
+    ).write(ir.SubOut(_noop_ir))
 
 
-def test_cmd_gt_callable() -> None:
-    result = sh.echo("hi") > _noop
-    assert isinstance(result, Cmd)
-    ir_cmd = unwrap(result)
-    assert isinstance(ir_cmd, ir.Cmd)
-    assert ir_cmd.args == ("echo", "hi")
-    assert len(ir_cmd.redirects) == 1
-    redirect = ir_cmd.redirects[0]
-    assert isinstance(redirect, ir.FdToSub)
-    assert redirect.fd == STDOUT
-    assert isinstance(redirect.sub, ir.SubOut)
-    assert isinstance(redirect.sub.cmd, ir.Fn)
-    assert redirect.sub.cmd.func is _noop
+def test_cmd_lt_fn() -> None:
+    assert unwrap(sh.cat() < sub_in(fn(_noop))) == ir.Cmd(("cat",)).read(
+        ir.SubIn(_noop_ir)
+    )
 
 
-def test_cmd_lt_callable() -> None:
-    result = sh.cat() < _noop
-    assert isinstance(result, Cmd)
-    ir_cmd = unwrap(result)
-    assert isinstance(ir_cmd, ir.Cmd)
-    assert ir_cmd.args == ("cat",)
-    assert len(ir_cmd.redirects) == 1
-    redirect = ir_cmd.redirects[0]
-    assert isinstance(redirect, ir.FdFromSub)
-    assert redirect.fd == STDIN
-    assert isinstance(redirect.sub, ir.SubIn)
-    assert isinstance(redirect.sub.cmd, ir.Fn)
-    assert redirect.sub.cmd.func is _noop
+def test_sub_in_fn() -> None:
+    assert sub_in(fn(_noop)) == ir.SubIn(_noop_ir)
 
 
-def test_sub_in_callable() -> None:
-    result = sub_in(_noop)
-    assert isinstance(result, ir.SubIn)
-    assert isinstance(result.cmd, ir.Fn)
-    assert result.cmd.func is _noop
-
-
-def test_sub_out_callable() -> None:
-    result = sub_out(_noop)
-    assert isinstance(result, ir.SubOut)
-    assert isinstance(result.cmd, ir.Fn)
-    assert result.cmd.func is _noop
+def test_sub_out_fn() -> None:
+    assert sub_out(fn(_noop)) == ir.SubOut(_noop_ir)
 
 
 def test_unwrap_fn() -> None:
-    wrapped = fn(_noop)
-    result = unwrap(wrapped)
-    assert isinstance(result, ir.Fn)
-    assert result.func is _noop
+    assert unwrap(fn(_noop)) == _noop_ir
 
 
 def test_fn_await() -> None:
-    wrapped = fn(_noop)
-    assert hasattr(wrapped, "__await__")
+    assert hasattr(fn(_noop), "__await__")

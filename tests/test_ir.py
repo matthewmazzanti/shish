@@ -445,52 +445,44 @@ async def _noop2(ctx: ByteStageCtx) -> int:
     return 1
 
 
+_fn = Fn(_noop)
+_fn2 = Fn(_noop2)
+
+
 def test_fn_construction() -> None:
-    func_node = Fn(_noop)
-    assert func_node.func is _noop
+    assert _fn.func is _noop
 
 
 def test_fn_pipe_cmd() -> None:
-    result = Fn(_noop).pipe(cmd("cat"))
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline((Fn(_noop), ir.Cmd(("cat",))))
+    assert _fn.pipe(cmd("cat")) == ir.Pipeline((_fn, ir.Cmd(("cat",))))
 
 
 def test_fn_pipe_fn() -> None:
-    result = Fn(_noop).pipe(Fn(_noop2))
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline((Fn(_noop), Fn(_noop2)))
+    assert _fn.pipe(_fn2) == ir.Pipeline((_fn, _fn2))
 
 
 def test_cmd_pipe_fn() -> None:
-    result = cmd("echo", "hi").pipe(Fn(_noop))
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline((ir.Cmd(("echo", "hi")), Fn(_noop)))
+    assert cmd("echo", "hi").pipe(_fn) == ir.Pipeline(
+        (ir.Cmd(("echo", "hi")), _fn)
+    )
 
 
 def test_fn_sub_in() -> None:
-    result = Fn(_noop).sub_in()
-    assert isinstance(result, ir.SubIn)
-    assert result == ir.SubIn(Fn(_noop))
+    assert _fn.sub_in() == ir.SubIn(_fn)
 
 
 def test_fn_sub_out() -> None:
-    result = Fn(_noop).sub_out()
-    assert isinstance(result, ir.SubOut)
-    assert result == ir.SubOut(Fn(_noop))
+    assert _fn.sub_out() == ir.SubOut(_fn)
 
 
 def test_pipeline_mixed_stages() -> None:
-    result = ir.pipeline(cmd("a"), Fn(_noop), cmd("b"))
-    assert isinstance(result, ir.Pipeline)
-    assert len(result.stages) == 3
-    assert isinstance(result.stages[0], ir.Cmd)
-    assert isinstance(result.stages[1], Fn)
-    assert isinstance(result.stages[2], ir.Cmd)
-    assert result == ir.Pipeline((ir.Cmd(("a",)), Fn(_noop), ir.Cmd(("b",))))
+    assert ir.pipeline(cmd("a"), _fn, cmd("b")) == ir.Pipeline(
+        (ir.Cmd(("a",)), _fn, ir.Cmd(("b",)))
+    )
 
 
 def test_pipeline_flattens_with_fn() -> None:
-    inner = ir.Pipeline((cmd("a"), Fn(_noop)))
-    result = ir.pipeline(inner, cmd("b"))
-    assert result == ir.Pipeline((ir.Cmd(("a",)), Fn(_noop), ir.Cmd(("b",))))
+    inner = ir.Pipeline((cmd("a"), _fn))
+    assert ir.pipeline(inner, cmd("b")) == ir.Pipeline(
+        (ir.Cmd(("a",)), _fn, ir.Cmd(("b",)))
+    )
