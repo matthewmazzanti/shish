@@ -47,6 +47,8 @@ TODO.md         # planned features and known issues
 - pyright strict mode enforced
 - ruff ANN rules enforce annotation coverage
 - No one or two letter variable names except loop indexes
+- Conventional Commits: messages use `feat:`, `fix:`, `chore:`, `docs:`, etc. prefix
+- Branch names match: `feat/`, `fix/`, `chore/`, `docs/`, etc.
 
 ## Implementation Notes
 
