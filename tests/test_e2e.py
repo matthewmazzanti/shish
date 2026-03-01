@@ -614,3 +614,29 @@ async def test_cwd_with_file_operations(tmp_path: Path) -> None:
     (tmp_path / "test.txt").write_text("hello from cwd\n")
     result = await out(cwd(sh.cat("test.txt"), tmp_path))
     assert result == "hello from cwd\n"
+
+
+# =============================================================================
+# @ (cwd) and % (env) operators — enforced order: env % cmd @ cwd
+# =============================================================================
+
+
+async def test_matmul_cwd(tmp_path: Path) -> None:
+    result = await out(sh.pwd() @ tmp_path)
+    assert result.strip() == str(tmp_path.resolve())
+
+
+async def test_rmod_env() -> None:
+    result = await out({"FOO": "bar"} % sh.printenv("FOO"))
+    assert result == "bar\n"
+
+
+async def test_rmod_matmul_in_pipeline(tmp_path: Path) -> None:
+    result = await out(({"FOO": "hello"} % sh.printenv("FOO")) | sh.cat())
+    assert result == "hello\n"
+
+
+async def test_rmod_matmul_bash_style(tmp_path: Path) -> None:
+    """{"FOO": "bar"} % cmd @ "/tmp" — bash-style env-first syntax."""
+    result = await out({"FOO": "bar"} % sh.printenv("FOO") @ tmp_path)
+    assert result == "bar\n"
