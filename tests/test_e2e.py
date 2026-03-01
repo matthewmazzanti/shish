@@ -576,6 +576,21 @@ async def test_cancel_pipeline() -> None:
         await task
 
 
+async def test_cancel_fn_pipeline() -> None:
+    """Cancelling a cmd | fn | cmd pipeline cancels all stages."""
+
+    @fn
+    async def _slow(ctx: TextStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    task = asyncio.create_task(run(sh.sleep("60") | _slow | sh.sleep("60")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 # =============================================================================
 # Environment Variables (env combinator)
 # =============================================================================

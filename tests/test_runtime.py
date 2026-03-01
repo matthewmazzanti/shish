@@ -1137,3 +1137,82 @@ async def test_fn_cancel() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_fn_cancel_mixed_pipeline() -> None:
+    """Cancelling a cmd | fn | cmd pipeline cancels all stages."""
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    task = asyncio.create_task(
+        run(
+            ir.Pipeline(
+                (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
+            )
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_mid_read() -> None:
+    """Cancelling while Fn is blocked on stdin.read() cleans up."""
+
+    async def _reader(ctx: ByteStageCtx) -> int:
+        await ctx.stdin.read()  # blocks until EOF or cancel
+        return 0
+
+    task = asyncio.create_task(
+        run(ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Fn(_reader))))
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_mid_write() -> None:
+    """Cancelling while Fn is blocked on stdout.write() cleans up."""
+
+    async def _writer(ctx: ByteStageCtx) -> int:
+        # Write enough to fill the pipe buffer and block
+        chunk = b"x" * 65536
+        while True:
+            await ctx.stdout.write(chunk)
+        return 0  # type: ignore[unreachable]
+
+    task = asyncio.create_task(
+        run(ir.Pipeline((ir.Fn(_writer), ir.Cmd(("sleep", "60")))))
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_no_fd_leak() -> None:
+    """No fds leak in the parent after cancelling a mixed pipeline."""
+    import os
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    before = set(os.listdir("/proc/self/fd"))
+    task = asyncio.create_task(
+        run(
+            ir.Pipeline(
+                (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
+            )
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
