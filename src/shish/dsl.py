@@ -8,10 +8,13 @@ module-level combinator functions that unwrap to IR, delegate, and re-wrap.
 from __future__ import annotations
 
 from collections.abc import Generator, Mapping
-from typing import Never, overload
+from typing import TYPE_CHECKING, Never, overload
 
 import shish.ir as ir
 from shish.fdops import STDIN, STDOUT
+
+if TYPE_CHECKING:
+    from shish.runtime import Execution
 
 Flag = ir.PathLike | bool
 
@@ -262,6 +265,11 @@ def sub_in(source: Runnable) -> ir.SubIn:
 def sub_out(sink: Runnable) -> ir.SubOut:
     """Output process substitution: >(sink)."""
     return ir.SubOut(unwrap(sink))
+
+
+async def prepare(cmd: Cmd | Pipeline) -> Execution:
+    """Spawn a command or pipeline and return an Execution handle."""
+    return await unwrap(cmd).prepare()
 
 
 async def run(cmd: Cmd | Pipeline) -> int:

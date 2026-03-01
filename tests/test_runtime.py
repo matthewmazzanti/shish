@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from shish import STDERR, STDIN, STDOUT, ir
-from shish.runtime import out, run
+from shish.runtime import Execution, out, prepare, run
 
 # =============================================================================
 # Basic Execution
@@ -890,3 +890,70 @@ async def test_working_dir_pwd_synced(tmp_path: Path) -> None:
     command = ir.Cmd(("printenv", "PWD"), working_dir=tmp_path)
     result = await out(command)
     assert result.strip() == str(tmp_path)
+
+
+# =============================================================================
+# prepare() + wait() lifecycle
+# =============================================================================
+
+
+async def test_prepare_returns_execution() -> None:
+    """prepare() returns an Execution with a root ProcessNode."""
+    execution = await prepare(ir.Cmd(("true",)))
+    assert isinstance(execution, Execution)
+    assert execution.root is not None
+    code = await execution.wait()
+    assert code == 0
+
+
+async def test_prepare_wait_exit_code() -> None:
+    """wait() returns the correct exit code."""
+    execution = await prepare(ir.Cmd(("false",)))
+    assert await execution.wait() == 1
+
+
+async def test_prepare_wait_pipeline() -> None:
+    """prepare()+wait() works with pipelines."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("echo", "hello")),
+            ir.Cmd(("tr", "a-z", "A-Z")),
+        )
+    )
+    execution = await prepare(pipeline)
+    assert await execution.wait() == 0
+
+
+async def test_prepare_wait_pipefail() -> None:
+    """Pipefail semantics work through prepare()+wait()."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("sh", "-c", "exit 1")),
+            ir.Cmd(("sh", "-c", "exit 0")),
+            ir.Cmd(("sh", "-c", "exit 2")),
+        )
+    )
+    execution = await prepare(pipeline)
+    assert await execution.wait() == 2
+
+
+async def test_prepare_cleanup_on_spawn_failure() -> None:
+    """prepare() cleans up fds on spawn failure."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    with pytest.raises(FileNotFoundError):
+        await prepare(ir.Cmd(("nonexistent_command_xyz_12345",)))
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
+
+
+async def test_prepare_wait_no_fd_leak() -> None:
+    """No fds leak after prepare()+wait() completes."""
+    import os
+
+    before = set(os.listdir("/proc/self/fd"))
+    execution = await prepare(ir.Cmd(("true",)))
+    await execution.wait()
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after

@@ -8,10 +8,12 @@ from shish import (
     STDERR,
     STDIN,
     STDOUT,
+    Execution,
     close,
     cwd,
     env,
     out,
+    prepare,
     run,
     sh,
     sub_in,
@@ -640,3 +642,27 @@ async def test_rmod_matmul_bash_style(tmp_path: Path) -> None:
     """{"FOO": "bar"} % cmd @ "/tmp" — bash-style env-first syntax."""
     result = await out({"FOO": "bar"} % sh.printenv("FOO") @ tmp_path)
     assert result == "bar\n"
+
+
+# =============================================================================
+# prepare() + wait() via DSL
+# =============================================================================
+
+
+async def test_prepare_dsl_cmd() -> None:
+    """DSL prepare() returns Execution, wait() returns exit code."""
+    execution = await prepare(sh.true())
+    assert isinstance(execution, Execution)
+    assert await execution.wait() == 0
+
+
+async def test_prepare_dsl_pipeline() -> None:
+    """DSL prepare() works with pipelines."""
+    execution = await prepare(sh.echo("hello") | sh.cat())
+    assert await execution.wait() == 0
+
+
+async def test_prepare_builder_method() -> None:
+    """IR builder prepare() method works."""
+    execution = await cmd("echo", "hello").prepare()
+    assert await execution.wait() == 0

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from shish.fdops import STDIN, STDOUT
+
+if TYPE_CHECKING:
+    from shish.runtime import Execution
 
 
 class _Unset:
@@ -167,6 +171,12 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
+    async def prepare(self) -> Execution:
+        """Spawn and return an Execution handle."""
+        from shish import runtime
+
+        return await runtime.prepare(self)
+
     async def run(self) -> int:
         """Execute and return exit code."""
         from shish import runtime
@@ -209,6 +219,12 @@ class Pipeline:
         """Close fd (last stage)."""
         last = self.stages[-1].close(fd)
         return Pipeline((*self.stages[:-1], last))
+
+    async def prepare(self) -> Execution:
+        """Spawn and return an Execution handle."""
+        from shish import runtime
+
+        return await runtime.prepare(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""

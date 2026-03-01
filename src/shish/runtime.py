@@ -96,11 +96,56 @@ ProcessNode = CmdNode | PipelineNode
 
 
 @dataclass
-class Result:
-    """Execution result with exit code and optional captured stdout."""
+class Execution:
+    """Handle for a spawned process tree with a wait() method.
 
-    code: int
-    stdout: bytes | None = None
+    Returned by prepare(). Callers can inspect the process tree via
+    root before calling wait(). wait() gathers all process exits and
+    data writes, computes the pipefail exit code, then cleans up.
+    """
+
+    root: ProcessNode
+    _procs: list[Process]
+    _fds: list[OwnedFd]
+
+    async def wait(self) -> int:
+        """Wait for all processes and return the pipefail exit code.
+
+        Gathers all process waits and data writes concurrently, then
+        computes pipefail (rightmost non-zero from root_procs).
+        Finally: SIGKILL+reap + close all fds (idempotent, shielded).
+        """
+        try:
+            data_writes: list[Coroutine[None, None, None]] = []
+            for fd_entry in self._fds:
+                if fd_entry.data is not None and not fd_entry.closed:
+                    data_writes.append(async_write(fd_entry.fd, fd_entry.data))
+                    fd_entry.closed = True  # async_write takes ownership
+
+            await asyncio.gather(
+                *[proc.wait() for proc in self._procs],
+                *data_writes,
+            )
+
+            code = 0
+            for proc in self.root.root_procs():
+                proc_code = _normalize_returncode(proc.returncode)
+                if proc_code != 0:
+                    code = proc_code
+            return code
+        finally:
+            await _kill_and_reap(*self._procs)
+            for fd_entry in self._fds:
+                fd_entry.close()
+
+
+def _normalize_returncode(code: int | None) -> int:
+    """Convert returncode to bash-style: 128 + signal for killed processes."""
+    if code is None:
+        return 0
+    if code < 0:
+        return 128 + (-code)
+    return code
 
 
 async def _kill_and_reap(*procs: Process) -> None:
@@ -153,21 +198,19 @@ def _build_preexec(
 
 
 class Executor:
-    """Spawns and executes a Runnable as a process tree.
+    """Spawns a Runnable as a process tree, tracking fds and procs.
 
     Maintains two flat tracking lists alongside the tree structure:
 
     - self.fds: every allocated pipe fd (both ends), for guaranteed
-      close in the finally block. Includes data-pipe write ends that
-      async_write takes ownership of during execution.
+      close on failure. Includes data-pipe write ends that async_write
+      takes ownership of during execution.
     - self.procs: every spawned process (main + subs + pipeline stages),
-      for guaranteed SIGKILL+reap in the finally block.
+      for guaranteed SIGKILL+reap on failure.
 
-    The flat lists ensure cleanup even if a spawn fails partway through
-    or tasks are cancelled, independent of tree structure. The tree
-    (ProcessNode) is used only for pipefail exit code reporting.
-
-    Single-use: one Executor per run()/out() call.
+    After a successful spawn, ownership of fds and procs transfers to
+    the Execution returned by prepare(). Single-use: one Executor per
+    prepare() call.
     """
 
     def __init__(self) -> None:
@@ -237,7 +280,7 @@ class Executor:
         self.fds.append(OwnedFd(write_fd, data))
         return read_entry
 
-    async def _spawn(
+    async def spawn(
         self, cmd: Runnable, stdin_fd: int | None, stdout_fd: int | None
     ) -> ProcessNode:
         """Dispatch a Runnable to _spawn_cmd or _spawn_pipeline.
@@ -301,7 +344,7 @@ class Executor:
                 case FdToSub(fd=target_fd, sub=sub):  # 1> >(cmd), 3> >(cmd)
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    sub_spawns.append(self._spawn(sub.cmd, pipe_r.fd, None))
+                    sub_spawns.append(self.spawn(sub.cmd, pipe_r.fd, None))
                     fdo.add_live(pipe_w.fd)
                     fdo.move_fd(pipe_w.fd, target_fd)
 
@@ -317,7 +360,7 @@ class Executor:
                 case FdFromSub(fd=target_fd, sub=sub):  # < <(cmd), 3< <(cmd)
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    sub_spawns.append(self._spawn(sub.cmd, None, pipe_w.fd))
+                    sub_spawns.append(self.spawn(sub.cmd, None, pipe_w.fd))
                     fdo.add_live(pipe_r.fd)
                     fdo.move_fd(pipe_r.fd, target_fd)
 
@@ -338,13 +381,13 @@ class Executor:
                 case SubOut(cmd=inner):
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    sub_spawns.append(self._spawn(inner, pipe_r.fd, None))
+                    sub_spawns.append(self.spawn(inner, pipe_r.fd, None))
                     resolved_args.append(f"/dev/fd/{pipe_w.fd}")
                     pass_fds.append(pipe_w.fd)
                 case SubIn(cmd=inner):
                     pipe_r, pipe_w = self._pipe()
                     local_fds.extend([pipe_r, pipe_w])
-                    sub_spawns.append(self._spawn(inner, None, pipe_w.fd))
+                    sub_spawns.append(self.spawn(inner, None, pipe_w.fd))
                     resolved_args.append(f"/dev/fd/{pipe_r.fd}")
                     pass_fds.append(pipe_r.fd)
 
@@ -419,83 +462,43 @@ class Executor:
 
         return PipelineNode(stages=stage_nodes)
 
-    async def execute(
-        self,
-        cmd: Runnable,
-        stdout_fd: int | None = None,
-    ) -> Result:
-        """Execute a Runnable and return its Result (exit code).
+async def prepare(cmd: Runnable, stdout_fd: int | None = None) -> Execution:
+    """Spawn a process tree and return an Execution handle.
 
-        Lifecycle:
-        1. Spawn the full process tree via _spawn().
-        2. Close the capture fd (stdout_fd) in the parent so the
-           child's stdout EOF is visible to readers.
-        3. Gather all process waits and data writes (FdFromData pipes)
-           concurrently. Data writes must overlap with process waits
-           to avoid deadlock when the child's stdin pipe buffer fills.
-        4. Compute pipefail exit code: rightmost non-zero from
-           root_procs() only. Sub-process exit codes (process
-           substitutions) are intentionally ignored.
-        5. Finally: SIGKILL+reap any still-running processes, close
-           all tracked fds. Both are idempotent and shielded from
-           cancellation to prevent resource leaks.
+    Creates an Executor, spawns all processes, closes the capture fd
+    (child inherited it), and returns an Execution whose wait() method
+    gathers exits and computes pipefail. On spawn failure, cleans up
+    before re-raising.
 
-        Args:
-            cmd: Command or pipeline to execute.
-            stdout_fd: Write end of a pipe for capturing stdout.
-                Caller owns the read end; this method closes the
-                write end after fork so readers see EOF.
-        """
-        capture_fd: OwnedFd | None = None
-        if stdout_fd is not None:
-            capture_fd = OwnedFd(stdout_fd)
-            self.fds.append(capture_fd)
-        try:
-            root = await self._spawn(cmd, None, stdout_fd)
+    Args:
+        cmd: Command or pipeline to spawn.
+        stdout_fd: Write end of a pipe for capturing stdout.
+            Caller owns the read end; this function closes the
+            write end after fork so readers see EOF.
+    """
+    executor = Executor()
+    capture_fd: OwnedFd | None = None
+    if stdout_fd is not None:
+        capture_fd = OwnedFd(stdout_fd)
+        executor.fds.append(capture_fd)
+    try:
+        root = await executor.spawn(cmd, None, stdout_fd)
+    except BaseException:
+        await _kill_and_reap(*executor.procs)
+        for fd_entry in executor.fds:
+            fd_entry.close()
+        raise
 
-            # Close capture fd — child has inherited it
-            if capture_fd is not None:
-                capture_fd.close()
+    # Close capture fd — child has inherited it
+    if capture_fd is not None:
+        capture_fd.close()
 
-            # Hand data fds to async_write
-            data_writes: list[Coroutine[None, None, None]] = []
-            for fd_entry in self.fds:
-                if fd_entry.data is not None and not fd_entry.closed:
-                    data_writes.append(async_write(fd_entry.fd, fd_entry.data))
-                    fd_entry.closed = True  # async_write takes ownership
-
-            await asyncio.gather(
-                *[proc.wait() for proc in self.procs],
-                *data_writes,
-            )
-
-            # Pipefail: rightmost non-zero from root procs only.
-            # Sub-process exit codes (process substitutions) are ignored.
-            code = 0
-            for proc in root.root_procs():
-                proc_code = self._normalize_returncode(proc.returncode)
-                if proc_code != 0:
-                    code = proc_code
-            return Result(code)
-        finally:
-            await _kill_and_reap(*self.procs)
-            for fd_entry in self.fds:
-                fd_entry.close()  # idempotent
-
-    @staticmethod
-    def _normalize_returncode(code: int | None) -> int:
-        """Convert returncode to bash-style: 128 + signal for killed processes."""
-        if code is None:
-            return 0
-        if code < 0:
-            return 128 + (-code)
-        return code
+    return Execution(root=root, _procs=executor.procs, _fds=executor.fds)
 
 
 async def run(cmd: Runnable) -> int:
     """Execute a command or pipeline and return exit code."""
-    result = await Executor().execute(cmd)
-    return result.code
+    return await (await prepare(cmd)).wait()
 
 
 @overload
@@ -507,10 +510,10 @@ async def out(cmd: Runnable, encoding: str = "utf-8") -> str: ...
 async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
     """Execute a command and return its captured stdout.
 
-    Allocates a pipe and runs execute() concurrently with async_read
-    on the read end. Concurrency is required to avoid deadlock: if
-    the child fills the pipe buffer, it blocks until someone reads,
-    but if we wait() first we never read.
+    Allocates a pipe, spawns via prepare(), then reads stdout
+    concurrently with wait(). Concurrency is required to avoid
+    deadlock: if the child fills the pipe buffer, it blocks until
+    someone reads, but if we wait() first we never read.
 
     Args:
         cmd: Command to execute.
@@ -521,15 +524,14 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
             the captured stdout attached for diagnostic use.
     """
     read_fd, write_fd = os.pipe()
-    executor = Executor()
     try:
-        # Read and execute concurrently to avoid deadlock
-        result, stdout = await asyncio.gather(
-            executor.execute(cmd, stdout_fd=write_fd),
+        execution = await prepare(cmd, stdout_fd=write_fd)
+        code, stdout = await asyncio.gather(
+            execution.wait(),
             async_read(read_fd),
         )
-        if result.code != 0:
-            raise subprocess.CalledProcessError(result.code, [], stdout)
+        if code != 0:
+            raise subprocess.CalledProcessError(code, [], stdout)
         if encoding is None:
             return stdout
         return stdout.decode(encoding)
