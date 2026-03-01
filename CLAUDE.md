@@ -21,7 +21,7 @@ src/shish/      # main package
   ir.py         # frozen dataclass IR: Cmd, Pipeline, per-fd redirects
   dsl.py        # thin wrappers (Cmd, Pipeline), operators, combinators
   fdops.py      # fd-table simulator for computing pass_fds
-  runtime.py    # executes IR, run, out, Result
+  runtime.py    # executes IR: prepare, Execution, run, out
   aio.py        # async_read, async_write, fd utilities
 TODO.md         # planned features and known issues
 ```
@@ -58,6 +58,12 @@ TODO.md         # planned features and known issues
 - Per-fd redirects: FdToFile, FdFromFile, FdFromData, FdToFd, FdClose, FdFromSub, FdToSub
 - `SubIn`/`SubOut` hold process substitution commands (resolved to `/dev/fd/N` at runtime)
 - `fdops.py` simulates fd table to compute `pass_fds` for subprocess
+- Runtime (`runtime.py`): `prepare()` spawns a process tree, returns `Execution` handle
+  - `PrepareCtx` tracks fds/procs during spawn for error cleanup
+  - Module-level `_spawn`/`_spawn_cmd`/`_spawn_pipeline` build the process tree
+  - Process tree: `CmdNode` (single cmd + subs) / `PipelineNode` (stages)
+  - `Execution.wait()` derives procs/fds by recursing the tree via `all_procs()`/`all_fds()`
+  - Pipefail: rightmost non-zero from `root_procs()` (subs excluded, matching bash)
 - Uses `asyncio.subprocess.create_subprocess_exec` with `pass_fds`
 - Pipeline stages run concurrently via `os.pipe()` fds
 - Per-stage redirects override pipe connections
@@ -67,12 +73,13 @@ TODO.md         # planned features and known issues
 
 ## Test Organization
 
-Four test files with clear boundaries:
-
 - `test_ir.py` — IR layer: `cmd()` builder methods, `ir.pipeline()` flattening. Sync only, no execution.
 - `test_dsl.py` — `sh` magic + operators produce correct IR. Sync only, no execution.
+- `test_fdops.py` — FdOps fd-table simulation. Sync only, no execution.
+- `test_aio.py` — async_read, async_write, fd utilities.
 - `test_runtime.py` — Raw IR → run. No builders or DSL. Tests runtime behavior.
 - `test_e2e.py` — Full integration from DSL or builder → run.
+- `test_fd_hygiene.py` — Verifies child processes see exactly the expected fd set.
 
 Rules for `test_runtime.py` and `test_e2e.py`:
 - Only use commands available in typical macOS/Linux environments (coreutils, util-linux, BSD)
