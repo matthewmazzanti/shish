@@ -315,12 +315,12 @@ async def _spawn(
         case Cmd():
             return await _spawn_cmd(ctx, cmd, stdin_fd, stdout_fd)
         case Fn():
-            return _spawn_fn(ctx, cmd, stdin_fd, stdout_fd)
+            return await _spawn_fn(ctx, cmd, stdin_fd, stdout_fd)
         case Pipeline():
             return await _spawn_pipeline(ctx, cmd, stdin_fd, stdout_fd)
 
 
-def _spawn_fn(
+async def _spawn_fn(
     ctx: PrepareCtx,
     fn_ir: Fn,
     stdin_fd: int | None,
@@ -410,7 +410,7 @@ async def _spawn_cmd(
                 await stage.stdout.write(payload)
             return 0
 
-        children.append(_spawn_fn(ctx, Fn(write_data), None, pipe_w.fd))
+        pending_spawns.append(_spawn_fn(ctx, Fn(write_data), None, pipe_w.fd))
         return pipe_r
 
     # Feed IR redirects into FdOps
@@ -521,26 +521,14 @@ async def _spawn_pipeline(
     stage_stdins = [stdin_fd] + [pipe_r.fd for pipe_r, _ in inter_pipes]
     stage_stdouts = [pipe_w.fd for _, pipe_w in inter_pipes] + [stdout_fd]
 
-    # Spawn stages concurrently (Cmd stages are async, Fn stages are sync)
-    fn_nodes: list[tuple[int, FnNode]] = []
-    spawn_tasks: list[Coroutine[None, None, CmdNode]] = []
-    spawn_indices: list[int] = []
-    for idx, (stage, sin, sout) in enumerate(
-        zip(stages, stage_stdins, stage_stdouts, strict=True)
-    ):
+    # Spawn all stages concurrently — both Cmd and Fn are async now
+    spawn_tasks: list[Coroutine[None, None, CmdNode | FnNode]] = []
+    for stage, sin, sout in zip(stages, stage_stdins, stage_stdouts, strict=True):
         if isinstance(stage, Fn):
-            fn_nodes.append((idx, _spawn_fn(ctx, stage, sin, sout)))
+            spawn_tasks.append(_spawn_fn(ctx, stage, sin, sout))
         else:
-            spawn_indices.append(idx)
             spawn_tasks.append(_spawn_cmd(ctx, stage, sin, sout))
-    cmd_nodes = list(await asyncio.gather(*spawn_tasks))
-
-    # Merge results in original order
-    stage_nodes: list[CmdNode | FnNode] = [None] * len(stages)  # type: ignore[list-item]
-    for idx, node in zip(spawn_indices, cmd_nodes, strict=True):
-        stage_nodes[idx] = node
-    for idx, node in fn_nodes:
-        stage_nodes[idx] = node
+    stage_nodes = list(await asyncio.gather(*spawn_tasks))
 
     # Close inter-stage pipe fds (children have inherited them)
     for pipe_r, pipe_w in inter_pipes:
