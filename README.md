@@ -20,6 +20,9 @@ await (sh.echo("line") >> "log.txt")                 # append
 await (sh.grep("error") < "input.txt")               # stdin from file
 await (sh.grep("error") << "line1\nline2\n")         # stdin from string
 
+# Environment variables and working directory
+await ({"FOO": "bar"} % sh.echo("$FOO") @ "/tmp")
+
 # Process substitution (as args)
 await sh.diff(sub_in(sh.sort("a.txt")), sub_in(sh.sort("b.txt")))
 
@@ -118,7 +121,7 @@ await (sh.cat() << (3, "input"))               # fd 3 from string
 Operators delegate to functions for when you need them:
 
 ```python
-from shish import out, run, pipe, write, read, feed, close, sub_in, sub_out
+from shish import out, run, pipe, write, read, feed, close, sub_in, sub_out, env, cwd
 
 pipe(sh.a(), sh.b(), sh.c())              # varargs pipeline
 write(read(sh.cat(), "in"), "out")        # functional composition
@@ -126,6 +129,8 @@ write(sh.make(), "err.log", fd=STDERR)    # stderr to file
 read(sh.cat(), sub_in(sh.sort("a.txt")))  # read from process sub
 write(sh.tee(), sub_out(sh.gzip() > "a.gz"))  # write to process sub
 close(sh.make(), STDERR)                  # close stderr
+env(sh.echo(), FOO="bar")                # set env vars
+cwd(sh.pwd(), "/tmp")                    # set working directory
 stdout = await out(sh.ls())               # capture stdout as str
 ```
 
