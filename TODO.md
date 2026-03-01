@@ -22,6 +22,9 @@
 - **`out()` too involved.** Capture mode on execute, or method on process handle?
 - **Prepare walk mirrors IR.** Visitor pattern or composable FdOps transforms?
   Risk: coupling IR to runtime.
+- **`_spawn_cmd` is heavy.** Class refactor? Currently closures over shared state
+  (fdo, owned_fds, close_after_spawn, pending_spawns, children). Logic is sequential
+  though — may not benefit from splitting.
 
 ## Architecture notes
 

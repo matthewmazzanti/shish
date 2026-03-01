@@ -1,3 +1,10 @@
+from shish.aio import (
+    ByteReadStream,
+    ByteWriteStream,
+    OwnedFd,
+    TextReadStream,
+    TextWriteStream,
+)
 from shish.dsl import (
     Cmd,
     Flag,
@@ -30,10 +37,13 @@ __all__ = [
     "STDIN",
     "STDOUT",
     "Arg",
+    "ByteReadStream",
+    "ByteWriteStream",
     "Cmd",
     "Data",
     "Execution",
     "Flag",
+    "OwnedFd",
     "PathLike",
     "Pipeline",
     "ReadSrc",
@@ -42,6 +52,8 @@ __all__ = [
     "Sub",
     "SubIn",
     "SubOut",
+    "TextReadStream",
+    "TextWriteStream",
     "WriteDst",
     "close",
     "cmd",
