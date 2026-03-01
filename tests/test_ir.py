@@ -3,7 +3,8 @@
 from pathlib import Path
 
 from shish import STDERR, STDIN, STDOUT, ir
-from shish.ir import cmd
+from shish.aio import ByteStageCtx
+from shish.ir import Fn, cmd
 
 # =============================================================================
 # Cmd construction
@@ -269,59 +270,6 @@ def test_cmd_arg_returns_new_instance() -> None:
 
 
 # =============================================================================
-# Builder-only: pipeline methods
-# =============================================================================
-
-
-def test_pipeline_write_last_stage() -> None:
-    result = cmd("echo", "hello").pipe(cmd("tr", "a-z", "A-Z")).write("out.txt")
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(
-                ("tr", "a-z", "A-Z"),
-                redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
-            ),
-        )
-    )
-
-
-def test_pipeline_read_first_stage() -> None:
-    result = cmd("cat").pipe(cmd("grep", "x")).read("in.txt")
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(
-                ("cat",),
-                redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
-            ),
-            ir.Cmd(("grep", "x")),
-        )
-    )
-
-
-def test_pipeline_feed_first_stage() -> None:
-    result = cmd("cat").pipe(cmd("grep", "x")).feed("hello")
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "hello"),)),
-            ir.Cmd(("grep", "x")),
-        )
-    )
-
-
-def test_pipeline_close_last_stage() -> None:
-    result = cmd("cat").pipe(cmd("grep", "x")).close(STDOUT)
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(("cat",)),
-            ir.Cmd(("grep", "x"), redirects=(ir.FdClose(STDOUT),)),
-        )
-    )
-
-
-# =============================================================================
 # Builder-only: pipeline factory
 # =============================================================================
 
@@ -429,3 +377,59 @@ def test_replace_preserves_redirects() -> None:
     base = cmd("echo").write("out.txt").env(FOO="bar")
     assert base.redirects == (ir.FdToFile(STDOUT, Path("out.txt")),)
     assert base.env_vars == (("FOO", "bar"),)
+
+
+# =============================================================================
+# Fn construction and piping
+# =============================================================================
+
+
+async def _noop(ctx: ByteStageCtx) -> int:
+    return 0
+
+
+async def _noop2(ctx: ByteStageCtx) -> int:
+    return 1
+
+
+_fn = Fn(_noop)
+_fn2 = Fn(_noop2)
+
+
+def test_fn_construction() -> None:
+    assert _fn.func is _noop
+
+
+def test_fn_pipe_cmd() -> None:
+    assert _fn.pipe(cmd("cat")) == ir.Pipeline((_fn, ir.Cmd(("cat",))))
+
+
+def test_fn_pipe_fn() -> None:
+    assert _fn.pipe(_fn2) == ir.Pipeline((_fn, _fn2))
+
+
+def test_cmd_pipe_fn() -> None:
+    assert cmd("echo", "hi").pipe(_fn) == ir.Pipeline(
+        (ir.Cmd(("echo", "hi")), _fn)
+    )
+
+
+def test_fn_sub_in() -> None:
+    assert _fn.sub_in() == ir.SubIn(_fn)
+
+
+def test_fn_sub_out() -> None:
+    assert _fn.sub_out() == ir.SubOut(_fn)
+
+
+def test_pipeline_mixed_stages() -> None:
+    assert ir.pipeline(cmd("a"), _fn, cmd("b")) == ir.Pipeline(
+        (ir.Cmd(("a",)), _fn, ir.Cmd(("b",)))
+    )
+
+
+def test_pipeline_flattens_with_fn() -> None:
+    inner = ir.Pipeline((cmd("a"), _fn))
+    assert ir.pipeline(inner, cmd("b")) == ir.Pipeline(
+        (ir.Cmd(("a",)), _fn, ir.Cmd(("b",)))
+    )

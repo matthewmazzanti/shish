@@ -6,10 +6,13 @@ import pytest
 
 from shish.aio import (
     ByteReadStream,
+    ByteStageCtx,
     ByteWriteStream,
     OwnedFd,
     TextReadStream,
+    TextStageCtx,
     TextWriteStream,
+    decode,
 )
 
 # =============================================================================
@@ -373,3 +376,158 @@ async def test_text_read_eof_empty() -> None:
     async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
         result = await reader.read()
     assert result == ""
+
+
+# =============================================================================
+# ByteStageCtx and TextStageCtx
+# =============================================================================
+
+
+async def test_byte_stage_ctx_fields() -> None:
+    """ByteStageCtx has stdin (ByteReadStream) and stdout (ByteWriteStream) fields."""
+    read_fd, write_fd = os.pipe()
+    reader = ByteReadStream(OwnedFd(read_fd))
+    writer = ByteWriteStream(OwnedFd(write_fd))
+    ctx = ByteStageCtx(stdin=reader, stdout=writer)
+    assert ctx.stdin is reader
+    assert ctx.stdout is writer
+    await reader.close()
+    await writer.close()
+
+
+async def test_text_stage_ctx_fields() -> None:
+    """TextStageCtx has stdin (TextReadStream) and stdout (TextWriteStream) fields."""
+    read_fd, write_fd = os.pipe()
+    byte_reader = ByteReadStream(OwnedFd(read_fd))
+    byte_writer = ByteWriteStream(OwnedFd(write_fd))
+    reader = TextReadStream(byte_reader)
+    writer = TextWriteStream(byte_writer)
+    ctx = TextStageCtx(stdin=reader, stdout=writer)
+    assert ctx.stdin is reader
+    assert ctx.stdout is writer
+    await reader.close()
+    await writer.close()
+
+
+async def test_decode_bare_decorator() -> None:
+    """@decode (no parens) wraps a text function into a byte function."""
+
+    @decode
+    async def upper(ctx: TextStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    # stdin pipe: feed "hello" into the read end
+    stdin_read_fd, stdin_write_fd = os.pipe()
+    os.write(stdin_write_fd, b"hello")
+    os.close(stdin_write_fd)
+
+    # stdout pipe: read the result from the read end
+    stdout_read_fd, stdout_write_fd = os.pipe()
+
+    byte_ctx = ByteStageCtx(
+        stdin=ByteReadStream(OwnedFd(stdin_read_fd)),
+        stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
+    )
+    result = await upper(byte_ctx)
+    await byte_ctx.stdout.close()
+
+    output = os.read(stdout_read_fd, 1024)
+    os.close(stdout_read_fd)
+
+    assert result == 0
+    assert output == b"HELLO"
+
+
+async def test_decode_with_parens() -> None:
+    """@decode() with no args works same as bare @decode."""
+
+    @decode()
+    async def upper(ctx: TextStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    stdin_read_fd, stdin_write_fd = os.pipe()
+    os.write(stdin_write_fd, b"hello")
+    os.close(stdin_write_fd)
+
+    stdout_read_fd, stdout_write_fd = os.pipe()
+
+    byte_ctx = ByteStageCtx(
+        stdin=ByteReadStream(OwnedFd(stdin_read_fd)),
+        stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
+    )
+    result = await upper(byte_ctx)
+    await byte_ctx.stdout.close()
+
+    output = os.read(stdout_read_fd, 1024)
+    os.close(stdout_read_fd)
+
+    assert result == 0
+    assert output == b"HELLO"
+
+
+async def test_decode_with_encoding() -> None:
+    """@decode("latin-1") uses latin-1 encoding for decode/encode."""
+
+    @decode("latin-1")
+    async def passthrough(ctx: TextStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data)
+        return 0
+
+    # b'\xe9' is 'é' in latin-1 (single byte), unlike utf-8 (two bytes)
+    stdin_read_fd, stdin_write_fd = os.pipe()
+    os.write(stdin_write_fd, b"caf\xe9")
+    os.close(stdin_write_fd)
+
+    stdout_read_fd, stdout_write_fd = os.pipe()
+
+    byte_ctx = ByteStageCtx(
+        stdin=ByteReadStream(OwnedFd(stdin_read_fd)),
+        stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
+    )
+    result = await passthrough(byte_ctx)
+    await byte_ctx.stdout.close()
+
+    output = os.read(stdout_read_fd, 1024)
+    os.close(stdout_read_fd)
+
+    assert result == 0
+    # latin-1 round-trips: single byte \xe9 decodes to 'é', encodes back to \xe9
+    assert output == b"caf\xe9"
+
+
+async def test_decode_does_not_close_byte_streams() -> None:
+    """@decode does not close the underlying byte streams.
+
+    The runtime manages fd lifecycle, not the decorator.
+    """
+
+    @decode
+    async def noop(ctx: TextStageCtx) -> int:
+        _ = await ctx.stdin.read()
+        await ctx.stdout.write("")
+        return 0
+
+    stdin_read_fd, stdin_write_fd = os.pipe()
+    os.close(stdin_write_fd)
+
+    stdout_read_fd, stdout_write_fd = os.pipe()
+
+    stdin_stream = ByteReadStream(OwnedFd(stdin_read_fd))
+    stdout_stream = ByteWriteStream(OwnedFd(stdout_write_fd))
+    byte_ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
+
+    await noop(byte_ctx)
+
+    # Byte streams should NOT be closed by the decorator
+    assert not stdin_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
+    assert not stdout_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
+
+    # Clean up
+    await stdin_stream.close()
+    await stdout_stream.close()
+    os.close(stdout_read_fd)

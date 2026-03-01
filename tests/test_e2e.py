@@ -8,10 +8,13 @@ from shish import (
     STDERR,
     STDIN,
     STDOUT,
+    ByteStageCtx,
     Execution,
+    TextStageCtx,
     close,
     cwd,
     env,
+    fn,
     out,
     prepare,
     run,
@@ -421,10 +424,9 @@ async def test_builder_run() -> None:
     assert await cmd("false").run() == 1
 
 
-async def test_builder_pipeline(tmp_path: Path) -> None:
-    outfile = tmp_path / "out.txt"
-    await cmd("echo", "hello world").pipe(cmd("tr", "a-z", "A-Z")).write(outfile).run()
-    assert outfile.read_text() == "HELLO WORLD\n"
+async def test_builder_pipeline() -> None:
+    result = await cmd("echo", "hello world").pipe(cmd("tr", "a-z", "A-Z")).out()
+    assert result == "HELLO WORLD\n"
 
 
 async def test_builder_write_and_append(tmp_path: Path) -> None:
@@ -463,11 +465,10 @@ async def test_builder_sub_in(tmp_path: Path) -> None:
 
 async def test_builder_sub_out(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    main_out = tmp_path / "main.txt"
     sink = cmd("cat").write(outfile).sub_out()
-    await cmd("echo", "hello").pipe(cmd("tee", sink)).write(main_out).run()
+    result = await cmd("echo", "hello").pipe(cmd("tee", sink)).out()
     assert outfile.read_text() == "hello\n"
-    assert main_out.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
 async def test_builder_out() -> None:
@@ -575,6 +576,21 @@ async def test_cancel_pipeline() -> None:
         await task
 
 
+async def test_cancel_fn_pipeline() -> None:
+    """Cancelling a cmd | fn | cmd pipeline cancels all stages."""
+
+    @fn
+    async def _slow(ctx: TextStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    task = asyncio.create_task(run(sh.sleep("60") | _slow | sh.sleep("60")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 # =============================================================================
 # Environment Variables (env combinator)
 # =============================================================================
@@ -666,3 +682,213 @@ async def test_prepare_builder_method() -> None:
     """IR builder prepare() method works."""
     execution = await cmd("echo", "hello").prepare()
     assert await execution.wait() == 0
+
+
+# =============================================================================
+# Fn (Python function as pipeline stage)
+# =============================================================================
+
+
+@fn
+async def _upper(ctx: TextStageCtx) -> int:
+    """Read stdin, uppercase, write to stdout."""
+    data = await ctx.stdin.read()
+    await ctx.stdout.write(data.upper())
+    return 0
+
+
+@fn
+async def _generate(ctx: TextStageCtx) -> int:
+    """Write fixed data to stdout."""
+    await ctx.stdout.write("generated\n")
+    return 0
+
+
+@fn
+async def _text_upper(ctx: TextStageCtx) -> int:
+    """Text-mode upper: read text, uppercase, write text."""
+    data = await ctx.stdin.read()
+    await ctx.stdout.write(data.upper())
+    return 0
+
+
+@fn
+async def _exit_code(ctx: TextStageCtx) -> int:
+    """Return non-zero."""
+    return 42
+
+
+@fn
+async def _line_counter(ctx: TextStageCtx) -> int:
+    """Count lines from stdin, write count to stdout."""
+    count = 0
+    async for _line in ctx.stdin:
+        count += 1
+    await ctx.stdout.write(f"{count}\n")
+    return 0
+
+
+async def test_fn_in_pipeline() -> None:
+    """fn in pipeline: echo | _upper uppercases output."""
+    result = await out(sh.echo("hello") | _upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_as_first_stage() -> None:
+    """fn as first pipeline stage: _generate | cat."""
+    result = await out(_generate | sh.cat())
+    assert result == "generated\n"
+
+
+async def test_fn_standalone() -> None:
+    """Await fn directly returns exit code."""
+    result = await _generate
+    assert result == 0
+
+
+async def test_fn_standalone_out() -> None:
+    """out(fn) captures stdout."""
+    result = await out(_generate)
+    assert result == "generated\n"
+
+
+async def test_fn_with_decode() -> None:
+    """@decode wraps text-mode fn for byte pipeline."""
+    result = await out(sh.echo("hello") | _text_upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_pipe() -> None:
+    """cmd | fn(...) pipes through Python function."""
+    result = await out(sh.echo("hello") | _upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_gt() -> None:
+    """cmd > sub_out(fn(...)) redirects to Python function."""
+    result = await run(sh.echo("hello") > sub_out(_upper))
+    assert result == 0
+
+
+async def test_fn_lt() -> None:
+    """cmd < sub_in(fn(...)) reads from Python function."""
+    result = await out(sh.cat() < sub_in(_generate))
+    assert result == "generated\n"
+
+
+async def test_fn_sub_in() -> None:
+    """sub_in(fn(...)) as process substitution argument."""
+    result = await out(sh.cat(sub_in(_generate)))
+    assert result == "generated\n"
+
+
+async def test_fn_exit_code() -> None:
+    """fn exit code propagates."""
+    result = await run(_exit_code)
+    assert result == 42
+
+
+async def test_fn_pipefail_rightmost() -> None:
+    """Pipefail: rightmost non-zero wins; fn(42) is the rightmost failure."""
+    result = await (_exit_code | sh.cat())
+    assert result == 42
+
+
+async def test_fn_exception() -> None:
+    """fn that raises returns exit code 1."""
+
+    @fn
+    async def _raises(ctx: TextStageCtx) -> int:
+        raise ValueError("boom")
+
+    assert await run(_raises) == 1
+
+
+async def test_fn_line_processing() -> None:
+    """fn with async iteration over stdin lines."""
+    result = await out(sh.printf("a\\nb\\nc\\n") | _line_counter)
+    assert result == "3\n"
+
+
+async def test_fn_pipeline_pipe() -> None:
+    """pipeline | fn(...) extends pipeline with Python function."""
+    result = await out(sh.echo("hello") | sh.cat() | _upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_pipe_cmd() -> None:
+    """fn(...) | cmd pipes Python function output to command."""
+    result = await out(_generate | sh.cat())
+    assert result == "generated\n"
+
+
+async def test_fn_to_fn_pipeline() -> None:
+    """fn | fn pipeline: _generate | _upper."""
+    result = await out(_generate | _upper)
+    assert result == "GENERATED\n"
+
+
+# =============================================================================
+# Fn encoding modes
+# =============================================================================
+
+
+async def test_fn_call_no_args() -> None:
+    """@fn() behaves the same as @fn — text mode, utf-8."""
+
+    @fn()
+    async def upper(ctx: TextStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    result = await out(sh.echo("hello") | upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_encoding_none_decorator() -> None:
+    """@fn(encoding=None) — byte mode, no decoding."""
+
+    @fn(encoding=None)
+    async def upper(ctx: ByteStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    result = await out(sh.echo("hello") | upper)
+    assert result == "HELLO\n"
+
+
+async def test_fn_encoding_none_direct() -> None:
+    """fn(f, encoding=None) — byte mode via direct call."""
+
+    async def upper(ctx: ByteStageCtx) -> int:
+        data = await ctx.stdin.read()
+        await ctx.stdout.write(data.upper())
+        return 0
+
+    result = await out(sh.echo("hello") | fn(upper, encoding=None))
+    assert result == "HELLO\n"
+
+
+async def test_fn_encoding_latin1_decorator() -> None:
+    """@fn(encoding="latin-1") — text mode, custom encoding."""
+
+    @fn(encoding="latin-1")
+    async def echo_latin(ctx: TextStageCtx) -> int:
+        await ctx.stdout.write("caf\xe9\n")
+        return 0
+
+    result = await out(echo_latin, encoding=None)
+    assert result == b"caf\xe9\n"
+
+
+async def test_fn_encoding_latin1_direct() -> None:
+    """fn(f, encoding="latin-1") — text mode, custom encoding via direct call."""
+
+    async def echo_latin(ctx: TextStageCtx) -> int:
+        await ctx.stdout.write("caf\xe9\n")
+        return 0
+
+    result = await out(fn(echo_latin, encoding="latin-1"), encoding=None)
+    assert result == b"caf\xe9\n"

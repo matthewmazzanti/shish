@@ -7,16 +7,21 @@ module-level combinator functions that unwrap to IR, delegate, and re-wrap.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
-from typing import TYPE_CHECKING, Never, overload
+from collections.abc import Awaitable, Callable, Generator, Mapping
+from typing import TYPE_CHECKING, Never, cast, overload
 
 import shish.ir as ir
+from shish.aio import make_byte_wrapper
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
+    from shish.aio import ByteStageCtx, TextStageCtx
     from shish.runtime import Execution
 
 Flag = ir.PathLike | bool
+
+TextFn = Callable[["TextStageCtx"], Awaitable[int]]
+ByteFn = Callable[["ByteStageCtx"], Awaitable[int]]
 
 
 class Cmd:
@@ -54,7 +59,7 @@ class Cmd:
             case fd, dst:
                 return write(self, dst, fd=fd)
             case dst:
-                return write(self, dst)
+                return write(self, dst)  # type: ignore[arg-type]
 
     def __rshift__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Cmd:
         """cmd >> "file", cmd >> sub, or cmd >> (fd, target)."""
@@ -70,7 +75,7 @@ class Cmd:
             case fd, src:
                 return read(self, src, fd=fd)
             case src:
-                return read(self, src)
+                return read(self, src)  # type: ignore[arg-type]
 
     def __lshift__(self, data: ir.Data | tuple[int, ir.Data]) -> Cmd:
         """cmd << "data" or cmd << (fd, "data")."""
@@ -152,8 +157,25 @@ class Pipeline:
         return self._shish_ir.run().__await__()
 
 
-# Type alias requiring both classes
-Runnable = Cmd | Pipeline
+class Fn:
+    """Immutable wrapper for a Python function as a pipeline stage."""
+
+    def __init__(self, _shish_ir: ir.Fn) -> None:
+        self._shish_ir = _shish_ir
+
+    def __or__(self, other: Runnable) -> Pipeline:
+        """fn | cmd -> Pipeline."""
+        return pipe(self, other)
+
+    def __bool__(self) -> Never:
+        raise TypeError("Fn cannot be used as bool")
+
+    def __await__(self) -> Generator[object, None, int]:
+        return self._shish_ir.run().__await__()
+
+
+# Type alias requiring all classes
+Runnable = Cmd | Pipeline | Fn
 
 
 # Combinators
@@ -163,9 +185,11 @@ Runnable = Cmd | Pipeline
 def unwrap(cmd: Cmd) -> ir.Cmd: ...
 @overload
 def unwrap(cmd: Pipeline) -> ir.Pipeline: ...
+@overload
+def unwrap(cmd: Fn) -> ir.Fn: ...
 
 
-def unwrap(cmd: Cmd | Pipeline) -> ir.Cmd | ir.Pipeline:
+def unwrap(cmd: Cmd | Pipeline | Fn) -> ir.Cmd | ir.Pipeline | ir.Fn:
     """Extract the IR from a DSL wrapper."""
     return cmd._shish_ir  # pyright: ignore[reportPrivateUsage]
 
@@ -174,15 +198,19 @@ def unwrap(cmd: Cmd | Pipeline) -> ir.Cmd | ir.Pipeline:
 def wrap(inner: ir.Cmd) -> Cmd: ...
 @overload
 def wrap(inner: ir.Pipeline) -> Pipeline: ...
+@overload
+def wrap(inner: ir.Fn) -> Fn: ...
 
 
-def wrap(inner: ir.Cmd | ir.Pipeline) -> Cmd | Pipeline:
+def wrap(inner: ir.Cmd | ir.Pipeline | ir.Fn) -> Cmd | Pipeline | Fn:
     """Wrap an IR in its DSL counterpart."""
     match inner:
         case ir.Cmd():
             return Cmd(inner)
         case ir.Pipeline():
             return Pipeline(inner)
+        case ir.Fn():
+            return Fn(inner)
 
 
 def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
@@ -190,61 +218,85 @@ def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
     return Cmd(ir.cmd())(*args, **kwargs)
 
 
+@overload
+def fn(func: TextFn, /) -> Fn: ...
+@overload
+def fn(func: TextFn, /, *, encoding: str) -> Fn: ...
+@overload
+def fn(func: ByteFn, /, *, encoding: None) -> Fn: ...
+@overload
+def fn(*, encoding: None) -> Callable[[ByteFn], Fn]: ...
+@overload
+def fn(*, encoding: str = ...) -> Callable[[TextFn], Fn]: ...
+
+
+def fn(
+    func: TextFn | ByteFn | None = None,
+    *,
+    encoding: str | None = "utf-8",
+) -> Fn | Callable[[ByteFn], Fn] | Callable[[TextFn], Fn]:
+    """Create an Fn from an async callable.
+
+    Forms:
+        @fn                         — text mode, utf-8
+        @fn()                       — text mode, utf-8
+        fn(f, encoding="latin-1")   — text mode, custom encoding
+        @fn(encoding="latin-1")     — text mode, custom encoding
+        fn(f, encoding=None)        — byte mode, no decoding
+        @fn(encoding=None)          — byte mode, no decoding
+    """
+    match func, encoding:
+        case None, None:  # @fn(encoding=None)
+            def byte_decorator(inner: ByteFn) -> Fn:
+                return Fn(ir.Fn(inner))
+
+            return byte_decorator
+
+        case None, enc:  # @fn() or @fn(encoding="...")
+            def text_decorator(inner: TextFn) -> Fn:
+                return Fn(ir.Fn(make_byte_wrapper(inner, enc)))
+
+            return text_decorator
+
+        case func_, None:  # fn(f, encoding=None)
+            # cast: overloads guarantee ByteFn here, but pyright
+            # can't narrow the func/encoding correlation
+            return Fn(ir.Fn(cast("ByteFn", func_)))
+
+        case func_, enc:  # @fn or fn(f) or fn(f, encoding="...")
+            # cast: same — overloads guarantee TextFn here
+            return Fn(ir.Fn(make_byte_wrapper(cast("TextFn", func_), enc)))
+
+
 def pipe(*cmds: Runnable) -> Pipeline:
     """Pipe commands together: pipe(cmd1, cmd2, ...) -> Pipeline."""
-    return Pipeline(ir.pipeline(*(unwrap(cmd) for cmd in cmds)))
-
-
-@overload
-def write(cmd: Cmd, dst: ir.WriteDst, *, append: bool = ..., fd: int = ...) -> Cmd: ...
-@overload
-def write(
-    cmd: Pipeline, dst: ir.WriteDst, *, append: bool = ..., fd: int = ...
-) -> Pipeline: ...
+    return Pipeline(ir.pipeline(*(unwrap(stage) for stage in cmds)))
 
 
 def write(
-    cmd: Cmd | Pipeline,
+    cmd: Cmd,
     dst: ir.WriteDst,
     *,
     append: bool = False,
     fd: int = STDOUT,
-) -> Cmd | Pipeline:
+) -> Cmd:
     """Redirect fd to file or process substitution. Defaults to STDOUT."""
-    return wrap(unwrap(cmd).write(dst, append=append, fd=fd))
+    return Cmd(unwrap(cmd).write(dst, append=append, fd=fd))
 
 
-@overload
-def read(cmd: Cmd, src: ir.ReadSrc, *, fd: int = ...) -> Cmd: ...
-@overload
-def read(cmd: Pipeline, src: ir.ReadSrc, *, fd: int = ...) -> Pipeline: ...
-
-
-def read(cmd: Cmd | Pipeline, src: ir.ReadSrc, *, fd: int = STDIN) -> Cmd | Pipeline:
+def read(cmd: Cmd, src: ir.ReadSrc, *, fd: int = STDIN) -> Cmd:
     """Read fd from file or process substitution. Defaults to STDIN."""
-    return wrap(unwrap(cmd).read(src, fd=fd))
+    return Cmd(unwrap(cmd).read(src, fd=fd))
 
 
-@overload
-def feed(cmd: Cmd, data: ir.Data, *, fd: int = ...) -> Cmd: ...
-@overload
-def feed(cmd: Pipeline, data: ir.Data, *, fd: int = ...) -> Pipeline: ...
-
-
-def feed(cmd: Cmd | Pipeline, data: ir.Data, *, fd: int = STDIN) -> Cmd | Pipeline:
+def feed(cmd: Cmd, data: ir.Data, *, fd: int = STDIN) -> Cmd:
     """Feed data into fd. Defaults to STDIN."""
-    return wrap(unwrap(cmd).feed(data, fd=fd))
+    return Cmd(unwrap(cmd).feed(data, fd=fd))
 
 
-@overload
-def close(cmd: Cmd, fd: int) -> Cmd: ...
-@overload
-def close(cmd: Pipeline, fd: int) -> Pipeline: ...
-
-
-def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
+def close(cmd: Cmd, fd: int) -> Cmd:
     """Close fd."""
-    return wrap(unwrap(cmd).close(fd))
+    return Cmd(unwrap(cmd).close(fd))
 
 
 def env(cmd: Cmd, **kwargs: str | None) -> Cmd:
@@ -267,17 +319,17 @@ def sub_out(sink: Runnable) -> ir.SubOut:
     return ir.SubOut(unwrap(sink))
 
 
-async def prepare(cmd: Cmd | Pipeline) -> Execution:
+async def prepare(cmd: Runnable) -> Execution:
     """Spawn a command or pipeline and return an Execution handle."""
     return await unwrap(cmd).prepare()
 
 
-async def run(cmd: Cmd | Pipeline) -> int:
+async def run(cmd: Runnable) -> int:
     """Execute a command or pipeline and return exit code."""
     return await unwrap(cmd).run()
 
 
-async def out(cmd: Cmd | Pipeline, encoding: str | None = "utf-8") -> str | bytes:
+async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
     """Execute command and return stdout."""
     return await unwrap(cmd).out(encoding)
 

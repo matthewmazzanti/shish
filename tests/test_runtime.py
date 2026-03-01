@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from shish import STDERR, STDIN, STDOUT, ir
-from shish.aio import ByteReadStream, ByteWriteStream, OwnedFd
+from shish.aio import ByteReadStream, ByteStageCtx, ByteWriteStream, OwnedFd
 from shish.runtime import Execution, out, prepare, run
 
 # =============================================================================
@@ -992,5 +992,227 @@ async def test_prepare_wait_no_fd_leak() -> None:
     before = set(os.listdir("/proc/self/fd"))
     execution = await prepare(ir.Cmd(("true",)))
     await execution.wait()
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
+
+
+# =============================================================================
+# Fn (Python function as pipeline stage)
+# =============================================================================
+
+
+async def _upper(ctx: ByteStageCtx) -> int:
+    """Read stdin, uppercase, write to stdout."""
+    data = await ctx.stdin.read()
+    await ctx.stdout.write(data.upper())
+    return 0
+
+
+async def _generate(ctx: ByteStageCtx) -> int:
+    """Write fixed data to stdout (ignores stdin)."""
+    await ctx.stdout.write(b"generated\n")
+    return 0
+
+
+async def _exit_42(ctx: ByteStageCtx) -> int:
+    """Return non-zero exit code."""
+    return 42
+
+
+async def _raises(ctx: ByteStageCtx) -> int:
+    """Raise an exception."""
+    raise ValueError("test error")
+
+
+async def test_fn_standalone() -> None:
+    """Standalone Fn execution returns 0."""
+    assert await run(ir.Fn(_generate)) == 0
+
+
+async def test_fn_standalone_out() -> None:
+    """Standalone Fn captures stdout correctly."""
+    result = await out(ir.Fn(_generate))
+    assert result == "generated\n"
+
+
+async def test_fn_in_pipeline_last() -> None:
+    """Fn as the last stage of a pipeline processes piped input."""
+    pipeline = ir.Pipeline((ir.Cmd(("echo", "hello")), ir.Fn(_upper)))
+    result = await out(pipeline)
+    assert result == "HELLO\n"
+
+
+async def test_fn_in_pipeline_first() -> None:
+    """Fn as the first stage of a pipeline produces output for next stage."""
+    pipeline = ir.Pipeline((ir.Fn(_generate), ir.Cmd(("cat",))))
+    result = await out(pipeline)
+    assert result == "generated\n"
+
+
+async def test_fn_in_pipeline_middle() -> None:
+    """Fn as a middle stage transforms data between two commands."""
+    pipeline = ir.Pipeline(
+        (ir.Cmd(("echo", "hello")), ir.Fn(_upper), ir.Cmd(("cat",)))
+    )
+    result = await out(pipeline)
+    assert result == "HELLO\n"
+
+
+async def test_fn_only_pipeline() -> None:
+    """Pipeline with only Fn stages works end to end."""
+    pipeline = ir.Pipeline((ir.Fn(_generate), ir.Fn(_upper)))
+    result = await out(pipeline)
+    assert result == "GENERATED\n"
+
+
+async def test_fn_exit_code() -> None:
+    """Fn exit code is propagated through run()."""
+    assert await run(ir.Fn(_exit_42)) == 42
+
+
+async def test_fn_pipefail() -> None:
+    """Pipefail returns rightmost non-zero — Fn participates in reporting."""
+    # Fn fails (42), Cmd succeeds (0) → rightmost non-zero is 42
+    pipeline_fn_first = ir.Pipeline((ir.Fn(_exit_42), ir.Cmd(("cat",))))
+    assert await run(pipeline_fn_first) == 42
+
+    # Cmd succeeds (0), Fn fails (42) → rightmost non-zero is 42
+    pipeline_fn_last = ir.Pipeline((ir.Cmd(("true",)), ir.Fn(_exit_42)))
+    assert await run(pipeline_fn_last) == 42
+
+    # Both succeed → 0
+    pipeline_both_ok = ir.Pipeline((ir.Fn(_generate), ir.Cmd(("cat",))))
+    assert await run(pipeline_both_ok) == 0
+
+
+async def test_fn_exception_returns_1() -> None:
+    """Exception in Fn is caught and reported as returncode 1."""
+    assert await run(ir.Fn(_raises)) == 1
+
+
+async def test_fn_no_fd_leak() -> None:
+    """No fds leak after running Fn standalone or in a pipeline."""
+    before = set(os.listdir("/proc/self/fd"))
+
+    # Standalone Fn
+    await run(ir.Fn(_generate))
+
+    # Pipeline with Fn
+    await run(ir.Pipeline((ir.Cmd(("echo", "hello")), ir.Fn(_upper))))
+
+    after = set(os.listdir("/proc/self/fd"))
+    assert before == after
+
+
+async def test_fn_as_sub_in() -> None:
+    """Fn used as input process substitution via FdFromSub."""
+    sub = ir.SubIn(ir.Fn(_generate))
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(STDIN, sub),))
+    result = await out(command)
+    assert result == "generated\n"
+
+
+async def test_fn_as_sub_out() -> None:
+    """Fn used as output process substitution via FdToSub."""
+
+    async def _collector(ctx: ByteStageCtx) -> int:
+        """Read all stdin and discard."""
+        await ctx.stdin.read()
+        return 0
+
+    sub = ir.SubOut(ir.Fn(_collector))
+    command = ir.Cmd(("echo", "hello"), redirects=(ir.FdToSub(STDOUT, sub),))
+    assert await run(command) == 0
+
+
+async def test_fn_cancel() -> None:
+    """Cancelling a running Fn task raises CancelledError."""
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    task = asyncio.create_task(run(ir.Fn(_slow)))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_mixed_pipeline() -> None:
+    """Cancelling a cmd | fn | cmd pipeline cancels all stages."""
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    task = asyncio.create_task(
+        run(
+            ir.Pipeline(
+                (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
+            )
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_mid_read() -> None:
+    """Cancelling while Fn is blocked on stdin.read() cleans up."""
+
+    async def _reader(ctx: ByteStageCtx) -> int:
+        await ctx.stdin.read()  # blocks until EOF or cancel
+        return 0
+
+    task = asyncio.create_task(
+        run(ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Fn(_reader))))
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_mid_write() -> None:
+    """Cancelling while Fn is blocked on stdout.write() cleans up."""
+
+    async def _writer(ctx: ByteStageCtx) -> int:
+        # Write enough to fill the pipe buffer and block
+        chunk = b"x" * 65536
+        while True:
+            await ctx.stdout.write(chunk)
+        return 0  # type: ignore[unreachable]
+
+    task = asyncio.create_task(
+        run(ir.Pipeline((ir.Fn(_writer), ir.Cmd(("sleep", "60")))))
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_fn_cancel_no_fd_leak() -> None:
+    """No fds leak in the parent after cancelling a mixed pipeline."""
+    import os
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    before = set(os.listdir("/proc/self/fd"))
+    task = asyncio.create_task(
+        run(
+            ir.Pipeline(
+                (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
+            )
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     after = set(os.listdir("/proc/self/fd"))
     assert before == after
