@@ -389,6 +389,11 @@ def test_env_additive() -> None:
     assert result.env_vars == (("FOO", "bar"), ("BAZ", "qux"))
 
 
+def test_env_override() -> None:
+    result = cmd("echo").env(FOO="bar").env(FOO="baz")
+    assert result.env_vars == (("FOO", "baz"),)
+
+
 # =============================================================================
 # Working directory
 # =============================================================================

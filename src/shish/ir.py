@@ -151,8 +151,9 @@ class Cmd:
 
     def env(self, **kwargs: str | None) -> Cmd:
         """Set environment variables. None values unset variables."""
-        new_vars = tuple(kwargs.items())
-        return self._replace(env_vars=(*self.env_vars, *new_vars))
+        merged = dict(self.env_vars)
+        merged.update(kwargs)
+        return self._replace(env_vars=tuple(merged.items()))
 
     def cwd(self, path: PathLike) -> Cmd:
         """Set working directory."""
