@@ -369,9 +369,7 @@ def test_pipeline_factory_preserves_redirects() -> None:
 
 
 def test_env_single() -> None:
-    assert cmd("echo").env(FOO="bar") == ir.Cmd(
-        ("echo",), env_vars=(("FOO", "bar"),)
-    )
+    assert cmd("echo").env(FOO="bar") == ir.Cmd(("echo",), env_vars=(("FOO", "bar"),))
 
 
 def test_env_multiple() -> None:
