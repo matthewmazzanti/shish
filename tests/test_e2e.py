@@ -424,10 +424,9 @@ async def test_builder_run() -> None:
     assert await cmd("false").run() == 1
 
 
-async def test_builder_pipeline(tmp_path: Path) -> None:
-    outfile = tmp_path / "out.txt"
-    await cmd("echo", "hello world").pipe(cmd("tr", "a-z", "A-Z")).write(outfile).run()
-    assert outfile.read_text() == "HELLO WORLD\n"
+async def test_builder_pipeline() -> None:
+    result = await cmd("echo", "hello world").pipe(cmd("tr", "a-z", "A-Z")).out()
+    assert result == "HELLO WORLD\n"
 
 
 async def test_builder_write_and_append(tmp_path: Path) -> None:
@@ -466,11 +465,10 @@ async def test_builder_sub_in(tmp_path: Path) -> None:
 
 async def test_builder_sub_out(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    main_out = tmp_path / "main.txt"
     sink = cmd("cat").write(outfile).sub_out()
-    await cmd("echo", "hello").pipe(cmd("tee", sink)).write(main_out).run()
+    result = await cmd("echo", "hello").pipe(cmd("tee", sink)).out()
     assert outfile.read_text() == "hello\n"
-    assert main_out.read_text() == "hello\n"
+    assert result == "hello\n"
 
 
 async def test_builder_out() -> None:

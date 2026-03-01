@@ -235,36 +235,6 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def read(self, src: ReadSrc, *, fd: int = STDIN) -> Pipeline:
-        """Read fd from file or sub (first stage). Defaults to STDIN."""
-        first = self.stages[0]
-        if not isinstance(first, Cmd):
-            raise TypeError("Cannot apply read() to a pipeline starting with Fn")
-        return Pipeline((first.read(src, fd=fd), *self.stages[1:]))
-
-    def write(
-        self, dst: WriteDst, *, append: bool = False, fd: int = STDOUT
-    ) -> Pipeline:
-        """Write fd to file or sub (last stage). Defaults to STDOUT."""
-        last = self.stages[-1]
-        if not isinstance(last, Cmd):
-            raise TypeError("Cannot apply write() to a pipeline ending with Fn")
-        return Pipeline((*self.stages[:-1], last.write(dst, append=append, fd=fd)))
-
-    def feed(self, data: Data, *, fd: int = STDIN) -> Pipeline:
-        """Feed literal data into fd (first stage). Defaults to STDIN."""
-        first = self.stages[0]
-        if not isinstance(first, Cmd):
-            raise TypeError("Cannot apply feed() to a pipeline starting with Fn")
-        return Pipeline((first.feed(data, fd=fd), *self.stages[1:]))
-
-    def close(self, fd: int) -> Pipeline:
-        """Close fd (last stage)."""
-        last = self.stages[-1]
-        if not isinstance(last, Cmd):
-            raise TypeError("Cannot apply close() to a pipeline ending with Fn")
-        return Pipeline((*self.stages[:-1], last.close(fd)))
-
     async def prepare(self) -> Execution:
         """Spawn and return an Execution handle."""
         from shish import runtime

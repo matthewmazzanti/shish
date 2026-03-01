@@ -273,56 +273,30 @@ def pipe(*cmds: Runnable) -> Pipeline:
     return Pipeline(ir.pipeline(*(unwrap(stage) for stage in cmds)))
 
 
-@overload
-def write(cmd: Cmd, dst: ir.WriteDst, *, append: bool = ..., fd: int = ...) -> Cmd: ...
-@overload
 def write(
-    cmd: Pipeline, dst: ir.WriteDst, *, append: bool = ..., fd: int = ...
-) -> Pipeline: ...
-
-
-def write(
-    cmd: Cmd | Pipeline,
+    cmd: Cmd,
     dst: ir.WriteDst,
     *,
     append: bool = False,
     fd: int = STDOUT,
-) -> Cmd | Pipeline:
+) -> Cmd:
     """Redirect fd to file or process substitution. Defaults to STDOUT."""
-    return wrap(unwrap(cmd).write(dst, append=append, fd=fd))
+    return Cmd(unwrap(cmd).write(dst, append=append, fd=fd))
 
 
-@overload
-def read(cmd: Cmd, src: ir.ReadSrc, *, fd: int = ...) -> Cmd: ...
-@overload
-def read(cmd: Pipeline, src: ir.ReadSrc, *, fd: int = ...) -> Pipeline: ...
-
-
-def read(cmd: Cmd | Pipeline, src: ir.ReadSrc, *, fd: int = STDIN) -> Cmd | Pipeline:
+def read(cmd: Cmd, src: ir.ReadSrc, *, fd: int = STDIN) -> Cmd:
     """Read fd from file or process substitution. Defaults to STDIN."""
-    return wrap(unwrap(cmd).read(src, fd=fd))
+    return Cmd(unwrap(cmd).read(src, fd=fd))
 
 
-@overload
-def feed(cmd: Cmd, data: ir.Data, *, fd: int = ...) -> Cmd: ...
-@overload
-def feed(cmd: Pipeline, data: ir.Data, *, fd: int = ...) -> Pipeline: ...
-
-
-def feed(cmd: Cmd | Pipeline, data: ir.Data, *, fd: int = STDIN) -> Cmd | Pipeline:
+def feed(cmd: Cmd, data: ir.Data, *, fd: int = STDIN) -> Cmd:
     """Feed data into fd. Defaults to STDIN."""
-    return wrap(unwrap(cmd).feed(data, fd=fd))
+    return Cmd(unwrap(cmd).feed(data, fd=fd))
 
 
-@overload
-def close(cmd: Cmd, fd: int) -> Cmd: ...
-@overload
-def close(cmd: Pipeline, fd: int) -> Pipeline: ...
-
-
-def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
+def close(cmd: Cmd, fd: int) -> Cmd:
     """Close fd."""
-    return wrap(unwrap(cmd).close(fd))
+    return Cmd(unwrap(cmd).close(fd))
 
 
 def env(cmd: Cmd, **kwargs: str | None) -> Cmd:

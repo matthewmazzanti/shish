@@ -270,59 +270,6 @@ def test_cmd_arg_returns_new_instance() -> None:
 
 
 # =============================================================================
-# Builder-only: pipeline methods
-# =============================================================================
-
-
-def test_pipeline_write_last_stage() -> None:
-    result = cmd("echo", "hello").pipe(cmd("tr", "a-z", "A-Z")).write("out.txt")
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(
-                ("tr", "a-z", "A-Z"),
-                redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
-            ),
-        )
-    )
-
-
-def test_pipeline_read_first_stage() -> None:
-    result = cmd("cat").pipe(cmd("grep", "x")).read("in.txt")
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(
-                ("cat",),
-                redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
-            ),
-            ir.Cmd(("grep", "x")),
-        )
-    )
-
-
-def test_pipeline_feed_first_stage() -> None:
-    result = cmd("cat").pipe(cmd("grep", "x")).feed("hello")
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "hello"),)),
-            ir.Cmd(("grep", "x")),
-        )
-    )
-
-
-def test_pipeline_close_last_stage() -> None:
-    result = cmd("cat").pipe(cmd("grep", "x")).close(STDOUT)
-    assert result == ir.Pipeline(
-        (
-            ir.Cmd(("cat",)),
-            ir.Cmd(("grep", "x"), redirects=(ir.FdClose(STDOUT),)),
-        )
-    )
-
-
-# =============================================================================
 # Builder-only: pipeline factory
 # =============================================================================
 
