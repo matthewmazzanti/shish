@@ -7,6 +7,13 @@ from pathlib import Path
 
 from shish.fdops import STDIN, STDOUT
 
+
+class _Unset:
+    """Sentinel for unset fields in _replace."""
+
+
+UNSET = _Unset()
+
 PathLike = Path | str
 Data = str | bytes
 
@@ -80,6 +87,26 @@ Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | F
 class Cmd:
     args: tuple[str | Sub, ...]
     redirects: tuple[Redirect, ...] = ()
+    env_vars: tuple[tuple[str, str | None], ...] = ()
+    working_dir: Path | None = None
+
+    def _replace(
+        self,
+        *,
+        args: tuple[str | Sub, ...] | _Unset = UNSET,
+        redirects: tuple[Redirect, ...] | _Unset = UNSET,
+        env_vars: tuple[tuple[str, str | None], ...] | _Unset = UNSET,
+        working_dir: Path | None | _Unset = UNSET,
+    ) -> Cmd:
+        """Return a copy with specified fields replaced."""
+        return Cmd(
+            args=self.args if isinstance(args, _Unset) else args,
+            redirects=self.redirects if isinstance(redirects, _Unset) else redirects,
+            env_vars=self.env_vars if isinstance(env_vars, _Unset) else env_vars,
+            working_dir=(
+                self.working_dir if isinstance(working_dir, _Unset) else working_dir
+            ),
+        )
 
     def arg(self, *args: Arg) -> Cmd:
         """Append positional arguments."""
@@ -89,7 +116,7 @@ class Cmd:
                 resolved.append(item)
             else:
                 resolved.append(str(item))
-        return Cmd((*self.args, *resolved), self.redirects)
+        return self._replace(args=(*self.args, *resolved))
 
     def pipe(self, other: Cmd) -> Pipeline:
         """Pipe this command into another."""
@@ -99,26 +126,38 @@ class Cmd:
         """Read fd from file or process substitution. Defaults to STDIN."""
         match src:
             case SubIn():
-                return Cmd(self.args, (*self.redirects, FdFromSub(fd, src)))
+                return self._replace(redirects=(*self.redirects, FdFromSub(fd, src)))
             case path:
-                return Cmd(self.args, (*self.redirects, FdFromFile(fd, Path(path))))
+                return self._replace(
+                    redirects=(*self.redirects, FdFromFile(fd, Path(path)))
+                )
 
     def write(self, dst: WriteDst, *, append: bool = False, fd: int = STDOUT) -> Cmd:
         """Write fd to file or process substitution. Defaults to STDOUT."""
         match dst:
             case SubOut():
-                return Cmd(self.args, (*self.redirects, FdToSub(fd, dst)))
+                return self._replace(redirects=(*self.redirects, FdToSub(fd, dst)))
             case path:
                 redirect = FdToFile(fd, Path(path), append)
-                return Cmd(self.args, (*self.redirects, redirect))
+                return self._replace(redirects=(*self.redirects, redirect))
 
     def feed(self, data: Data, *, fd: int = STDIN) -> Cmd:
         """Feed literal data into fd. Defaults to STDIN."""
-        return Cmd(self.args, (*self.redirects, FdFromData(fd, data)))
+        return self._replace(redirects=(*self.redirects, FdFromData(fd, data)))
 
     def close(self, fd: int) -> Cmd:
         """Close fd."""
-        return Cmd(self.args, (*self.redirects, FdClose(fd)))
+        return self._replace(redirects=(*self.redirects, FdClose(fd)))
+
+    def env(self, **kwargs: str | None) -> Cmd:
+        """Set environment variables. None values unset variables."""
+        merged = dict(self.env_vars)
+        merged.update(kwargs)
+        return self._replace(env_vars=tuple(merged.items()))
+
+    def cwd(self, path: PathLike) -> Cmd:
+        """Set working directory."""
+        return self._replace(working_dir=Path(path))
 
     def sub_in(self) -> SubIn:
         """Process substitution: <(cmd)."""

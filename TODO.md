@@ -5,8 +5,6 @@
 - CalledProcessError in `out` passes empty list for cmd arg
 
 ## Features
-- env vars - per-command environment (e.g., `cmd.env(VAR="value")`)
-- cwd - working directory option for commands
 - Streaming output - async iteration over lines as they arrive
 - Shell renderer - serialize Cmd/Pipeline back to shell string (complex: quoting, escaping)
 - Process handle - `async with start(cmd) as handle:` for lifecycle control (signal, wait, timeout, auto-kill on exit)

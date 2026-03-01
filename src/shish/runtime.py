@@ -8,6 +8,7 @@ import subprocess
 from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from pathlib import Path
 from typing import overload
 
 from shish.aio import async_read, async_write, close_fd
@@ -37,6 +38,8 @@ class PreparedProcess:
     stdout_fd: int | None = None
     pass_fds: tuple[int, ...] = ()
     preexec: Callable[[], None] | None = None
+    cwd: Path | None = None
+    env: dict[str, str] | None = None
 
 
 @dataclass
@@ -136,9 +139,6 @@ class Executor:
         execute after Popen's pipe dup2, so user redirects naturally
         override pipe wiring.
         """
-        stdin_fd = outer_stdin_fd
-        stdout_fd = outer_stdout_fd
-
         # Build FdOps simulation with initial live fds from pipeline
         fdo = FdOps(live={STDIN, STDOUT, STDERR})
 
@@ -200,10 +200,28 @@ class Executor:
                     resolved_args.append(f"/dev/fd/{read_fd}")
                     pass_fds.append(read_fd)
 
+        # Build env overlay and resolve working directory
+        proc_env: dict[str, str] | None = None
+        if cmd.env_vars or cmd.working_dir is not None:
+            proc_env = dict(os.environ)
+            for key, value in cmd.env_vars:
+                if value is None:
+                    proc_env.pop(key, None)
+                else:
+                    proc_env[key] = value
+            if cmd.working_dir is not None:
+                proc_env["PWD"] = str(cmd.working_dir)
+
         root_idx = len(self.prepared)
         self.prepared.append(
             PreparedProcess(
-                resolved_args, stdin_fd, stdout_fd, tuple(pass_fds), preexec_fn
+                resolved_args,
+                outer_stdin_fd,
+                outer_stdout_fd,
+                tuple(pass_fds),
+                preexec_fn,
+                cwd=cmd.working_dir,
+                env=proc_env,
             )
         )
         return [root_idx]
@@ -239,6 +257,8 @@ class Executor:
                 stdout=prep.stdout_fd,
                 pass_fds=prep.pass_fds,
                 preexec_fn=prep.preexec,
+                cwd=prep.cwd,
+                env=prep.env,
             )
             self.procs.append(proc)
 

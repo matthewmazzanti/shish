@@ -7,7 +7,7 @@ module-level combinator functions that unwrap to IR, delegate, and re-wrap.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from typing import Never, overload
 
 import shish.ir as ir
@@ -77,6 +77,14 @@ class Cmd:
             case _:
                 return feed(self, data)
 
+    def __matmul__(self, path: ir.PathLike) -> Cmd:
+        """cmd @ "/tmp" -> set working directory."""
+        return cwd(self, path)
+
+    def __rmod__(self, env_vars: Mapping[str, str | None]) -> Cmd:
+        """{"FOO": "bar"} % cmd -> set env vars."""
+        return env(self, **env_vars)
+
     def __bool__(self) -> Never:
         raise TypeError(
             "Cmd cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
@@ -123,6 +131,14 @@ class Pipeline:
         raise TypeError(
             "Pipeline does not support <<. You probably wanted: (cmd1 << data) | cmd2"
         )
+
+    def __matmul__(self, path: object) -> Never:
+        """@ operator is not supported on Pipeline."""
+        raise TypeError("Pipeline does not support @. Apply cwd to individual cmds.")
+
+    def __rmod__(self, env_vars: object) -> Never:
+        """% operator is not supported on Pipeline."""
+        raise TypeError("Pipeline does not support %. Apply env to individual cmds.")
 
     def __bool__(self) -> Never:
         raise TypeError(
@@ -226,6 +242,16 @@ def close(cmd: Pipeline, fd: int) -> Pipeline: ...
 def close(cmd: Cmd | Pipeline, fd: int) -> Cmd | Pipeline:
     """Close fd."""
     return wrap(unwrap(cmd).close(fd))
+
+
+def env(cmd: Cmd, **kwargs: str | None) -> Cmd:
+    """Set environment variables on a command. None values unset variables."""
+    return Cmd(unwrap(cmd).env(**kwargs))
+
+
+def cwd(cmd: Cmd, path: ir.PathLike) -> Cmd:
+    """Set working directory for a command."""
+    return Cmd(unwrap(cmd).cwd(path))
 
 
 def sub_in(source: Runnable) -> ir.SubIn:

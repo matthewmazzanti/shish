@@ -10,6 +10,8 @@ from shish import (
     Pipeline,
     close,
     cmd,
+    cwd,
+    env,
     feed,
     ir,
     pipe,
@@ -517,3 +519,107 @@ def test_sub_out_with_redirect() -> None:
     assert result == ir.SubOut(
         ir.Cmd(("gzip",), redirects=(ir.FdToFile(STDOUT, Path("out.gz")),))
     )
+
+
+# =============================================================================
+# env() and cwd() combinators
+# =============================================================================
+
+
+def test_env_combinator() -> None:
+    result = env(sh.echo(), FOO="bar")
+    assert isinstance(result, Cmd)
+    assert unwrap(result).env_vars == (("FOO", "bar"),)
+
+
+def test_env_combinator_multiple() -> None:
+    result = env(sh.echo(), FOO="bar", BAZ="qux")
+    assert unwrap(result).env_vars == (("FOO", "bar"), ("BAZ", "qux"))
+
+
+def test_env_combinator_unset() -> None:
+    result = env(sh.echo(), FOO=None)
+    assert unwrap(result).env_vars == (("FOO", None),)
+
+
+def test_cwd_combinator() -> None:
+    result = cwd(sh.echo(), "/tmp")
+    assert isinstance(result, Cmd)
+    assert unwrap(result).working_dir == Path("/tmp")
+
+
+def test_cwd_combinator_path() -> None:
+    result = cwd(sh.echo(), Path("/tmp"))
+    assert unwrap(result).working_dir == Path("/tmp")
+
+
+# =============================================================================
+# @ (cwd) and % (env) operators — enforced order: env % cmd @ cwd
+# =============================================================================
+
+
+def test_matmul_cwd() -> None:
+    result = sh.pwd() @ "/tmp"
+    assert isinstance(result, Cmd)
+    assert unwrap(result).working_dir == Path("/tmp")
+
+
+def test_matmul_cwd_path() -> None:
+    result = sh.pwd() @ Path("/tmp")
+    assert unwrap(result).working_dir == Path("/tmp")
+
+
+def test_rmod_env() -> None:
+    result = {"FOO": "bar"} % sh.printenv("FOO")
+    assert isinstance(result, Cmd)
+    assert unwrap(result).env_vars == (("FOO", "bar"),)
+
+
+def test_rmod_env_multiple() -> None:
+    result = {"FOO": "bar", "BAZ": "qux"} % sh.echo()
+    assert unwrap(result).env_vars == (("FOO", "bar"), ("BAZ", "qux"))
+
+
+def test_rmod_env_unset() -> None:
+    result = {"FOO": None} % sh.echo()
+    assert unwrap(result).env_vars == (("FOO", None),)
+
+
+def test_matmul_with_pipe() -> None:
+    result = (sh.pwd() @ "/tmp") | sh.cat()
+    assert isinstance(result, Pipeline)
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("pwd",), working_dir=Path("/tmp")),
+            ir.Cmd(("cat",)),
+        )
+    )
+
+
+def test_rmod_with_pipe() -> None:
+    result = ({"FOO": "bar"} % sh.printenv("FOO")) | sh.cat()
+    assert isinstance(result, Pipeline)
+    assert unwrap(result) == ir.Pipeline(
+        (
+            ir.Cmd(("printenv", "FOO"), env_vars=(("FOO", "bar"),)),
+            ir.Cmd(("cat",)),
+        )
+    )
+
+
+def test_rmod_matmul_bash_style() -> None:
+    """{"FOO": "bar"} % cmd @ "/tmp" reads like: FOO=bar cmd (at /tmp)."""
+    result = {"FOO": "bar"} % sh.pwd() @ "/tmp"
+    assert isinstance(result, Cmd)
+    assert unwrap(result).env_vars == (("FOO", "bar"),)
+    assert unwrap(result).working_dir == Path("/tmp")
+
+
+def test_pipeline_matmul_raises() -> None:
+    with pytest.raises(TypeError, match="Apply cwd"):
+        (sh.a() | sh.b()) @ "/tmp"  # type: ignore[operator]
+
+
+def test_pipeline_rmod_raises() -> None:
+    with pytest.raises(TypeError, match="Apply env"):
+        {"FOO": "bar"} % (sh.a() | sh.b())  # type: ignore[operator]
