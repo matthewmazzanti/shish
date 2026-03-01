@@ -105,6 +105,32 @@ class PipelineNode:
 ProcessNode = CmdNode | PipelineNode
 
 
+def _normalize_returncode(code: int | None) -> int:
+    """Convert returncode to bash-style: 128 + signal for killed processes."""
+    if code is None:
+        return 0
+    if code < 0:
+        return 128 + (-code)
+    return code
+
+
+async def _kill_and_reap(*procs: Process) -> None:
+    """SIGKILL all still-running processes and wait for them to exit.
+
+    Shielded from cancellation so that cleanup completes even if the
+    calling task is cancelled — without this, orphan zombies would
+    accumulate. Only processes with returncode=None (not yet reaped)
+    are killed; already-exited processes are skipped.
+    """
+    reap: list[Coroutine[None, None, int]] = []
+    for proc in procs:
+        if proc.returncode is None:
+            proc.kill()
+            reap.append(proc.wait())
+    if reap:
+        await asyncio.shield(asyncio.gather(*reap))
+
+
 @dataclass
 class Execution:
     """Handle for a spawned process tree with a wait() method.
@@ -127,58 +153,38 @@ class Execution:
         procs = list(self.root.all_procs())
         fds = list(self.root.all_fds())
         try:
-            data_writes: list[Coroutine[None, None, None]] = []
-            for fd_entry in fds:
-                if fd_entry.data is not None and not fd_entry.closed:
-                    data_writes.append(async_write(fd_entry.fd, fd_entry.data))
-                    fd_entry.closed = True  # async_write takes ownership
-
             await asyncio.gather(
                 *[proc.wait() for proc in procs],
-                *data_writes,
+                *self._data_writes(fds),
             )
 
-            return _pipefail_code(self.root)
+            return self._pipefail_code()
         finally:
             await _kill_and_reap(*procs)
             for fd_entry in fds:
                 fd_entry.close()
 
+    def _pipefail_code(self) -> int:
+        """Compute pipefail exit code: rightmost non-zero from root procs."""
+        code = 0
+        for proc in self.root.root_procs():
+            proc_code = _normalize_returncode(proc.returncode)
+            if proc_code != 0:
+                code = proc_code
+        return code
 
-def _normalize_returncode(code: int | None) -> int:
-    """Convert returncode to bash-style: 128 + signal for killed processes."""
-    if code is None:
-        return 0
-    if code < 0:
-        return 128 + (-code)
-    return code
+    @staticmethod
+    def _data_writes(fds: list[OwnedFd]) -> list[Coroutine[None, None, None]]:
+        """Collect async_write coroutines for fds carrying data payloads.
 
-
-def _pipefail_code(root: ProcessNode) -> int:
-    """Compute pipefail exit code: rightmost non-zero from root procs."""
-    code = 0
-    for proc in root.root_procs():
-        proc_code = _normalize_returncode(proc.returncode)
-        if proc_code != 0:
-            code = proc_code
-    return code
-
-
-async def _kill_and_reap(*procs: Process) -> None:
-    """SIGKILL all still-running processes and wait for them to exit.
-
-    Shielded from cancellation so that cleanup completes even if the
-    calling task is cancelled — without this, orphan zombies would
-    accumulate. Only processes with returncode=None (not yet reaped)
-    are killed; already-exited processes are skipped.
-    """
-    reap: list[Coroutine[None, None, int]] = []
-    for proc in procs:
-        if proc.returncode is None:
-            proc.kill()
-            reap.append(proc.wait())
-    if reap:
-        await asyncio.shield(asyncio.gather(*reap))
+        Marks each consumed fd as closed — async_write takes ownership.
+        """
+        writes: list[Coroutine[None, None, None]] = []
+        for fd_entry in fds:
+            if fd_entry.data is not None and not fd_entry.closed:
+                writes.append(async_write(fd_entry.fd, fd_entry.data))
+                fd_entry.closed = True
+        return writes
 
 
 def _build_preexec(
