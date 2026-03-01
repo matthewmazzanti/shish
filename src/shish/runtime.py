@@ -47,10 +47,6 @@ class CmdNode:
     fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
     subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
 
-    def root_procs(self) -> Generator[Process]:
-        """Yield the main process only (for pipefail exit code reporting)."""
-        yield self.proc
-
     def root_returncodes(self) -> Generator[int]:
         """Yield normalized returncode for pipefail reporting."""
         yield _normalize_returncode(self.proc.returncode)
@@ -84,11 +80,6 @@ class PipelineNode:
     """
 
     stages: list[CmdNode | FnNode]
-
-    def root_procs(self) -> Generator[Process]:
-        """Yield stage main procs left-to-right for pipefail reporting."""
-        for stage in self.stages:
-            yield from stage.root_procs()
 
     def root_returncodes(self) -> Generator[int]:
         """Yield stage returncodes left-to-right for pipefail reporting."""
@@ -125,14 +116,12 @@ class FnNode:
     _func: Callable[[ByteStageCtx], Awaitable[int]] = field(repr=False)  # type: ignore[type-arg]
     _stdin_fd: OwnedFd = field(repr=False)
     _stdout_fd: OwnedFd = field(repr=False)
-    returncode: int = 0
-
-    def root_procs(self) -> Generator[Process]:
-        """No OS process."""
-        yield from ()
+    returncode: int | None = None
 
     def root_returncodes(self) -> Generator[int]:
         """Yield the function's return code for pipefail reporting."""
+        if self.returncode is None:
+            raise RuntimeError("FnNode.returncode is None — task never completed")
         yield self.returncode
 
     def all_procs(self) -> Generator[Process]:
@@ -168,7 +157,7 @@ ProcessNode = CmdNode | PipelineNode | FnNode
 def _normalize_returncode(code: int | None) -> int:
     """Convert returncode to bash-style: 128 + signal for killed processes."""
     if code is None:
-        return 0
+        raise RuntimeError("Process returncode is None — process never reaped")
     if code < 0:
         return 128 + (-code)
     return code
