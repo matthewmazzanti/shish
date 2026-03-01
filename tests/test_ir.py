@@ -3,7 +3,8 @@
 from pathlib import Path
 
 from shish import STDERR, STDIN, STDOUT, ir
-from shish.ir import cmd
+from shish.aio import ByteStageCtx
+from shish.ir import Fn, cmd
 
 # =============================================================================
 # Cmd construction
@@ -429,3 +430,67 @@ def test_replace_preserves_redirects() -> None:
     base = cmd("echo").write("out.txt").env(FOO="bar")
     assert base.redirects == (ir.FdToFile(STDOUT, Path("out.txt")),)
     assert base.env_vars == (("FOO", "bar"),)
+
+
+# =============================================================================
+# Fn construction and piping
+# =============================================================================
+
+
+async def _noop(ctx: ByteStageCtx) -> int:
+    return 0
+
+
+async def _noop2(ctx: ByteStageCtx) -> int:
+    return 1
+
+
+def test_fn_construction() -> None:
+    func_node = Fn(_noop)
+    assert func_node.func is _noop
+
+
+def test_fn_pipe_cmd() -> None:
+    result = Fn(_noop).pipe(cmd("cat"))
+    assert isinstance(result, ir.Pipeline)
+    assert result == ir.Pipeline((Fn(_noop), ir.Cmd(("cat",))))
+
+
+def test_fn_pipe_fn() -> None:
+    result = Fn(_noop).pipe(Fn(_noop2))
+    assert isinstance(result, ir.Pipeline)
+    assert result == ir.Pipeline((Fn(_noop), Fn(_noop2)))
+
+
+def test_cmd_pipe_fn() -> None:
+    result = cmd("echo", "hi").pipe(Fn(_noop))
+    assert isinstance(result, ir.Pipeline)
+    assert result == ir.Pipeline((ir.Cmd(("echo", "hi")), Fn(_noop)))
+
+
+def test_fn_sub_in() -> None:
+    result = Fn(_noop).sub_in()
+    assert isinstance(result, ir.SubIn)
+    assert result == ir.SubIn(Fn(_noop))
+
+
+def test_fn_sub_out() -> None:
+    result = Fn(_noop).sub_out()
+    assert isinstance(result, ir.SubOut)
+    assert result == ir.SubOut(Fn(_noop))
+
+
+def test_pipeline_mixed_stages() -> None:
+    result = ir.pipeline(cmd("a"), Fn(_noop), cmd("b"))
+    assert isinstance(result, ir.Pipeline)
+    assert len(result.stages) == 3
+    assert isinstance(result.stages[0], ir.Cmd)
+    assert isinstance(result.stages[1], Fn)
+    assert isinstance(result.stages[2], ir.Cmd)
+    assert result == ir.Pipeline((ir.Cmd(("a",)), Fn(_noop), ir.Cmd(("b",))))
+
+
+def test_pipeline_flattens_with_fn() -> None:
+    inner = ir.Pipeline((cmd("a"), Fn(_noop)))
+    result = ir.pipeline(inner, cmd("b"))
+    assert result == ir.Pipeline((ir.Cmd(("a",)), Fn(_noop), ir.Cmd(("b",))))

@@ -7,13 +7,14 @@ module-level combinator functions that unwrap to IR, delegate, and re-wrap.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Never, overload
 
 import shish.ir as ir
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
+    from shish.aio import ByteStageCtx
     from shish.runtime import Execution
 
 Flag = ir.PathLike | bool
@@ -44,17 +45,28 @@ class Cmd:
             return Cmd(self._shish_ir.arg(*call_args))
         return Cmd(self._shish_ir)
 
-    def __or__(self, other: Runnable) -> Pipeline:
-        """cmd1 | cmd2 -> Pipeline."""
-        return pipe(self, other)
+    def __or__(
+        self, other: Runnable | Callable[[ByteStageCtx], Awaitable[int]]
+    ) -> Pipeline:
+        """cmd1 | cmd2 -> Pipeline. Bare callables auto-wrap to Fn."""
+        if callable(other) and not isinstance(other, (Cmd, Pipeline, Fn)):
+            return pipe(self, Fn(ir.Fn(other)))
+        return pipe(self, other)  # type: ignore[arg-type]
 
-    def __gt__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Cmd:
-        """cmd > "file", cmd > sub, or cmd > (fd, target)."""
+    def __gt__(
+        self,
+        target: ir.WriteDst
+        | Callable[[ByteStageCtx], Awaitable[int]]
+        | tuple[int, ir.WriteDst],
+    ) -> Cmd:
+        """cmd > "file", cmd > sub, cmd > callable, or cmd > (fd, target)."""
+        if callable(target) and not isinstance(target, (Cmd, Pipeline, Fn)):
+            return write(self, ir.SubOut(ir.Fn(target)))
         match target:
             case fd, dst:
                 return write(self, dst, fd=fd)
             case dst:
-                return write(self, dst)
+                return write(self, dst)  # type: ignore[arg-type]
 
     def __rshift__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Cmd:
         """cmd >> "file", cmd >> sub, or cmd >> (fd, target)."""
@@ -64,13 +76,20 @@ class Cmd:
             case dst:
                 return write(self, dst, append=True)
 
-    def __lt__(self, target: ir.ReadSrc | tuple[int, ir.ReadSrc]) -> Cmd:
-        """cmd < "file", cmd < sub, or cmd < (fd, target)."""
+    def __lt__(
+        self,
+        target: ir.ReadSrc
+        | Callable[[ByteStageCtx], Awaitable[int]]
+        | tuple[int, ir.ReadSrc],
+    ) -> Cmd:
+        """cmd < "file", cmd < sub, cmd < callable, or cmd < (fd, target)."""
+        if callable(target) and not isinstance(target, (Cmd, Pipeline, Fn)):
+            return read(self, ir.SubIn(ir.Fn(target)))
         match target:
             case fd, src:
                 return read(self, src, fd=fd)
             case src:
-                return read(self, src)
+                return read(self, src)  # type: ignore[arg-type]
 
     def __lshift__(self, data: ir.Data | tuple[int, ir.Data]) -> Cmd:
         """cmd << "data" or cmd << (fd, "data")."""
@@ -103,9 +122,13 @@ class Pipeline:
     def __init__(self, _shish_ir: ir.Pipeline) -> None:
         self._shish_ir = _shish_ir
 
-    def __or__(self, other: Runnable) -> Pipeline:
-        """pipeline | cmd -> Pipeline."""
-        return pipe(self, other)
+    def __or__(
+        self, other: Runnable | Callable[[ByteStageCtx], Awaitable[int]]
+    ) -> Pipeline:
+        """pipeline | cmd -> Pipeline. Bare callables auto-wrap to Fn."""
+        if callable(other) and not isinstance(other, (Cmd, Pipeline, Fn)):
+            return pipe(self, Fn(ir.Fn(other)))
+        return pipe(self, other)  # type: ignore[arg-type]
 
     def __ror__(self, other: Cmd) -> Pipeline:
         """cmd | pipeline -> Pipeline."""
@@ -152,8 +175,29 @@ class Pipeline:
         return self._shish_ir.run().__await__()
 
 
-# Type alias requiring both classes
-Runnable = Cmd | Pipeline
+class Fn:
+    """Immutable wrapper for a Python function as a pipeline stage."""
+
+    def __init__(self, _shish_ir: ir.Fn) -> None:
+        self._shish_ir = _shish_ir
+
+    def __or__(
+        self, other: Runnable | Callable[[ByteStageCtx], Awaitable[int]]
+    ) -> Pipeline:
+        """fn | cmd -> Pipeline. Bare callables auto-wrap to Fn."""
+        if callable(other) and not isinstance(other, (Cmd, Pipeline, Fn)):
+            return pipe(self, Fn(ir.Fn(other)))
+        return pipe(self, other)  # type: ignore[arg-type]
+
+    def __bool__(self) -> Never:
+        raise TypeError("Fn cannot be used as bool")
+
+    def __await__(self) -> Generator[object, None, int]:
+        return self._shish_ir.run().__await__()
+
+
+# Type alias requiring all classes
+Runnable = Cmd | Pipeline | Fn
 
 
 # Combinators
@@ -163,9 +207,11 @@ Runnable = Cmd | Pipeline
 def unwrap(cmd: Cmd) -> ir.Cmd: ...
 @overload
 def unwrap(cmd: Pipeline) -> ir.Pipeline: ...
+@overload
+def unwrap(cmd: Fn) -> ir.Fn: ...
 
 
-def unwrap(cmd: Cmd | Pipeline) -> ir.Cmd | ir.Pipeline:
+def unwrap(cmd: Cmd | Pipeline | Fn) -> ir.Cmd | ir.Pipeline | ir.Fn:
     """Extract the IR from a DSL wrapper."""
     return cmd._shish_ir  # pyright: ignore[reportPrivateUsage]
 
@@ -174,15 +220,19 @@ def unwrap(cmd: Cmd | Pipeline) -> ir.Cmd | ir.Pipeline:
 def wrap(inner: ir.Cmd) -> Cmd: ...
 @overload
 def wrap(inner: ir.Pipeline) -> Pipeline: ...
+@overload
+def wrap(inner: ir.Fn) -> Fn: ...
 
 
-def wrap(inner: ir.Cmd | ir.Pipeline) -> Cmd | Pipeline:
+def wrap(inner: ir.Cmd | ir.Pipeline | ir.Fn) -> Cmd | Pipeline | Fn:
     """Wrap an IR in its DSL counterpart."""
     match inner:
         case ir.Cmd():
             return Cmd(inner)
         case ir.Pipeline():
             return Pipeline(inner)
+        case ir.Fn():
+            return Fn(inner)
 
 
 def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
@@ -190,9 +240,14 @@ def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
     return Cmd(ir.cmd())(*args, **kwargs)
 
 
+def fn(func: Callable[[ByteStageCtx], Awaitable[int]]) -> Fn:
+    """Create an Fn from an async callable."""
+    return Fn(ir.Fn(func))
+
+
 def pipe(*cmds: Runnable) -> Pipeline:
     """Pipe commands together: pipe(cmd1, cmd2, ...) -> Pipeline."""
-    return Pipeline(ir.pipeline(*(unwrap(cmd) for cmd in cmds)))
+    return Pipeline(ir.pipeline(*(unwrap(stage) for stage in cmds)))
 
 
 @overload
@@ -257,27 +312,35 @@ def cwd(cmd: Cmd, path: ir.PathLike) -> Cmd:
     return Cmd(unwrap(cmd).cwd(path))
 
 
-def sub_in(source: Runnable) -> ir.SubIn:
-    """Input process substitution: <(source)."""
-    return ir.SubIn(unwrap(source))
+def sub_in(
+    source: Runnable | Callable[[ByteStageCtx], Awaitable[int]],
+) -> ir.SubIn:
+    """Input process substitution: <(source). Bare callables auto-wrap to Fn."""
+    if callable(source) and not isinstance(source, (Cmd, Pipeline, Fn)):
+        return ir.SubIn(ir.Fn(source))
+    return ir.SubIn(unwrap(source))  # type: ignore[arg-type]
 
 
-def sub_out(sink: Runnable) -> ir.SubOut:
-    """Output process substitution: >(sink)."""
-    return ir.SubOut(unwrap(sink))
+def sub_out(
+    sink: Runnable | Callable[[ByteStageCtx], Awaitable[int]],
+) -> ir.SubOut:
+    """Output process substitution: >(sink). Bare callables auto-wrap to Fn."""
+    if callable(sink) and not isinstance(sink, (Cmd, Pipeline, Fn)):
+        return ir.SubOut(ir.Fn(sink))
+    return ir.SubOut(unwrap(sink))  # type: ignore[arg-type]
 
 
-async def prepare(cmd: Cmd | Pipeline) -> Execution:
+async def prepare(cmd: Runnable) -> Execution:
     """Spawn a command or pipeline and return an Execution handle."""
     return await unwrap(cmd).prepare()
 
 
-async def run(cmd: Cmd | Pipeline) -> int:
+async def run(cmd: Runnable) -> int:
     """Execute a command or pipeline and return exit code."""
     return await unwrap(cmd).run()
 
 
-async def out(cmd: Cmd | Pipeline, encoding: str | None = "utf-8") -> str | bytes:
+async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
     """Execute command and return stdout."""
     return await unwrap(cmd).out(encoding)
 

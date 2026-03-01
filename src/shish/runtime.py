@@ -6,12 +6,12 @@ import asyncio
 import os
 import subprocess
 from asyncio.subprocess import Process, create_subprocess_exec
-from collections.abc import Callable, Coroutine, Generator
+from collections.abc import Awaitable, Callable, Coroutine, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import overload
 
-from shish.aio import ByteReadStream, ByteWriteStream, OwnedFd
+from shish.aio import ByteReadStream, ByteStageCtx, ByteWriteStream, OwnedFd
 from shish.fdops import STDERR, STDIN, STDOUT, FdOps, OpClose, OpDup2, OpOpen
 from shish.ir import (
     Cmd,
@@ -22,6 +22,7 @@ from shish.ir import (
     FdToFd,
     FdToFile,
     FdToSub,
+    Fn,
     Pipeline,
     Runnable,
     SubIn,
@@ -47,6 +48,10 @@ class CmdNode:
         """Yield the main process only (for pipefail exit code reporting)."""
         yield self.proc
 
+    def root_returncodes(self) -> Generator[int]:
+        """Yield normalized returncode for pipefail reporting."""
+        yield _normalize_returncode(self.proc.returncode)
+
     def all_procs(self) -> Generator[Process]:
         """Yield all processes in the subtree (main + subs, recursive)."""
         yield self.proc
@@ -70,17 +75,22 @@ class CmdNode:
 class PipelineNode:
     """Process tree node for a pipeline (cmd1 | cmd2 | ...).
 
-    Each stage is a CmdNode. Pipefail semantics: root_procs yields
-    all stage procs left-to-right. Sub-processes within each stage
-    are excluded from pipefail.
+    Each stage is a CmdNode or FnNode. Pipefail semantics:
+    root_returncodes yields all stage returncodes left-to-right.
+    Sub-processes within each stage are excluded from pipefail.
     """
 
-    stages: list[CmdNode]
+    stages: list[CmdNode | FnNode]
 
     def root_procs(self) -> Generator[Process]:
         """Yield stage main procs left-to-right for pipefail reporting."""
         for stage in self.stages:
-            yield stage.proc
+            yield from stage.root_procs()
+
+    def root_returncodes(self) -> Generator[int]:
+        """Yield stage returncodes left-to-right for pipefail reporting."""
+        for stage in self.stages:
+            yield from stage.root_returncodes()
 
     def all_procs(self) -> Generator[Process]:
         """Yield all processes across all stages (recursive)."""
@@ -114,6 +124,10 @@ class WriteNode:
         """No processes — data writes don't participate in pipefail."""
         yield from ()
 
+    def root_returncodes(self) -> Generator[int]:
+        """No returncodes — data writes don't participate in pipefail."""
+        yield from ()
+
     def all_procs(self) -> Generator[Process]:
         """No processes."""
         yield from ()
@@ -140,7 +154,61 @@ class WriteNode:
             await writer.close()
 
 
-ProcessNode = CmdNode | PipelineNode | WriteNode
+@dataclass
+class FnNode:
+    """Process tree node for an in-process Python function.
+
+    Runs a user-provided async function with ByteStageCtx. No OS
+    process is spawned — the function runs as an asyncio task. Owns
+    dup'd copies of stdin/stdout fds so pipeline close-after-spawn
+    logic doesn't affect it.
+    """
+
+    fds: list[OwnedFd]
+    _func: Callable[[ByteStageCtx], Awaitable[int]] = field(repr=False)  # type: ignore[type-arg]
+    _stdin_fd: OwnedFd = field(repr=False)
+    _stdout_fd: OwnedFd = field(repr=False)
+    returncode: int = 0
+
+    def root_procs(self) -> Generator[Process]:
+        """No OS process."""
+        yield from ()
+
+    def root_returncodes(self) -> Generator[int]:
+        """Yield the function's return code for pipefail reporting."""
+        yield self.returncode
+
+    def all_procs(self) -> Generator[Process]:
+        """No OS process to kill."""
+        yield from ()
+
+    def all_fds(self) -> Generator[OwnedFd]:
+        """Yield owned fds for cleanup."""
+        yield from self.fds
+
+    def tasks(self) -> Generator[Coroutine[None, None, object]]:
+        """Yield the function execution coroutine."""
+        yield self._run()
+
+    async def _run(self) -> None:
+        """Execute the user function with ByteStageCtx, then close streams."""
+        stdin_stream = ByteReadStream(self._stdin_fd)
+        stdout_stream = ByteWriteStream(self._stdout_fd)
+        try:
+            ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
+            self.returncode = await self._func(ctx)
+        except Exception:
+            import sys
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
+            self.returncode = 1
+        finally:
+            await stdout_stream.close()
+            await stdin_stream.close()
+
+
+ProcessNode = CmdNode | PipelineNode | WriteNode | FnNode
 
 
 def _normalize_returncode(code: int | None) -> int:
@@ -199,12 +267,11 @@ class Execution:
                 fd_entry.close()
 
     def _pipefail_code(self) -> int:
-        """Compute pipefail exit code: rightmost non-zero from root procs."""
+        """Compute pipefail exit code: rightmost non-zero from root returncodes."""
         code = 0
-        for proc in self.root.root_procs():
-            proc_code = _normalize_returncode(proc.returncode)
-            if proc_code != 0:
-                code = proc_code
+        for returncode in self.root.root_returncodes():
+            if returncode != 0:
+                code = returncode
         return code
 
 
@@ -304,8 +371,35 @@ async def _spawn(
     match cmd:
         case Cmd():
             return await _spawn_cmd(ctx, cmd, stdin_fd, stdout_fd)
+        case Fn():
+            return _spawn_fn(ctx, cmd, stdin_fd, stdout_fd)
         case Pipeline():
             return await _spawn_pipeline(ctx, cmd, stdin_fd, stdout_fd)
+
+
+def _spawn_fn(
+    ctx: PrepareCtx,
+    fn_ir: Fn,
+    stdin_fd: int | None,
+    stdout_fd: int | None,
+) -> FnNode:
+    """Create an FnNode for an in-process Python function.
+
+    Dups the received fds so the pipeline's close-after-spawn logic
+    (which closes the originals) doesn't affect the Fn. When stdin_fd
+    or stdout_fd is None, dups the parent's STDIN/STDOUT to match
+    subprocess inherit behavior.
+    """
+    dup_stdin = OwnedFd(os.dup(stdin_fd if stdin_fd is not None else STDIN))
+    dup_stdout = OwnedFd(os.dup(stdout_fd if stdout_fd is not None else STDOUT))
+    ctx.fds.append(dup_stdin)
+    ctx.fds.append(dup_stdout)
+    return FnNode(
+        fds=[dup_stdin, dup_stdout],
+        _func=fn_ir.func,
+        _stdin_fd=dup_stdin,
+        _stdout_fd=dup_stdout,
+    )
 
 
 async def _spawn_cmd(
@@ -477,11 +571,26 @@ async def _spawn_pipeline(
     stage_stdins = [stdin_fd] + [pipe_r.fd for pipe_r, _ in inter_pipes]
     stage_stdouts = [pipe_w.fd for _, pipe_w in inter_pipes] + [stdout_fd]
 
-    # Spawn stages concurrently
+    # Spawn stages concurrently (Cmd stages are async, Fn stages are sync)
+    fn_nodes: list[tuple[int, FnNode]] = []
     spawn_tasks: list[Coroutine[None, None, CmdNode]] = []
-    for stage, sin, sout in zip(stages, stage_stdins, stage_stdouts, strict=True):
-        spawn_tasks.append(_spawn_cmd(ctx, stage, sin, sout))
-    stage_nodes = list(await asyncio.gather(*spawn_tasks))
+    spawn_indices: list[int] = []
+    for idx, (stage, sin, sout) in enumerate(
+        zip(stages, stage_stdins, stage_stdouts, strict=True)
+    ):
+        if isinstance(stage, Fn):
+            fn_nodes.append((idx, _spawn_fn(ctx, stage, sin, sout)))
+        else:
+            spawn_indices.append(idx)
+            spawn_tasks.append(_spawn_cmd(ctx, stage, sin, sout))
+    cmd_nodes = list(await asyncio.gather(*spawn_tasks))
+
+    # Merge results in original order
+    stage_nodes: list[CmdNode | FnNode] = [None] * len(stages)  # type: ignore[list-item]
+    for idx, node in zip(spawn_indices, cmd_nodes, strict=True):
+        stage_nodes[idx] = node
+    for idx, node in fn_nodes:
+        stage_nodes[idx] = node
 
     # Close inter-stage pipe fds (children have inherited them)
     for pipe_r, pipe_w in inter_pipes:
