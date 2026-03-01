@@ -309,14 +309,15 @@ class Executor:
         # Allocate inter-stage pipes
         inter_pipes = [self._pipe() for _ in range(len(stages) - 1)]
 
-        # Spawn stages sequentially
-        stage_nodes: list[CmdNode] = []
-        for idx, stage in enumerate(stages):
-            stage_stdin = stdin_fd if idx == 0 else inter_pipes[idx - 1][0].fd
-            is_last = idx == len(stages) - 1
-            stage_stdout = stdout_fd if is_last else inter_pipes[idx][1].fd
-            node = await self._spawn_cmd(stage, stage_stdin, stage_stdout)
-            stage_nodes.append(node)
+        # Per-stage stdin/stdout: outer fds at the edges, pipes in between
+        stage_stdins = [stdin_fd] + [pipe_r.fd for pipe_r, _ in inter_pipes]
+        stage_stdouts = [pipe_w.fd for _, pipe_w in inter_pipes] + [stdout_fd]
+
+        # Spawn stages concurrently
+        spawn_tasks: list[Coroutine[None, None, CmdNode]] = []
+        for stage, sin, sout in zip(stages, stage_stdins, stage_stdouts, strict=True):
+            spawn_tasks.append(self._spawn_cmd(stage, sin, sout))
+        stage_nodes = list(await asyncio.gather(*spawn_tasks))
 
         # Close inter-stage pipe fds (children have inherited them)
         for pipe_r, pipe_w in inter_pipes:
