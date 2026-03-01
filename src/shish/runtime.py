@@ -46,24 +46,48 @@ class OwnedFd:
 
 @dataclass
 class CmdNode:
-    """A spawned command process (for pipefail tracking)."""
+    """Process tree node for a single spawned command.
+
+    Holds the main process and any substitution sub-processes (from
+    FdToSub, FdFromSub, SubOut, SubIn redirects/args). Sub-processes
+    are tracked here for tree completeness but are excluded from
+    pipefail — only the main proc participates in exit code reporting.
+
+    All processes (main + subs) are also registered in Executor.procs
+    for flat cleanup regardless of tree structure.
+    """
 
     proc: Process
     subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
 
     def root_procs(self) -> Generator[Process]:
-        """Just the main process."""
+        """Yield the main process only (for pipefail exit code reporting).
+
+        Substitution sub-processes are intentionally excluded — their
+        exit codes are ignored, matching bash process substitution
+        semantics.
+        """
         yield self.proc
 
 
 @dataclass
 class PipelineNode:
-    """Pipeline stages (for pipefail tracking)."""
+    """Process tree node for a pipeline (cmd1 | cmd2 | ...).
+
+    Each stage is a CmdNode. Pipefail semantics: root_procs yields
+    all stage procs left-to-right, and execute() reports the rightmost
+    non-zero exit code. Sub-processes within each stage (process
+    substitutions) are excluded from pipefail.
+    """
 
     stages: list[CmdNode]
 
     def root_procs(self) -> Generator[Process]:
-        """Stage procs only (for pipefail)."""
+        """Yield stage main procs left-to-right for pipefail reporting.
+
+        Sub-processes within each stage are excluded — only the
+        top-level pipeline participants determine the exit code.
+        """
         for stage in self.stages:
             yield stage.proc
 
@@ -80,7 +104,13 @@ class Result:
 
 
 async def _kill_and_reap(*procs: Process) -> None:
-    """Kill and reap processes, shielded from cancellation."""
+    """SIGKILL all still-running processes and wait for them to exit.
+
+    Shielded from cancellation so that cleanup completes even if the
+    calling task is cancelled — without this, orphan zombies would
+    accumulate. Only processes with returncode=None (not yet reaped)
+    are killed; already-exited processes are skipped.
+    """
     reap: list[Coroutine[None, None, int]] = []
     for proc in procs:
         if proc.returncode is None:
@@ -125,9 +155,19 @@ def _build_preexec(
 class Executor:
     """Spawns and executes a Runnable as a process tree.
 
-    All allocated fds and spawned processes are tracked in flat lists
-    so that execute()'s finally block can clean up everything in one
-    place — even if a spawn fails partway through or tasks are cancelled.
+    Maintains two flat tracking lists alongside the tree structure:
+
+    - self.fds: every allocated pipe fd (both ends), for guaranteed
+      close in the finally block. Includes data-pipe write ends that
+      async_write takes ownership of during execution.
+    - self.procs: every spawned process (main + subs + pipeline stages),
+      for guaranteed SIGKILL+reap in the finally block.
+
+    The flat lists ensure cleanup even if a spawn fails partway through
+    or tasks are cancelled, independent of tree structure. The tree
+    (ProcessNode) is used only for pipefail exit code reporting.
+
+    Single-use: one Executor per run()/out() call.
     """
 
     def __init__(self) -> None:
@@ -144,7 +184,15 @@ class Executor:
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
     ) -> Process:
-        """Spawn a subprocess, tracking it for cleanup."""
+        """Spawn a subprocess via create_subprocess_exec and register it
+        in self.procs for cleanup.
+
+        stdin/stdout are raw fds (or None for inherit); Popen does
+        dup2 to wire them to fds 0/1 in the child. pass_fds keeps
+        additional fds open across exec (fds > 2 used by redirects
+        and process substitutions). preexec_fn runs between fork and
+        exec to apply user redirect ops (open, dup2, close).
+        """
         proc = await create_subprocess_exec(
             *args,
             stdin=stdin,
@@ -158,7 +206,12 @@ class Executor:
         return proc
 
     def _pipe(self) -> tuple[OwnedFd, OwnedFd]:
-        """Allocate a pipe, tracking both ends for cleanup."""
+        """Allocate an os.pipe(), tracking both ends in self.fds for cleanup.
+
+        Returns (read_end, write_end). Both are registered so the
+        finally block can close them even if spawn fails before the
+        caller gets to close them after fork inheritance.
+        """
         read_fd, write_fd = os.pipe()
         read_entry = OwnedFd(read_fd)
         write_entry = OwnedFd(write_fd)
@@ -167,10 +220,15 @@ class Executor:
         return read_entry, write_entry
 
     def _data_pipe(self, data: str | bytes) -> OwnedFd:
-        """Allocate a pipe for feeding data, tracking both ends for cleanup.
+        """Allocate a pipe for feeding data (<<< "string" / FdFromData).
 
-        Returns the read end; the write end is handled by async_write via
-        the flat fd list.
+        Returns the read end for wiring into the child's stdin (or
+        target fd). The write end is stored in self.fds with its data
+        payload attached — execute() later hands it to async_write,
+        which takes ownership and closes it after writing.
+
+        The write end is set non-blocking so async_write can use the
+        event loop's writer callbacks without stalling.
         """
         read_fd, write_fd = os.pipe()
         os.set_blocking(write_fd, False)
@@ -182,7 +240,12 @@ class Executor:
     async def _spawn(
         self, cmd: Runnable, stdin_fd: int | None, stdout_fd: int | None
     ) -> ProcessNode:
-        """Spawn a Runnable, returning its process tree node."""
+        """Dispatch a Runnable to _spawn_cmd or _spawn_pipeline.
+
+        stdin_fd/stdout_fd are the outer pipe fds from a parent
+        pipeline (or None for inherit/capture). Returns a ProcessNode
+        for tree-based pipefail reporting.
+        """
         match cmd:
             case Cmd():
                 return await self._spawn_cmd(cmd, stdin_fd, stdout_fd)
@@ -192,16 +255,30 @@ class Executor:
     async def _spawn_cmd(
         self, cmd: Cmd, outer_stdin_fd: int | None, outer_stdout_fd: int | None
     ) -> CmdNode:
-        """Spawn a Cmd, resolving redirects and Sub arguments.
+        """Spawn a single Cmd with all its redirects and sub-processes.
 
-        Two-layer redirect model matching POSIX semantics:
+        Redirect resolution follows a two-layer model matching POSIX:
 
-        Layer 1 — pipe wiring (Popen kwargs): stdin=/stdout= from outer
-        pipeline. Popen does dup2(pipe_rd, 0) and dup2(pipe_wr, 1).
+        Layer 1 — pipe wiring (Popen kwargs): outer_stdin_fd/outer_stdout_fd
+        from the parent pipeline become stdin=/stdout= on the subprocess
+        call. Popen internally does dup2(pipe_rd, 0) / dup2(pipe_wr, 1).
 
-        Layer 2 — user redirects (preexec_fn via FdOps): ordered ops that
-        execute after Popen's pipe dup2, so user redirects naturally
-        override pipe wiring.
+        Layer 2 — user redirects (preexec_fn via FdOps): ordered fd ops
+        that execute in the child after Popen's pipe dup2, so user
+        redirects (>, <, 2>&1, etc.) naturally override pipe wiring.
+
+        Process substitutions (FdToSub, FdFromSub) and Sub arguments
+        (SubOut, SubIn) each allocate a pipe and register a spawn
+        coroutine. All sub spawns are deferred and run concurrently
+        with the main process spawn via nested asyncio.gather — this
+        is safe because pipe fds are allocated eagerly (before any
+        spawn), so all processes inherit the correct fds regardless
+        of spawn order.
+
+        After all processes have been spawned, local_fds (pipe ends
+        used only for child inheritance) are closed in the parent —
+        children have inherited them via fork, so the parent must
+        close its copies to allow EOF propagation.
         """
         # Build FdOps simulation with initial live fds from pipeline
         fdo = FdOps(live={STDIN, STDOUT, STDERR})
@@ -306,7 +383,18 @@ class Executor:
     async def _spawn_pipeline(
         self, pipeline: Pipeline, stdin_fd: int | None, stdout_fd: int | None
     ) -> PipelineNode:
-        """Spawn a Pipeline, connecting stages with pipes."""
+        """Spawn all stages of a pipeline, connected by inter-stage pipes.
+
+        Pipes are allocated eagerly before any spawns, then all stages
+        are spawned concurrently via asyncio.gather. This is safe
+        because each stage only needs its stdin/stdout fds to be valid
+        at spawn time, and pipe allocation is synchronous.
+
+        Outer stdin_fd/stdout_fd are wired to the first/last stage
+        respectively, with inter-stage pipes connecting the rest.
+        After all children have forked, inter-stage pipe fds are
+        closed in the parent so EOF propagates when stages exit.
+        """
         stages = pipeline.stages
         if not stages:
             return PipelineNode(stages=[])
@@ -336,11 +424,27 @@ class Executor:
         cmd: Runnable,
         stdout_fd: int | None = None,
     ) -> Result:
-        """Execute a command and return Result with exit code.
+        """Execute a Runnable and return its Result (exit code).
+
+        Lifecycle:
+        1. Spawn the full process tree via _spawn().
+        2. Close the capture fd (stdout_fd) in the parent so the
+           child's stdout EOF is visible to readers.
+        3. Gather all process waits and data writes (FdFromData pipes)
+           concurrently. Data writes must overlap with process waits
+           to avoid deadlock when the child's stdin pipe buffer fills.
+        4. Compute pipefail exit code: rightmost non-zero from
+           root_procs() only. Sub-process exit codes (process
+           substitutions) are intentionally ignored.
+        5. Finally: SIGKILL+reap any still-running processes, close
+           all tracked fds. Both are idempotent and shielded from
+           cancellation to prevent resource leaks.
 
         Args:
             cmd: Command or pipeline to execute.
-            stdout_fd: File descriptor for process stdout (e.g., write end of pipe).
+            stdout_fd: Write end of a pipe for capturing stdout.
+                Caller owns the read end; this method closes the
+                write end after fork so readers see EOF.
         """
         capture_fd: OwnedFd | None = None
         if stdout_fd is not None:
@@ -401,13 +505,20 @@ async def out(cmd: Runnable, encoding: str = "utf-8") -> str: ...
 
 
 async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
-    """Execute command and return stdout.
+    """Execute a command and return its captured stdout.
+
+    Allocates a pipe and runs execute() concurrently with async_read
+    on the read end. Concurrency is required to avoid deadlock: if
+    the child fills the pipe buffer, it blocks until someone reads,
+    but if we wait() first we never read.
 
     Args:
         cmd: Command to execute.
         encoding: Decode stdout with this encoding. None for raw bytes.
 
-    Raises subprocess.CalledProcessError on non-zero exit code.
+    Raises:
+        subprocess.CalledProcessError: On non-zero exit code, with
+            the captured stdout attached for diagnostic use.
     """
     read_fd, write_fd = os.pipe()
     executor = Executor()
