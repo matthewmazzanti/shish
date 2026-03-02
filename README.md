@@ -1,7 +1,6 @@
 # shish
 > sh-ish
 
-test
 Async shell commands for Python with operator-based piping.
 
 ```python
