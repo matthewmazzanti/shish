@@ -1,9 +1,9 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { nixpkgs, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -13,10 +13,11 @@
     {
       devShells = forAllSystems ({ pkgs }: {
         default = pkgs.mkShell {
-          packages = [
-            pkgs.just
-            pkgs.python313
-            pkgs.uv
+          packages = with pkgs; [
+            just
+            python313
+            uv
+            gh
           ];
         };
       });

@@ -148,7 +148,7 @@ async def test_child_fds_pipeline_first_stage_redirect(
 
 async def test_no_fd_leak_after_execution() -> None:
     """Parent process doesn't leak fds after complex execution."""
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     sub = ir.SubIn(ir.Cmd(("echo", "from sub")))
     pipeline = ir.Pipeline(
         (
@@ -157,7 +157,7 @@ async def test_no_fd_leak_after_execution() -> None:
         )
     )
     await run(pipeline)
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -198,25 +198,25 @@ async def _generate_fn(ctx: ByteStageCtx) -> int:
 
 async def test_no_fd_leak_fn_standalone() -> None:
     """Standalone Fn doesn't leak fds in the parent process."""
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     await run(Fn(_noop_fn))
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
 async def test_no_fd_leak_fn_in_pipeline() -> None:
     """Fn as a pipeline stage doesn't leak fds in the parent process."""
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     await run(ir.Pipeline((ir.Cmd(("echo", "hello")), Fn(_noop_fn))))
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
 async def test_no_fd_leak_fn_as_sub() -> None:
     """Fn used in process substitution doesn't leak fds in the parent process."""
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     sub = ir.SubIn(Fn(_generate_fn))
     command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(STDIN, sub),))
     await run(command)
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
