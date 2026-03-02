@@ -666,9 +666,9 @@ def test_fn_pipe_fn() -> None:
 
 
 def test_cmd_gt_fn() -> None:
-    assert unwrap(sh.echo("hi") > sub_out(_noop_fn)) == ir.Cmd(
-        ("echo", "hi")
-    ).write(ir.SubOut(_noop_ir))
+    assert unwrap(sh.echo("hi") > sub_out(_noop_fn)) == ir.Cmd(("echo", "hi")).write(
+        ir.SubOut(_noop_ir)
+    )
 
 
 def test_cmd_lt_fn() -> None:
@@ -695,6 +695,7 @@ def test_fn_await() -> None:
 
 def test_fn_call_no_args() -> None:
     """@fn() produces an Fn wrapping the function."""
+
     @fn()
     async def noop(ctx: TextStageCtx) -> int:
         return 0

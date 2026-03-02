@@ -409,9 +409,7 @@ def test_fn_pipe_fn() -> None:
 
 
 def test_cmd_pipe_fn() -> None:
-    assert cmd("echo", "hi").pipe(_fn) == ir.Pipeline(
-        (ir.Cmd(("echo", "hi")), _fn)
-    )
+    assert cmd("echo", "hi").pipe(_fn) == ir.Pipeline((ir.Cmd(("echo", "hi")), _fn))
 
 
 def test_fn_sub_in() -> None:

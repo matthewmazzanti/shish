@@ -1,4 +1,4 @@
-# shish
+# shish 🍢
 > sh-ish
 
 Async shell commands for Python with operator-based piping.

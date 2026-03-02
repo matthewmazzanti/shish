@@ -9,10 +9,21 @@ requires-python = ">=3.13"
 license = "MIT"
 readme = "README.md"
 dependencies = []
+keywords = ["shell", "subprocess", "async", "pipe", "command"]
 classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX",
     "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/matthewmazzanti/shish"
+Repository = "https://github.com/matthewmazzanti/shish"
+Issues = "https://github.com/matthewmazzanti/shish/issues"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
@@ -31,7 +42,6 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]

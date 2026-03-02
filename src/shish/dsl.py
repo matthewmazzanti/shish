@@ -247,12 +247,14 @@ def fn(
     """
     match func, encoding:
         case None, None:  # @fn(encoding=None)
+
             def byte_decorator(inner: ByteFn) -> Fn:
                 return Fn(ir.Fn(inner))
 
             return byte_decorator
 
         case None, enc:  # @fn() or @fn(encoding="...")
+
             def text_decorator(inner: TextFn) -> Fn:
                 return Fn(ir.Fn(make_byte_wrapper(inner, enc)))
 
