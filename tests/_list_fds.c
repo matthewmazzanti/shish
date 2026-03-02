@@ -4,11 +4,11 @@
  * Used by fd hygiene tests to verify that child processes see exactly
  * the expected set of fds (no leaks from the executor or pipelines).
  *
- * Reads /proc/self/fd and excludes the opendir() fd itself via dirfd().
+ * Reads /dev/fd and excludes the opendir() fd itself via dirfd().
  * Unlike Python or shell, a C binary has no interpreter-internal fds,
  * so the output reflects only what the executor actually passed.
  *
- * Exit codes: 0 = success, 1 = can't open /proc/self/fd, 2 = parse error
+ * Exit codes: 0 = success, 1 = can't open /dev/fd, 2 = parse error
  * Output: JSON array on stdout, e.g. [0,1,2] or [0,1,2,3,5]
  */
 
@@ -20,7 +20,7 @@
 #include <stdlib.h>
 
 int main(void) {
-    DIR *dir = opendir("/proc/self/fd");
+    DIR *dir = opendir("/dev/fd");
     if (!dir) {
         return 1;
     }
@@ -50,7 +50,7 @@ int main(void) {
         }
 
         /* Parse entry name as integer fd number.
-         * /proc/self/fd entries are kernel-generated and always numeric,
+         * /dev/fd entries are kernel-generated and always numeric,
          * but we validate fully: non-numeric, overflow, or negative = error. */
         char *end;
         errno = 0;

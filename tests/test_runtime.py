@@ -718,10 +718,10 @@ async def test_out_no_fd_leak_on_failure() -> None:
     """out() doesn't leak its capture pipe when command fails."""
     import os
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     with pytest.raises(subprocess.CalledProcessError):
         await out(ir.Cmd(("false",)))
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -785,7 +785,7 @@ async def test_cancel_no_fd_leak() -> None:
     """No fds leak in the parent after cancellation."""
     import os
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     task = asyncio.create_task(
         run(
             ir.Pipeline(
@@ -800,7 +800,7 @@ async def test_cancel_no_fd_leak() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -820,10 +820,10 @@ async def test_no_fd_leak_after_error() -> None:
     """No fds leak in the parent when command-not-found raises."""
     import os
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     with pytest.raises(FileNotFoundError):
         await run(ir.Cmd(("nonexistent_command_xyz_12345",)))
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -831,7 +831,7 @@ async def test_no_fd_leak_after_pipeline_error() -> None:
     """No fds leak when one pipeline stage fails to spawn."""
     import os
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     with pytest.raises(FileNotFoundError):
         await run(
             ir.Pipeline(
@@ -841,7 +841,7 @@ async def test_no_fd_leak_after_pipeline_error() -> None:
                 )
             )
         )
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -978,10 +978,10 @@ async def test_prepare_cleanup_on_spawn_failure() -> None:
     """prepare() cleans up fds on spawn failure."""
     import os
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     with pytest.raises(FileNotFoundError):
         await prepare(ir.Cmd(("nonexistent_command_xyz_12345",)))
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -989,10 +989,10 @@ async def test_prepare_wait_no_fd_leak() -> None:
     """No fds leak after prepare()+wait() completes."""
     import os
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     execution = await prepare(ir.Cmd(("true",)))
     await execution.wait()
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -1092,7 +1092,7 @@ async def test_fn_exception_returns_1() -> None:
 
 async def test_fn_no_fd_leak() -> None:
     """No fds leak after running Fn standalone or in a pipeline."""
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
 
     # Standalone Fn
     await run(ir.Fn(_generate))
@@ -1100,7 +1100,7 @@ async def test_fn_no_fd_leak() -> None:
     # Pipeline with Fn
     await run(ir.Pipeline((ir.Cmd(("echo", "hello")), ir.Fn(_upper))))
 
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
 
 
@@ -1202,7 +1202,7 @@ async def test_fn_cancel_no_fd_leak() -> None:
         await asyncio.sleep(60)
         return 0
 
-    before = set(os.listdir("/proc/self/fd"))
+    before = set(os.listdir("/dev/fd"))
     task = asyncio.create_task(
         run(
             ir.Pipeline(
@@ -1214,5 +1214,5 @@ async def test_fn_cancel_no_fd_leak() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    after = set(os.listdir("/proc/self/fd"))
+    after = set(os.listdir("/dev/fd"))
     assert before == after
