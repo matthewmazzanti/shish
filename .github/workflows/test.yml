@@ -26,4 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - run: test "${{ needs.test.result }}" = "success"
+      - run: test "$RESULT" = "success"
+        env:
+          RESULT: ${{ needs.test.result }}
