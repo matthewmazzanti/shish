@@ -84,8 +84,10 @@ async def test_write_broken_pipe() -> None:
 async def test_write_backpressure() -> None:
     """write() suspends when pipe buffer is full, resumes when drained."""
     read_fd, write_fd = os.pipe()
-    fcntl.fcntl(write_fd, fcntl.F_SETPIPE_SZ, 4096)
-    data = b"x" * 16384
+    if hasattr(fcntl, "F_SETPIPE_SZ"):
+        fcntl.fcntl(write_fd, fcntl.F_SETPIPE_SZ, 4096)
+    # 256KB is well above any default pipe buffer (4KB Linux, 16KB macOS)
+    data = b"x" * 262144
 
     async def do_write() -> None:
         async with ByteWriteStream(OwnedFd(write_fd)) as writer:
