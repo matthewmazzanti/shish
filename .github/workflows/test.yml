@@ -20,3 +20,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --frozen
       - run: uv run pytest
+
+  gate:
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: test "${{ needs.test.result }}" = "success"
