@@ -21,7 +21,7 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest
 
-  gate:
+  test-gate:
     needs: test
     runs-on: ubuntu-latest
     if: always()
