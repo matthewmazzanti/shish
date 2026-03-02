@@ -1,6 +1,6 @@
 [project]
 name = "shish"
-version = "0.0.1"
+version = "0.0.0.dev0"
 description = "Async shell command library with operator-based DSL"
 authors = [
     { name = "Matthew Mazzanti", email = "matthew.mazzanti@gmail.com" }
@@ -9,6 +9,10 @@ requires-python = ">=3.13"
 license = "MIT"
 readme = "README.md"
 dependencies = []
+classifiers = [
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
