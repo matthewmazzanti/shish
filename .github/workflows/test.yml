@@ -8,6 +8,16 @@ on:
   workflow_call:
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run pyright
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -23,10 +33,11 @@ jobs:
       - run: uv run pytest
 
   test-gate:
-    needs: test
+    needs: [check, test]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - run: test "$RESULT" = "success"
+      - run: test "$CHECK" = "success" && test "$TEST" = "success"
         env:
-          RESULT: ${{ needs.test.result }}
+          CHECK: ${{ needs.check.result }}
+          TEST: ${{ needs.test.result }}

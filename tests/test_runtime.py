@@ -1051,9 +1051,7 @@ async def test_fn_in_pipeline_first() -> None:
 
 async def test_fn_in_pipeline_middle() -> None:
     """Fn as a middle stage transforms data between two commands."""
-    pipeline = ir.Pipeline(
-        (ir.Cmd(("echo", "hello")), ir.Fn(_upper), ir.Cmd(("cat",)))
-    )
+    pipeline = ir.Pipeline((ir.Cmd(("echo", "hello")), ir.Fn(_upper), ir.Cmd(("cat",))))
     result = await out(pipeline)
     assert result == "HELLO\n"
 
