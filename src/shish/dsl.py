@@ -15,10 +15,8 @@ from shish.aio import make_byte_wrapper
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
-    from contextlib import AbstractAsyncContextManager
-
     from shish.aio import ByteStageCtx, TextStageCtx
-    from shish.runtime import Execution
+    from shish.runtime import _StartCtx  # pyright: ignore[reportPrivateUsage]
 
 Flag = ir.PathLike | bool
 
@@ -323,11 +321,9 @@ def sub_out(sink: Runnable) -> ir.SubOut:
     return ir.SubOut(unwrap(sink))
 
 
-def start(
-    cmd: Runnable, *, stdin: int | None = None, stdout: int | None = None
-) -> AbstractAsyncContextManager[Execution]:
+def start(cmd: Runnable) -> _StartCtx[None, None]:
     """Spawn a command or pipeline and yield an Execution via async context manager."""
-    return unwrap(cmd).start(stdin=stdin, stdout=stdout)
+    return unwrap(cmd).start()
 
 
 async def run(cmd: Runnable) -> int:

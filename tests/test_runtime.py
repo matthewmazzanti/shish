@@ -675,7 +675,7 @@ async def test_out_large_data_multi_fd(tmp_path: Path) -> None:
 async def test_start_stdin_fd() -> None:
     """start(stdin=...) feeds stdin via caller-owned pipe."""
     read_fd, write_fd = os.pipe()
-    async with start(ir.Cmd(("cat",)), stdin=read_fd) as execution:
+    async with start(ir.Cmd(("cat",))).stdin(read_fd) as execution:
         os.close(read_fd)  # start() dup'd it; close our copy
         async with ByteWriteStream(OwnedFd(write_fd)) as writer:
             await writer.write(b"hello from pipe")
@@ -686,7 +686,7 @@ async def test_start_stdin_fd_with_stdout_fd() -> None:
     """start() with both stdin and stdout wires through correctly."""
     stdin_r, stdin_w = os.pipe()
     stdout_r, stdout_w = os.pipe()
-    async with start(ir.Cmd(("cat",)), stdin=stdin_r, stdout=stdout_w) as execution:
+    async with start(ir.Cmd(("cat",))).stdin(stdin_r).stdout(stdout_w) as execution:
         os.close(stdin_r)  # start() dup'd these; close our copies
         os.close(stdout_w)
 
@@ -724,8 +724,7 @@ async def test_out_raises_preserves_output() -> None:
 
 async def test_start_stdin_pipe() -> None:
     """start(stdin=PIPE) enables writing to execution.stdin."""
-    async with start(ir.Cmd(("cat",)), stdin=PIPE) as execution:
-        assert execution.stdin is not None
+    async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
         await execution.stdin.write(b"hello from pipe")
         await execution.stdin.close()
         assert await execution.wait() == 0
@@ -733,8 +732,7 @@ async def test_start_stdin_pipe() -> None:
 
 async def test_start_stdout_pipe() -> None:
     """start(stdout=PIPE) enables reading from execution.stdout."""
-    async with start(ir.Cmd(("echo", "hello")), stdout=PIPE) as execution:
-        assert execution.stdout is not None
+    async with start(ir.Cmd(("echo", "hello"))).stdout(PIPE) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -745,9 +743,7 @@ async def test_start_stdout_pipe() -> None:
 
 async def test_start_stdin_stdout_pipe() -> None:
     """start(stdin=PIPE, stdout=PIPE) wires both ends."""
-    async with start(ir.Cmd(("cat",)), stdin=PIPE, stdout=PIPE) as execution:
-        assert execution.stdin is not None
-        assert execution.stdout is not None
+    async with start(ir.Cmd(("cat",))).stdin(PIPE).stdout(PIPE) as execution:
         await execution.stdin.write(b"round trip")
         await execution.stdin.close()
         code, captured = await asyncio.gather(
@@ -763,9 +759,7 @@ async def test_start_stdout_pipe_large_data() -> None:
     data = b"x" * (256 * 1024)
     async with start(
         ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),)),
-        stdout=PIPE,
-    ) as execution:
-        assert execution.stdout is not None
+    ).stdout(PIPE) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),

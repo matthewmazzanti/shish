@@ -19,7 +19,7 @@ from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import overload
+from typing import Any, cast, overload
 
 from shish.aio import (
     ByteReadStream,
@@ -29,7 +29,17 @@ from shish.aio import (
     TextStageCtx,
     make_byte_wrapper,
 )
-from shish.fdops import PIPE, STDERR, STDIN, STDOUT, FdOps, OpClose, OpDup2, OpOpen
+from shish.fdops import (
+    PIPE,
+    STDERR,
+    STDIN,
+    STDOUT,
+    FdOps,
+    OpClose,
+    OpDup2,
+    OpOpen,
+    Pipe,
+)
 from shish.ir import (
     Cmd,
     FdClose,
@@ -243,7 +253,10 @@ def _mark_killed_fns(node: ProcessNode) -> None:
 
 
 @dataclass
-class Execution:
+class Execution[
+    StdinT: (ByteWriteStream, None) = None,
+    StdoutT: (ByteReadStream, None) = None,
+]:
     """Handle for a spawned process tree.
 
     Created by _StartCtx.__aenter__. Provides signal/terminate/kill for
@@ -252,11 +265,13 @@ class Execution:
 
     When started with stdin=PIPE or stdout=PIPE, the corresponding
     stream fields are set to ByteWriteStream / ByteReadStream.
+    Generic over StdinT/StdoutT so that passing PIPE statically
+    narrows the stream type to non-None.
     """
 
     root: ProcessNode
-    stdin: ByteWriteStream | None = None
-    stdout: ByteReadStream | None = None
+    stdin: StdinT
+    stdout: StdoutT
     returncode: int | None = field(default=None, init=False)
 
     async def wait(self) -> int:
@@ -287,28 +302,56 @@ class Execution:
         self.signal(signal_mod.SIGKILL)
 
 
-class _StartCtx:
+class _StartCtx[
+    StdinT: (ByteWriteStream, None) = None,
+    StdoutT: (ByteReadStream, None) = None,
+]:
     """Async context manager that owns the lifecycle of an Execution.
 
-    Returned by start(). Use as ``async with start(cmd) as execution:``.
+    Returned by start(). Use chained builder methods to configure streams::
+
+        async with start(cmd).stdin(PIPE).stdout(PIPE) as execution: ...
+
     __aenter__ spawns the process tree and creates an Execution handle.
     __aexit__ closes streams, kills+reaps if needed, and closes fds.
     """
 
     def __init__(
-        self, cmd: Runnable, *, stdin: int | None = None, stdout: int | None = None
+        self,
+        cmd: Runnable,
+        *,
+        _stdin: int | Pipe | None = None,
+        _stdout: int | Pipe | None = None,
     ) -> None:
         self._cmd = cmd
-        self._stdin_arg = stdin
-        self._stdout_arg = stdout
-        self._execution: Execution | None = None
+        self._stdin_arg = _stdin
+        self._stdout_arg = _stdout
+        self._execution: Execution[Any, Any] | None = None
 
-    async def __aenter__(self) -> Execution:
+    @overload
+    def stdin(self, arg: Pipe) -> _StartCtx[ByteWriteStream, StdoutT]: ...
+    @overload
+    def stdin(self, arg: int | None) -> _StartCtx[None, StdoutT]: ...
+
+    def stdin(self, arg: int | Pipe | None) -> _StartCtx[Any, Any]:
+        """Set stdin fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
+        return _StartCtx(self._cmd, _stdin=arg, _stdout=self._stdout_arg)
+
+    @overload
+    def stdout(self, arg: Pipe) -> _StartCtx[StdinT, ByteReadStream]: ...
+    @overload
+    def stdout(self, arg: int | None) -> _StartCtx[StdinT, None]: ...
+
+    def stdout(self, arg: int | Pipe | None) -> _StartCtx[Any, Any]:
+        """Set stdout fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
+        return _StartCtx(self._cmd, _stdin=self._stdin_arg, _stdout=arg)
+
+    async def __aenter__(self) -> Execution[StdinT, StdoutT]:
         """Spawn the process tree, allocating PIPE fds if requested."""
         ctx = SpawnCtx()
         try:
             # Resolve stdin: PIPE → spawn gets read end, caller gets write end
-            if self._stdin_arg == PIPE:
+            if self._stdin_arg is PIPE:
                 spawn_stdin, stdin_stream_fd = ctx.pipe()
             elif self._stdin_arg is None:
                 spawn_stdin, stdin_stream_fd = ctx.dup(STDIN), None
@@ -316,7 +359,7 @@ class _StartCtx:
                 spawn_stdin, stdin_stream_fd = ctx.dup(self._stdin_arg), None
 
             # Resolve stdout: PIPE → spawn gets write end, caller gets read end
-            if self._stdout_arg == PIPE:
+            if self._stdout_arg is PIPE:
                 stdout_stream_fd, spawn_stdout = ctx.pipe()
             elif self._stdout_arg is None:
                 spawn_stdout, stdout_stream_fd = ctx.dup(STDOUT), None
@@ -342,14 +385,16 @@ class _StartCtx:
             raise
 
         # Create Execution handle
+        stdin_stream: ByteWriteStream | None = (
+            ByteWriteStream(stdin_stream_fd) if stdin_stream_fd is not None else None
+        )
+        stdout_stream: ByteReadStream | None = (
+            ByteReadStream(stdout_stream_fd) if stdout_stream_fd is not None else None
+        )
         self._execution = Execution(
             root=root,
-            stdin=ByteWriteStream(stdin_stream_fd)
-            if stdin_stream_fd is not None
-            else None,
-            stdout=ByteReadStream(stdout_stream_fd)
-            if stdout_stream_fd is not None
-            else None,
+            stdin=cast("StdinT", stdin_stream),
+            stdout=cast("StdoutT", stdout_stream),
         )
         return self._execution
 
@@ -763,24 +808,19 @@ async def _spawn_pipeline(
     return PipelineNode(stages=stage_nodes)
 
 
-def start(
-    cmd: Runnable,
-    stdin: int | None = None,
-    stdout: int | None = None,
-) -> _StartCtx:
+def start(cmd: Runnable) -> _StartCtx[None, None]:
     """Create an async context manager that spawns and manages an Execution.
 
-    The returned context manager yields an Execution handle::
+    Use chained builder methods to configure streams::
 
         async with start(cmd) as execution:
             code = await execution.wait()
 
-    Args:
-        cmd: Command or pipeline to spawn.
-        stdin: Fd for child stdin, or PIPE for auto-pipe, or None to inherit.
-        stdout: Fd for child stdout, or PIPE for auto-pipe, or None to inherit.
+        async with start(cmd).stdin(PIPE).stdout(PIPE) as execution:
+            await execution.stdin.write(b"data")
+            captured = await execution.stdout.read()
     """
-    return _StartCtx(cmd, stdin=stdin, stdout=stdout)
+    return _StartCtx(cmd)
 
 
 async def run(cmd: Runnable) -> int:
@@ -811,8 +851,7 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
         subprocess.CalledProcessError: On non-zero exit code, with
             the captured stdout attached for diagnostic use.
     """
-    async with start(cmd, stdout=PIPE) as execution:
-        assert execution.stdout is not None
+    async with start(cmd).stdout(PIPE) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),

@@ -33,7 +33,7 @@ from shish.dsl import (
     wrap,
     write,
 )
-from shish.fdops import PIPE, STDERR, STDIN, STDOUT
+from shish.fdops import PIPE, STDERR, STDIN, STDOUT, Pipe
 from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
 from shish.runtime import Execution
 
@@ -53,6 +53,7 @@ __all__ = [
     "Fn",
     "OwnedFd",
     "PathLike",
+    "Pipe",
     "Pipeline",
     "ReadSrc",
     "Runnable",

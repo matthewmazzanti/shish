@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import typing as ty
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 
-PIPE: int = -1
+
+class Pipe(Enum):
+    PIPE = auto()
+
+
+PIPE = Pipe.PIPE
 STDIN: int = 0
 STDOUT: int = 1
 STDERR: int = 2

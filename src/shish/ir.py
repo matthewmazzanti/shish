@@ -10,10 +10,8 @@ from typing import TYPE_CHECKING
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
-    from contextlib import AbstractAsyncContextManager
-
     from shish.aio import ByteStageCtx
-    from shish.runtime import Execution
+    from shish.runtime import _StartCtx  # pyright: ignore[reportPrivateUsage]
 
 
 class _Unset:
@@ -175,13 +173,11 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    def start(
-        self, *, stdin: int | None = None, stdout: int | None = None
-    ) -> AbstractAsyncContextManager[Execution]:
+    def start(self) -> _StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return runtime.start(self, stdin=stdin, stdout=stdout)
+        return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -212,13 +208,11 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    def start(
-        self, *, stdin: int | None = None, stdout: int | None = None
-    ) -> AbstractAsyncContextManager[Execution]:
+    def start(self) -> _StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return runtime.start(self, stdin=stdin, stdout=stdout)
+        return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -241,13 +235,11 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def start(
-        self, *, stdin: int | None = None, stdout: int | None = None
-    ) -> AbstractAsyncContextManager[Execution]:
+    def start(self) -> _StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return runtime.start(self, stdin=stdin, stdout=stdout)
+        return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""

@@ -958,8 +958,7 @@ async def test_start_ir_builder_cm() -> None:
 
 async def test_start_dsl_stdin_pipe() -> None:
     """DSL start(stdin=PIPE) enables writing to execution.stdin."""
-    async with start(sh.cat(), stdin=PIPE) as execution:
-        assert execution.stdin is not None
+    async with start(sh.cat()).stdin(PIPE) as execution:
         await execution.stdin.write(b"hello from pipe")
         await execution.stdin.close()
         assert await execution.wait() == 0
@@ -967,8 +966,7 @@ async def test_start_dsl_stdin_pipe() -> None:
 
 async def test_start_dsl_stdout_pipe() -> None:
     """DSL start(stdout=PIPE) enables reading from execution.stdout."""
-    async with start(sh.echo("hello"), stdout=PIPE) as execution:
-        assert execution.stdout is not None
+    async with start(sh.echo("hello")).stdout(PIPE) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -979,9 +977,7 @@ async def test_start_dsl_stdout_pipe() -> None:
 
 async def test_start_dsl_stdin_stdout_pipe() -> None:
     """DSL start(stdin=PIPE, stdout=PIPE) wires both ends."""
-    async with start(sh.cat(), stdin=PIPE, stdout=PIPE) as execution:
-        assert execution.stdin is not None
-        assert execution.stdout is not None
+    async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:
         await execution.stdin.write(b"round trip")
         await execution.stdin.close()
         code, captured = await asyncio.gather(
@@ -996,8 +992,7 @@ async def test_start_ir_builder_pipe() -> None:
     """IR builder .start(stdin=PIPE) works."""
     from shish.ir import cmd
 
-    async with cmd("cat").start(stdin=PIPE) as execution:
-        assert execution.stdin is not None
+    async with cmd("cat").start().stdin(PIPE) as execution:
         await execution.stdin.write(b"builder pipe")
         await execution.stdin.close()
         assert await execution.wait() == 0
