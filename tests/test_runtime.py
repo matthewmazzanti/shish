@@ -676,6 +676,7 @@ async def test_prepare_stdin_fd() -> None:
     """prepare(stdin_fd=...) feeds stdin via caller-owned pipe."""
     read_fd, write_fd = os.pipe()
     execution = await prepare(ir.Cmd(("cat",)), stdin_fd=read_fd)
+    os.close(read_fd)  # prepare() dup'd it; close our copy
     async with ByteWriteStream(OwnedFd(write_fd)) as writer:
         await writer.write(b"hello from pipe")
     assert await execution.wait() == 0
@@ -686,6 +687,8 @@ async def test_prepare_stdin_fd_with_stdout_fd() -> None:
     stdin_r, stdin_w = os.pipe()
     stdout_r, stdout_w = os.pipe()
     execution = await prepare(ir.Cmd(("cat",)), stdin_fd=stdin_r, stdout_fd=stdout_w)
+    os.close(stdin_r)  # prepare() dup'd these; close our copies
+    os.close(stdout_w)
 
     async def do_write() -> None:
         async with ByteWriteStream(OwnedFd(stdin_w)) as writer:

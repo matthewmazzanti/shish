@@ -1,4 +1,10 @@
-"""Runtime execution of shell commands and pipelines."""
+"""Runtime execution of shell commands and pipelines.
+
+Fd ownership invariant:
+- All opened fds are closed after spawn by the opener
+  (except FnNode dups, which stay open for in-process execution).
+- All fds are tracked by SpawnCtx, allowing cleanup on errors.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +15,7 @@ import subprocess
 import sys
 import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
-from collections.abc import Awaitable, Callable, Coroutine, Generator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import overload
@@ -44,6 +50,28 @@ FD_DIR = Path("/dev/fd")
 
 
 @dataclass
+class StdFds:
+    """Owned stdin/stdout fds for a spawn subtree.
+
+    Each field is an OwnedFd — dup'd at prepare() entry from caller fds
+    or parent STDIN/STDOUT, or allocated by pipeline pipe wiring.
+    """
+
+    stdin: OwnedFd
+    stdout: OwnedFd
+
+    @property
+    def stdin_fd(self) -> int:
+        """Raw fd number for subprocess stdin kwarg."""
+        return self.stdin.fd
+
+    @property
+    def stdout_fd(self) -> int:
+        """Raw fd number for subprocess stdout kwarg."""
+        return self.stdout.fd
+
+
+@dataclass
 class CmdNode:
     """Process tree node for a single spawned command.
 
@@ -59,23 +87,23 @@ class CmdNode:
     fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
     subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
 
-    def root_returncodes(self) -> Generator[int]:
+    def root_returncodes(self) -> Iterator[int]:
         """Yield normalized returncode for pipefail reporting."""
         yield _normalize_returncode(self.proc.returncode)
 
-    def all_procs(self) -> Generator[Process]:
+    def all_procs(self) -> Iterator[Process]:
         """Yield all processes in the subtree (main + subs, recursive)."""
         yield self.proc
         for sub in self.subs:
             yield from sub.all_procs()
 
-    def all_fds(self) -> Generator[OwnedFd]:
+    def all_fds(self) -> Iterator[OwnedFd]:
         """Yield all owned fds in the subtree (own + subs, recursive)."""
         yield from self.fds
         for sub in self.subs:
             yield from sub.all_fds()
 
-    def tasks(self) -> Generator[Coroutine[None, None, object]]:
+    def tasks(self) -> Iterator[Awaitable[object]]:
         """Yield coroutines to gather: proc wait + sub tasks."""
         yield self.proc.wait()
         for sub in self.subs:
@@ -93,22 +121,22 @@ class PipelineNode:
 
     stages: list[CmdNode | FnNode]
 
-    def root_returncodes(self) -> Generator[int]:
+    def root_returncodes(self) -> Iterator[int]:
         """Yield stage returncodes left-to-right for pipefail reporting."""
         for stage in self.stages:
             yield from stage.root_returncodes()
 
-    def all_procs(self) -> Generator[Process]:
+    def all_procs(self) -> Iterator[Process]:
         """Yield all processes across all stages (recursive)."""
         for stage in self.stages:
             yield from stage.all_procs()
 
-    def all_fds(self) -> Generator[OwnedFd]:
+    def all_fds(self) -> Iterator[OwnedFd]:
         """Yield all owned fds across all stages (recursive)."""
         for stage in self.stages:
             yield from stage.all_fds()
 
-    def tasks(self) -> Generator[Coroutine[None, None, object]]:
+    def tasks(self) -> Iterator[Awaitable[object]]:
         """Yield coroutines to gather: all stage tasks."""
         for stage in self.stages:
             yield from stage.tasks()
@@ -130,21 +158,21 @@ class FnNode:
     _stdout_fd: OwnedFd = field(repr=False)
     returncode: int | None = None
 
-    def root_returncodes(self) -> Generator[int]:
+    def root_returncodes(self) -> Iterator[int]:
         """Yield the function's return code for pipefail reporting."""
         if self.returncode is None:
             raise RuntimeError("FnNode.returncode is None — task never completed")
         yield self.returncode
 
-    def all_procs(self) -> Generator[Process]:
+    def all_procs(self) -> Iterator[Process]:
         """No OS process to kill."""
         yield from ()
 
-    def all_fds(self) -> Generator[OwnedFd]:
+    def all_fds(self) -> Iterator[OwnedFd]:
         """Yield owned fds for cleanup."""
         yield from self.fds
 
-    def tasks(self) -> Generator[Coroutine[None, None, object]]:
+    def tasks(self) -> Iterator[Awaitable[object]]:
         """Yield the function execution coroutine."""
         yield self._run()
 
@@ -183,7 +211,7 @@ async def _kill_and_reap(*procs: Process) -> None:
     accumulate. Only processes with returncode=None (not yet reaped)
     are killed; already-exited processes are skipped.
     """
-    reap: list[Coroutine[None, None, int]] = []
+    reap: list[Awaitable[int]] = []
     for proc in procs:
         if proc.returncode is None:
             proc.kill()
@@ -231,7 +259,7 @@ class Execution:
 
 
 @dataclass
-class PrepareCtx:
+class SpawnCtx:
     """Tracks fds and procs during spawn for cleanup and ownership transfer."""
 
     fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
@@ -287,38 +315,34 @@ class PrepareCtx:
         return duped
 
 
-async def _spawn(
-    ctx: PrepareCtx, cmd: Runnable, stdin_fd: int | None, stdout_fd: int | None
-) -> ProcessNode:
+def _spawn(ctx: SpawnCtx, cmd: Runnable, std_fds: StdFds) -> Awaitable[ProcessNode]:
     """Dispatch a Runnable to _spawn_cmd or _spawn_pipeline.
 
-    stdin_fd/stdout_fd are the outer pipe fds from a parent
-    pipeline (or None for inherit/capture). Returns a ProcessNode
-    for tree-based pipefail reporting.
+    std_fds carries the outer pipe fds from a parent pipeline.
+    Returns a coroutine that spawns the process tree.
+    Plain function — avoids an extra coroutine frame per dispatch.
     """
     match cmd:
         case Cmd():
-            return await _spawn_cmd(ctx, cmd, stdin_fd, stdout_fd)
+            return _spawn_cmd(ctx, cmd, std_fds)
         case Fn():
-            return await _spawn_fn(ctx, cmd, stdin_fd, stdout_fd)
+            return _spawn_fn(ctx, cmd, std_fds)
         case Pipeline():
-            return await _spawn_pipeline(ctx, cmd, stdin_fd, stdout_fd)
+            return _spawn_pipeline(ctx, cmd, std_fds)
 
 
 async def _spawn_fn(
-    ctx: PrepareCtx,
+    ctx: SpawnCtx,
     fn_ir: Fn,
-    stdin_fd: int | None,
-    stdout_fd: int | None,
+    std_fds: StdFds,
 ) -> FnNode:
     """Create an FnNode for an in-process Python function.
 
     Dups the received fds so the pipeline's close-after-spawn logic (which closes the
-    originals) doesn't affect the Fn. When stdin_fd or stdout_fd is None, dups the
-    parent's STDIN/STDOUT to match subprocess inherit behavior.
+    originals) doesn't affect the Fn.
     """
-    dup_stdin = ctx.dup(stdin_fd if stdin_fd is not None else STDIN)
-    dup_stdout = ctx.dup(stdout_fd if stdout_fd is not None else STDOUT)
+    dup_stdin = ctx.dup(std_fds.stdin_fd)
+    dup_stdout = ctx.dup(std_fds.stdout_fd)
     return FnNode(
         fds=[dup_stdin, dup_stdout],
         _func=fn_ir.func,
@@ -327,7 +351,7 @@ async def _spawn_fn(
     )
 
 
-class SpawnCtx:
+class SpawnCmdCtx:
     """Accumulates fds, sub-process spawns, and fd ops while resolving a single Cmd.
 
     Resolves redirects and args into FdOps entries and deferred spawn coroutines,
@@ -340,13 +364,13 @@ class SpawnCtx:
     must dup manually (see _spawn_fn).
     """
 
-    ctx: PrepareCtx
+    ctx: SpawnCtx
     fdo: FdOps
     fds: list[OwnedFd]
-    pending: list[Coroutine[None, None, ProcessNode]]
+    pending: list[Awaitable[ProcessNode]]
     subs: list[ProcessNode]
 
-    def __init__(self, ctx: PrepareCtx, fdo: FdOps) -> None:
+    def __init__(self, ctx: SpawnCtx, fdo: FdOps) -> None:
         self.ctx = ctx
         self.fdo = fdo
         self.fds = []
@@ -360,15 +384,24 @@ class SpawnCtx:
 
         to_stdin=True: pipe connects to sub's stdin; parent keeps write end.
         to_stdin=False: pipe connects to sub's stdout; parent keeps read end.
+        The other side dups from parent STDIN/STDOUT for inherit behavior.
         """
         pipe_r, pipe_w = self.ctx.pipe()
         self.fds.extend([pipe_r, pipe_w])
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
-            self.pending.append(_spawn(self.ctx, inner, pipe_r.fd, None))
+            inherit_stdout = self.ctx.dup(STDOUT)
+            self.fds.append(inherit_stdout)
+            self.pending.append(
+                _spawn(self.ctx, inner, StdFds(stdin=pipe_r, stdout=inherit_stdout))
+            )
         else:
             self.fdo.add_live(pipe_r.fd)
-            self.pending.append(_spawn(self.ctx, inner, None, pipe_w.fd))
+            inherit_stdin = self.ctx.dup(STDIN)
+            self.fds.append(inherit_stdin)
+            self.pending.append(
+                _spawn(self.ctx, inner, StdFds(stdin=inherit_stdin, stdout=pipe_w))
+            )
         return pipe_r, pipe_w
 
     def feed_with_pipe(self, data: str | bytes) -> OwnedFd:
@@ -397,7 +430,13 @@ class SpawnCtx:
 
             write_data = make_byte_wrapper(write_str_data, "utf-8")
 
-        self.pending.append(_spawn_fn(self.ctx, Fn(write_data), None, pipe_w.fd))
+        inherit_stdin = self.ctx.dup(STDIN)
+        self.fds.append(inherit_stdin)
+        self.pending.append(
+            _spawn_fn(
+                self.ctx, Fn(write_data), StdFds(stdin=inherit_stdin, stdout=pipe_w)
+            )
+        )
         return pipe_r
 
     def resolve_redirects(self, cmd: Cmd) -> None:
@@ -506,16 +545,15 @@ class SpawnCtx:
 
 
 async def _spawn_cmd(
-    ctx: PrepareCtx,
+    ctx: SpawnCtx,
     cmd: Cmd,
-    stdin_fd: int | None,
-    stdout_fd: int | None,
+    std_fds: StdFds,
 ) -> CmdNode:
     """Spawn a single Cmd with all its redirects and sub-processes.
 
     Redirect resolution follows a two-layer model matching POSIX:
 
-    Layer 1 — pipe wiring (Popen kwargs): stdin_fd/stdout_fd from the parent pipeline
+    Layer 1 — pipe wiring (Popen kwargs): std_fds from the parent pipeline
     become stdin=/stdout= on the subprocess call. Popen internally does dup2(pipe_rd, 0)
     / dup2(pipe_wr, 1).
 
@@ -524,7 +562,7 @@ async def _spawn_cmd(
     override pipe wiring.
 
     Process substitutions (FdToSub, FdFromSub) and Sub arguments (SubOut, SubIn) each
-    allocate a pipe and schedule a spawn coroutine via SpawnCtx. All sub spawns run
+    allocate a pipe and schedule a spawn coroutine via SpawnCmdCtx. All sub spawns run
     concurrently with the main process spawn via asyncio.gather — safe because pipe fds
     are allocated eagerly (before any spawn).
 
@@ -532,7 +570,7 @@ async def _spawn_cmd(
     closed in the parent so EOF propagates.
     """
     # Build FdOps simulation with initial live fds from pipeline
-    spawn_ctx = SpawnCtx(ctx, FdOps(SUBPROCESS_DEFAULT_FDS))
+    spawn_ctx = SpawnCmdCtx(ctx, FdOps(live=SUBPROCESS_DEFAULT_FDS))
 
     # Redirects before args: mirrors bash where redirects and <() are independent.
     # Resolving redirects first means they can't see arg-position sub fds.
@@ -544,8 +582,8 @@ async def _spawn_cmd(
     proc, spawned = await asyncio.gather(
         ctx.exec_(
             *resolved_args,
-            stdin=stdin_fd,
-            stdout=stdout_fd,
+            stdin=std_fds.stdin_fd,
+            stdout=std_fds.stdout_fd,
             # Exclude 0/1/2 — subprocess handles those via stdin=/stdout=
             pass_fds=spawn_ctx.build_pass_fds(ignore=SUBPROCESS_DEFAULT_FDS),
             preexec_fn=spawn_ctx.build_preexec(),
@@ -564,10 +602,9 @@ async def _spawn_cmd(
 
 
 async def _spawn_pipeline(
-    ctx: PrepareCtx,
+    ctx: SpawnCtx,
     pipeline: Pipeline,
-    stdin_fd: int | None,
-    stdout_fd: int | None,
+    std_fds: StdFds,
 ) -> PipelineNode:
     """Spawn all stages of a pipeline, connected by inter-stage pipes.
 
@@ -576,10 +613,10 @@ async def _spawn_pipeline(
     because each stage only needs its stdin/stdout fds to be valid
     at spawn time, and pipe allocation is synchronous.
 
-    Outer stdin_fd/stdout_fd are wired to the first/last stage
-    respectively, with inter-stage pipes connecting the rest.
-    After all children have forked, inter-stage pipe fds are
-    closed in the parent so EOF propagates when stages exit.
+    Outer std_fds are wired to the first/last stage respectively,
+    with inter-stage pipes connecting the rest. After all children
+    have forked, inter-stage pipe fds are closed in the parent so
+    EOF propagates when stages exit.
     """
     stages = pipeline.stages
     if not stages:
@@ -588,17 +625,21 @@ async def _spawn_pipeline(
     # Allocate inter-stage pipes
     inter_pipes = [ctx.pipe() for _ in range(len(stages) - 1)]
 
-    # Per-stage stdin/stdout: outer fds at the edges, pipes in between
-    stage_stdins = [stdin_fd] + [pipe_r.fd for pipe_r, _ in inter_pipes]
-    stage_stdouts = [pipe_w.fd for _, pipe_w in inter_pipes] + [stdout_fd]
+    # Per-stage StdFds: outer fds at the edges, pipes in between
+    stage_stdins = [std_fds.stdin] + [pipe_r for pipe_r, _ in inter_pipes]
+    stage_stdouts = [pipe_w for _, pipe_w in inter_pipes] + [std_fds.stdout]
+    stage_fds = [
+        StdFds(stdin=sin, stdout=sout)
+        for sin, sout in zip(stage_stdins, stage_stdouts, strict=True)
+    ]
 
-    # Spawn all stages concurrently — both Cmd and Fn are async now
-    spawn_tasks: list[Coroutine[None, None, CmdNode | FnNode]] = []
-    for stage, sin, sout in zip(stages, stage_stdins, stage_stdouts, strict=True):
+    # Spawn all stages concurrently — both Cmd and Fn are async
+    spawn_tasks: list[Awaitable[CmdNode | FnNode]] = []
+    for stage, fds in zip(stages, stage_fds, strict=True):
         if isinstance(stage, Fn):
-            spawn_tasks.append(_spawn_fn(ctx, stage, sin, sout))
+            spawn_tasks.append(_spawn_fn(ctx, stage, fds))
         else:
-            spawn_tasks.append(_spawn_cmd(ctx, stage, sin, sout))
+            spawn_tasks.append(_spawn_cmd(ctx, stage, fds))
     stage_nodes = list(await asyncio.gather(*spawn_tasks))
 
     # Close inter-stage pipe fds (children have inherited them)
@@ -616,33 +657,37 @@ async def prepare(
 ) -> Execution:
     """Spawn a process tree and return an Execution handle.
 
-    Creates a PrepareCtx, spawns all processes, closes the capture fd
-    (child inherited it), and returns an Execution whose wait() method
-    gathers exits and computes pipefail. On spawn failure, cleans up
-    before re-raising.
+    Dups stdin_fd/stdout_fd (or parent STDIN/STDOUT when None) into
+    owned fds, spawns all processes, closes the dups, and returns an
+    Execution whose wait() gathers exits and computes pipefail.
+    On spawn failure, cleans up before re-raising.
+
+    Callers retain ownership of the raw fds they pass and must close
+    them after prepare() returns (prepare only closes its dups).
 
     Args:
         cmd: Command or pipeline to spawn.
-        stdin_fd: Read end of a pipe for feeding stdin.
-            Caller owns the write end; this function closes the
-            read end after fork so writers see SIGPIPE/EPIPE.
-        stdout_fd: Write end of a pipe for capturing stdout.
-            Caller owns the read end; this function closes the
-            write end after fork so readers see EOF.
+        stdin_fd: Fd to dup for child stdin (None = inherit STDIN).
+        stdout_fd: Fd to dup for child stdout (None = inherit STDOUT).
     """
-    caller_fds = [OwnedFd(fd) for fd in (stdin_fd, stdout_fd) if fd is not None]
-    ctx = PrepareCtx(fds=list(caller_fds))
+    ctx = SpawnCtx()
+    std_fds = StdFds(
+        stdin=ctx.dup(stdin_fd if stdin_fd is not None else STDIN),
+        stdout=ctx.dup(stdout_fd if stdout_fd is not None else STDOUT),
+    )
+
     try:
-        root = await _spawn(ctx, cmd, stdin_fd, stdout_fd)
+        root = await _spawn(ctx, cmd, std_fds)
     except BaseException:
         await _kill_and_reap(*ctx.procs)
         for fd_entry in ctx.fds:
             fd_entry.close()
         raise
 
-    # Close caller fds — children have inherited them via fork
-    for fd_entry in caller_fds:
-        fd_entry.close()
+    # Children inherited via fork; close our dups so EOF propagates.
+    # (FnNode dups from _spawn_fn are separate — closed by Execution.wait().)
+    std_fds.stdin.close()
+    std_fds.stdout.close()
 
     return Execution(root=root)
 
@@ -676,11 +721,15 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
     """
     read_fd, write_fd = os.pipe()
     owned_read = OwnedFd(read_fd)
+    owned_write = OwnedFd(write_fd)
     try:
         execution = await prepare(cmd, stdout_fd=write_fd)
     except BaseException:
         owned_read.close()
+        owned_write.close()
         raise
+    # prepare() dup'd write_fd; close our copy so readers see EOF
+    owned_write.close()
     reader = ByteReadStream(owned_read)
     try:
         code, stdout = await asyncio.gather(
