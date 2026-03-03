@@ -4,6 +4,8 @@ fmt:
 
 check: lint typecheck test
 
+fmtcheck: fmt typecheck test
+
 lint:
     ruff format --check .
     ruff check .

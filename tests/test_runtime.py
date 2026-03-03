@@ -723,16 +723,64 @@ async def test_out_raises_preserves_output() -> None:
 
 
 async def test_start_stdin_pipe() -> None:
-    """start(stdin=PIPE) enables writing to execution.stdin."""
+    """start(stdin=PIPE) defaults to text mode."""
     async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
-        await execution.stdin.write(b"hello from pipe")
+        await execution.stdin.write("hello from pipe")
         await execution.stdin.close()
         assert await execution.wait() == 0
 
 
 async def test_start_stdout_pipe() -> None:
-    """start(stdout=PIPE) enables reading from execution.stdout."""
+    """start(stdout=PIPE) defaults to text mode."""
     async with start(ir.Cmd(("echo", "hello"))).stdout(PIPE) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == "hello\n"
+
+
+async def test_start_stdin_stdout_pipe() -> None:
+    """start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
+    async with start(ir.Cmd(("cat",))).stdin(PIPE).stdout(PIPE) as execution:
+        await execution.stdin.write("round trip")
+        await execution.stdin.close()
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == "round trip"
+
+
+async def test_start_stdout_pipe_large_data() -> None:
+    """PIPE handles data larger than pipe buffer (64K)."""
+    data = b"x" * (256 * 1024)
+    async with start(
+        ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),)),
+    ).stdout(PIPE, encoding=None) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == data
+
+
+async def test_start_stdin_pipe_bytes() -> None:
+    """start(stdin=PIPE, encoding=None) gives ByteWriteStream."""
+    async with start(ir.Cmd(("cat",))).stdin(PIPE, encoding=None) as execution:
+        await execution.stdin.write(b"hello bytes")
+        await execution.stdin.close()
+        assert await execution.wait() == 0
+
+
+async def test_start_stdout_pipe_bytes() -> None:
+    """start(stdout=PIPE, encoding=None) gives ByteReadStream."""
+    async with start(ir.Cmd(("echo", "hello"))).stdout(
+        PIPE, encoding=None
+    ) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -741,31 +789,35 @@ async def test_start_stdout_pipe() -> None:
     assert captured == b"hello\n"
 
 
-async def test_start_stdin_stdout_pipe() -> None:
-    """start(stdin=PIPE, stdout=PIPE) wires both ends."""
-    async with start(ir.Cmd(("cat",))).stdin(PIPE).stdout(PIPE) as execution:
-        await execution.stdin.write(b"round trip")
+async def test_start_stdin_stdout_pipe_bytes() -> None:
+    """Both stdin and stdout in explicit bytes mode."""
+    async with (
+        start(ir.Cmd(("cat",)))
+        .stdin(PIPE, encoding=None)
+        .stdout(PIPE, encoding=None) as execution
+    ):
+        await execution.stdin.write(b"bytes round trip")
         await execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
         )
     assert code == 0
-    assert captured == b"round trip"
+    assert captured == b"bytes round trip"
 
 
-async def test_start_stdout_pipe_large_data() -> None:
-    """PIPE handles data larger than pipe buffer (64K)."""
-    data = b"x" * (256 * 1024)
+async def test_start_stdout_pipe_readline() -> None:
+    """Text-mode stdout supports readline."""
     async with start(
-        ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),)),
+        ir.Cmd(("printf", "line1\\nline2\\nline3\\n")),
     ).stdout(PIPE) as execution:
-        code, captured = await asyncio.gather(
-            execution.wait(),
-            execution.stdout.read(),
-        )
-    assert code == 0
-    assert captured == data
+        first = await execution.stdout.readline()
+        second = await execution.stdout.readline()
+        third = await execution.stdout.readline()
+        await execution.wait()
+    assert first == "line1\n"
+    assert second == "line2\n"
+    assert third == "line3\n"
 
 
 async def test_start_no_pipe_streams_none() -> None:

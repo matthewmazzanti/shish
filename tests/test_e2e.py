@@ -957,16 +957,40 @@ async def test_start_ir_builder_cm() -> None:
 
 
 async def test_start_dsl_stdin_pipe() -> None:
-    """DSL start(stdin=PIPE) enables writing to execution.stdin."""
+    """DSL start(stdin=PIPE) defaults to text mode."""
     async with start(sh.cat()).stdin(PIPE) as execution:
-        await execution.stdin.write(b"hello from pipe")
+        await execution.stdin.write("hello from pipe")
         await execution.stdin.close()
         assert await execution.wait() == 0
 
 
 async def test_start_dsl_stdout_pipe() -> None:
-    """DSL start(stdout=PIPE) enables reading from execution.stdout."""
+    """DSL start(stdout=PIPE) defaults to text mode."""
     async with start(sh.echo("hello")).stdout(PIPE) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == "hello\n"
+
+
+async def test_start_dsl_stdin_stdout_pipe() -> None:
+    """DSL start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
+    async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:
+        await execution.stdin.write("round trip")
+        await execution.stdin.close()
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == "round trip"
+
+
+async def test_start_dsl_stdout_pipe_bytes() -> None:
+    """DSL start(stdout=PIPE, encoding=None) gives ByteReadStream."""
+    async with start(sh.echo("hello")).stdout(PIPE, encoding=None) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -975,24 +999,21 @@ async def test_start_dsl_stdout_pipe() -> None:
     assert captured == b"hello\n"
 
 
-async def test_start_dsl_stdin_stdout_pipe() -> None:
-    """DSL start(stdin=PIPE, stdout=PIPE) wires both ends."""
-    async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:
-        await execution.stdin.write(b"round trip")
-        await execution.stdin.close()
-        code, captured = await asyncio.gather(
-            execution.wait(),
-            execution.stdout.read(),
-        )
-    assert code == 0
-    assert captured == b"round trip"
-
-
 async def test_start_ir_builder_pipe() -> None:
-    """IR builder .start(stdin=PIPE) works."""
+    """IR builder .start(stdin=PIPE) defaults to text mode."""
     from shish.ir import cmd
 
     async with cmd("cat").start().stdin(PIPE) as execution:
-        await execution.stdin.write(b"builder pipe")
+        await execution.stdin.write("builder pipe")
+        await execution.stdin.close()
+        assert await execution.wait() == 0
+
+
+async def test_start_ir_builder_pipe_bytes() -> None:
+    """IR builder .start(stdin=PIPE, encoding=None) gives ByteWriteStream."""
+    from shish.ir import cmd
+
+    async with cmd("cat").start().stdin(PIPE, encoding=None) as execution:
+        await execution.stdin.write(b"builder bytes")
         await execution.stdin.close()
         assert await execution.wait() == 0
