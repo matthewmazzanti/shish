@@ -3,8 +3,14 @@
 ## Fixes
 
 - CalledProcessError in `out` passes empty list for cmd arg
+- Exhaustive FD checking — verify no leaked fds after each spawn (e.g. walk `/dev/fd` in child)
+- Sporadic "cat: write error: Resource temporarily unavailable" in tests (not yet reproducible)
 
 ## Features
+- Stderr capture — currently stderr is completely untouched (inherited from parent).
+  Need capture API: `err(cmd)`? `out(cmd, out=True, err=True)`? Design TBD.
+  Also: `prepare()` should dup stdin/stdout in `caller_fds` so they go through
+  the close() machinery instead of being bare fds.
 - Streaming output - async iteration over lines as they arrive
 - Shell renderer - serialize Cmd/Pipeline back to shell string (complex: quoting, escaping)
 - Process handle - `async with start(cmd) as handle:` for lifecycle control (signal, wait, timeout, auto-kill on exit)
@@ -14,6 +20,9 @@
   rather than just stdin/stdout. Needs more design thought.
 
 ## Design
+
+- Default encoding: library hardcodes `"utf-8"` everywhere (`out`, `fn`, `feed`/`<<`, text streams).
+  Bash uses `LC_CTYPE` for heredocs and output — should default to `locale.getpreferredencoding(False)`?
 
 - Should `run` return Result by default instead of int?
 - Bad return codes: map to something? raise exceptions? configurable?
@@ -25,9 +34,8 @@
 - **`out()` too involved.** Capture mode on execute, or method on process handle?
 - **Prepare walk mirrors IR.** Visitor pattern or composable FdOps transforms?
   Risk: coupling IR to runtime.
-- **`_spawn_cmd` is heavy.** Class refactor? Currently closures over shared state
-  (fdo, owned_fds, close_after_spawn, pending_spawns, children). Logic is sequential
-  though — may not benefit from splitting.
+- **`_spawn_cmd` is heavy.** Refactored into `SpawnCtx` class. Evaluate whether
+  further decomposition is worthwhile.
 
 ## Architecture notes
 
