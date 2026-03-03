@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from shish import STDERR, STDIN, STDOUT, ir
+from shish import PIPE, STDERR, STDIN, STDOUT, ir
 from shish.aio import ByteReadStream, ByteStageCtx, ByteWriteStream, OwnedFd
-from shish.runtime import Execution, out, prepare, run
+from shish.runtime import Execution, out, run, start
 
 # =============================================================================
 # Basic Execution
@@ -668,41 +668,41 @@ async def test_out_large_data_multi_fd(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# prepare() with stdin_fd
+# start() with stdin_fd
 # =============================================================================
 
 
-async def test_prepare_stdin_fd() -> None:
-    """prepare(stdin_fd=...) feeds stdin via caller-owned pipe."""
+async def test_start_stdin_fd() -> None:
+    """start(stdin=...) feeds stdin via caller-owned pipe."""
     read_fd, write_fd = os.pipe()
-    execution = await prepare(ir.Cmd(("cat",)), stdin_fd=read_fd)
-    os.close(read_fd)  # prepare() dup'd it; close our copy
-    async with ByteWriteStream(OwnedFd(write_fd)) as writer:
-        await writer.write(b"hello from pipe")
-    assert await execution.wait() == 0
+    async with start(ir.Cmd(("cat",)), stdin=read_fd) as execution:
+        os.close(read_fd)  # start() dup'd it; close our copy
+        async with ByteWriteStream(OwnedFd(write_fd)) as writer:
+            await writer.write(b"hello from pipe")
+        assert await execution.wait() == 0
 
 
-async def test_prepare_stdin_fd_with_stdout_fd() -> None:
-    """prepare() with both stdin_fd and stdout_fd wires through correctly."""
+async def test_start_stdin_fd_with_stdout_fd() -> None:
+    """start() with both stdin and stdout wires through correctly."""
     stdin_r, stdin_w = os.pipe()
     stdout_r, stdout_w = os.pipe()
-    execution = await prepare(ir.Cmd(("cat",)), stdin_fd=stdin_r, stdout_fd=stdout_w)
-    os.close(stdin_r)  # prepare() dup'd these; close our copies
-    os.close(stdout_w)
+    async with start(ir.Cmd(("cat",)), stdin=stdin_r, stdout=stdout_w) as execution:
+        os.close(stdin_r)  # start() dup'd these; close our copies
+        os.close(stdout_w)
 
-    async def do_write() -> None:
-        async with ByteWriteStream(OwnedFd(stdin_w)) as writer:
-            await writer.write(b"round trip")
+        async def do_write() -> None:
+            async with ByteWriteStream(OwnedFd(stdin_w)) as writer:
+                await writer.write(b"round trip")
 
-    async with ByteReadStream(OwnedFd(stdout_r)) as reader:
-        write_task = asyncio.create_task(do_write())
-        code, captured = await asyncio.gather(
-            execution.wait(),
-            reader.read(),
-        )
-        await write_task
-    assert code == 0
-    assert captured == b"round trip"
+        async with ByteReadStream(OwnedFd(stdout_r)) as reader:
+            write_task = asyncio.create_task(do_write())
+            code, captured = await asyncio.gather(
+                execution.wait(),
+                reader.read(),
+            )
+            await write_task
+        assert code == 0
+        assert captured == b"round trip"
 
 
 async def test_out_raises_on_failure() -> None:
@@ -715,6 +715,71 @@ async def test_out_raises_preserves_output() -> None:
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         await out(ir.Cmd(("sh", "-c", "echo partial; exit 1")))
     assert exc_info.value.output == b"partial\n"
+
+
+# =============================================================================
+# start() with PIPE
+# =============================================================================
+
+
+async def test_start_stdin_pipe() -> None:
+    """start(stdin=PIPE) enables writing to execution.stdin."""
+    async with start(ir.Cmd(("cat",)), stdin=PIPE) as execution:
+        assert execution.stdin is not None
+        await execution.stdin.write(b"hello from pipe")
+        await execution.stdin.close()
+        assert await execution.wait() == 0
+
+
+async def test_start_stdout_pipe() -> None:
+    """start(stdout=PIPE) enables reading from execution.stdout."""
+    async with start(ir.Cmd(("echo", "hello")), stdout=PIPE) as execution:
+        assert execution.stdout is not None
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == b"hello\n"
+
+
+async def test_start_stdin_stdout_pipe() -> None:
+    """start(stdin=PIPE, stdout=PIPE) wires both ends."""
+    async with start(ir.Cmd(("cat",)), stdin=PIPE, stdout=PIPE) as execution:
+        assert execution.stdin is not None
+        assert execution.stdout is not None
+        await execution.stdin.write(b"round trip")
+        await execution.stdin.close()
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == b"round trip"
+
+
+async def test_start_stdout_pipe_large_data() -> None:
+    """PIPE handles data larger than pipe buffer (64K)."""
+    data = b"x" * (256 * 1024)
+    async with start(
+        ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, data),)),
+        stdout=PIPE,
+    ) as execution:
+        assert execution.stdout is not None
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == data
+
+
+async def test_start_no_pipe_streams_none() -> None:
+    """Without PIPE, stdin/stdout streams are None."""
+    async with start(ir.Cmd(("true",))) as execution:
+        assert execution.stdin is None
+        assert execution.stdout is None
+        await execution.wait()
 
 
 # =============================================================================
@@ -870,39 +935,39 @@ async def test_working_dir_pwd_synced(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# prepare() + wait() lifecycle
+# start() + wait() lifecycle
 # =============================================================================
 
 
-async def test_prepare_returns_execution() -> None:
-    """prepare() returns an Execution with a root ProcessNode."""
-    execution = await prepare(ir.Cmd(("true",)))
-    assert isinstance(execution, Execution)
-    assert execution.root is not None
-    code = await execution.wait()
+async def test_start_returns_execution() -> None:
+    """start() yields an Execution with a root ProcessNode."""
+    async with start(ir.Cmd(("true",))) as execution:
+        assert isinstance(execution, Execution)
+        assert execution.root is not None
+        code = await execution.wait()
     assert code == 0
 
 
-async def test_prepare_wait_exit_code() -> None:
+async def test_start_exit_code() -> None:
     """wait() returns the correct exit code."""
-    execution = await prepare(ir.Cmd(("false",)))
-    assert await execution.wait() == 1
+    async with start(ir.Cmd(("false",))) as execution:
+        assert await execution.wait() == 1
 
 
-async def test_prepare_wait_pipeline() -> None:
-    """prepare()+wait() works with pipelines."""
+async def test_start_pipeline_wait() -> None:
+    """start()+wait() works with pipelines."""
     pipeline = ir.Pipeline(
         (
             ir.Cmd(("echo", "hello")),
             ir.Cmd(("tr", "a-z", "A-Z")),
         )
     )
-    execution = await prepare(pipeline)
-    assert await execution.wait() == 0
+    async with start(pipeline) as execution:
+        assert await execution.wait() == 0
 
 
-async def test_prepare_wait_pipefail() -> None:
-    """Pipefail semantics work through prepare()+wait()."""
+async def test_start_pipefail() -> None:
+    """Pipefail semantics work through start()+wait()."""
     pipeline = ir.Pipeline(
         (
             ir.Cmd(("sh", "-c", "exit 1")),
@@ -910,8 +975,8 @@ async def test_prepare_wait_pipefail() -> None:
             ir.Cmd(("sh", "-c", "exit 2")),
         )
     )
-    execution = await prepare(pipeline)
-    assert await execution.wait() == 2
+    async with start(pipeline) as execution:
+        assert await execution.wait() == 2
 
 
 # =============================================================================
@@ -1094,3 +1159,91 @@ async def test_fn_cancel_mid_write() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# =============================================================================
+# start() — async context manager lifecycle
+# =============================================================================
+
+
+async def test_start_wait_returns_exit_code() -> None:
+    """start() + wait() returns exit code."""
+    async with start(ir.Cmd(("true",))) as execution:
+        assert isinstance(execution, Execution)
+        code = await execution.wait()
+    assert code == 0
+    assert execution.returncode == 0
+
+
+async def test_start_wait_failure() -> None:
+    """start() + wait() returns non-zero exit code."""
+    async with start(ir.Cmd(("false",))) as execution:
+        code = await execution.wait()
+    assert code == 1
+    assert execution.returncode == 1
+
+
+async def test_start_auto_kill_on_exit() -> None:
+    """Exiting context without wait() kills the process."""
+    async with start(ir.Cmd(("sleep", "60"))) as execution:
+        pass  # no wait — __aexit__ should SIGKILL + reap
+    assert execution.returncode is not None
+
+
+async def test_start_signal_term() -> None:
+    """send SIGTERM via execution.terminate(), check 128+SIGTERM exit."""
+    import signal
+
+    async with start(ir.Cmd(("sleep", "60"))) as execution:
+        await asyncio.sleep(0.05)
+        execution.terminate()
+        code = await execution.wait()
+    assert code == 128 + signal.SIGTERM
+
+
+async def test_start_signal_arbitrary() -> None:
+    """send arbitrary signal via execution.signal()."""
+    import signal
+
+    async with start(ir.Cmd(("sleep", "60"))) as execution:
+        await asyncio.sleep(0.05)
+        execution.signal(signal.SIGUSR1)
+        code = await execution.wait()
+    assert code == 128 + signal.SIGUSR1
+
+
+async def test_start_idempotent_wait() -> None:
+    """Calling wait() twice returns the same code."""
+    async with start(ir.Cmd(("true",))) as execution:
+        first = await execution.wait()
+        second = await execution.wait()
+    assert first == 0
+    assert second == 0
+    assert first == second
+
+
+async def test_start_pipeline() -> None:
+    """start() works with pipelines and pipefail semantics."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("sh", "-c", "exit 1")),
+            ir.Cmd(("sh", "-c", "exit 0")),
+            ir.Cmd(("sh", "-c", "exit 2")),
+        )
+    )
+    async with start(pipeline) as execution:
+        code = await execution.wait()
+    assert code == 2
+
+
+async def test_start_pipeline_auto_kill() -> None:
+    """Exiting start() pipeline context without wait() kills all stages."""
+    pipeline = ir.Pipeline(
+        (
+            ir.Cmd(("sleep", "60")),
+            ir.Cmd(("sleep", "60")),
+        )
+    )
+    async with start(pipeline) as execution:
+        pass
+    assert execution.returncode is not None

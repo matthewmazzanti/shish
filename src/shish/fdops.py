@@ -11,6 +11,7 @@ import typing as ty
 from dataclasses import dataclass
 from pathlib import Path
 
+PIPE: int = -1
 STDIN: int = 0
 STDOUT: int = 1
 STDERR: int = 2

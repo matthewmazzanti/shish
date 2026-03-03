@@ -23,21 +23,22 @@ from shish.dsl import (
     fn,
     out,
     pipe,
-    prepare,
     read,
     run,
     sh,
+    start,
     sub_in,
     sub_out,
     unwrap,
     wrap,
     write,
 )
-from shish.fdops import STDERR, STDIN, STDOUT
+from shish.fdops import PIPE, STDERR, STDIN, STDOUT
 from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
 from shish.runtime import Execution
 
 __all__ = [
+    "PIPE",
     "STDERR",
     "STDIN",
     "STDOUT",
@@ -72,10 +73,10 @@ __all__ = [
     "fn",
     "out",
     "pipe",
-    "prepare",
     "read",
     "run",
     "sh",
+    "start",
     "sub_in",
     "sub_out",
     "unwrap",

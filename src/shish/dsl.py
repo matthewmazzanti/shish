@@ -15,6 +15,8 @@ from shish.aio import make_byte_wrapper
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from shish.aio import ByteStageCtx, TextStageCtx
     from shish.runtime import Execution
 
@@ -321,9 +323,11 @@ def sub_out(sink: Runnable) -> ir.SubOut:
     return ir.SubOut(unwrap(sink))
 
 
-async def prepare(cmd: Runnable) -> Execution:
-    """Spawn a command or pipeline and return an Execution handle."""
-    return await unwrap(cmd).prepare()
+def start(
+    cmd: Runnable, *, stdin: int | None = None, stdout: int | None = None
+) -> AbstractAsyncContextManager[Execution]:
+    """Spawn a command or pipeline and yield an Execution via async context manager."""
+    return unwrap(cmd).start(stdin=stdin, stdout=stdout)
 
 
 async def run(cmd: Runnable) -> int:

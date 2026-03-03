@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from shish.aio import ByteStageCtx
     from shish.runtime import Execution
 
@@ -173,11 +175,13 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    async def prepare(self) -> Execution:
-        """Spawn and return an Execution handle."""
+    def start(
+        self, *, stdin: int | None = None, stdout: int | None = None
+    ) -> AbstractAsyncContextManager[Execution]:
+        """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return await runtime.prepare(self)
+        return runtime.start(self, stdin=stdin, stdout=stdout)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -208,11 +212,13 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    async def prepare(self) -> Execution:
-        """Spawn and return an Execution handle."""
+    def start(
+        self, *, stdin: int | None = None, stdout: int | None = None
+    ) -> AbstractAsyncContextManager[Execution]:
+        """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return await runtime.prepare(self)
+        return runtime.start(self, stdin=stdin, stdout=stdout)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -235,11 +241,13 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    async def prepare(self) -> Execution:
-        """Spawn and return an Execution handle."""
+    def start(
+        self, *, stdin: int | None = None, stdout: int | None = None
+    ) -> AbstractAsyncContextManager[Execution]:
+        """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return await runtime.prepare(self)
+        return runtime.start(self, stdin=stdin, stdout=stdout)
 
     async def run(self) -> int:
         """Execute and return exit code."""

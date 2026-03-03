@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import signal as signal_mod
 import subprocess
 import sys
 import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import overload
@@ -28,7 +30,7 @@ from shish.aio import (
     TextStageCtx,
     make_byte_wrapper,
 )
-from shish.fdops import STDERR, STDIN, STDOUT, FdOps, OpClose, OpDup2, OpOpen
+from shish.fdops import PIPE, STDERR, STDIN, STDOUT, FdOps, OpClose, OpDup2, OpOpen
 from shish.ir import (
     Cmd,
     FdClose,
@@ -53,22 +55,12 @@ FD_DIR = Path("/dev/fd")
 class StdFds:
     """Owned stdin/stdout fds for a spawn subtree.
 
-    Each field is an OwnedFd — dup'd at prepare() entry from caller fds
+    Each field is an OwnedFd — dup'd at start() entry from caller fds
     or parent STDIN/STDOUT, or allocated by pipeline pipe wiring.
     """
 
     stdin: OwnedFd
     stdout: OwnedFd
-
-    @property
-    def stdin_fd(self) -> int:
-        """Raw fd number for subprocess stdin kwarg."""
-        return self.stdin.fd
-
-    @property
-    def stdout_fd(self) -> int:
-        """Raw fd number for subprocess stdout kwarg."""
-        return self.stdout.fd
 
 
 @dataclass
@@ -222,15 +214,21 @@ async def _kill_and_reap(*procs: Process) -> None:
 
 @dataclass
 class Execution:
-    """Handle for a spawned process tree with a wait() method.
+    """Handle for a spawned process tree.
 
-    Returned by prepare(). Callers can inspect the process tree via
-    root before calling wait(). wait() derives processes and fds by
-    recursing the tree, then gathers exits, computes pipefail, and
-    cleans up.
+    Yielded by start(). Provides signal/terminate/kill for explicit
+    control and wait() for exit code retrieval. wait() is idempotent
+    — second call returns cached returncode.
+
+    When started with stdin=PIPE or stdout=PIPE, the corresponding
+    stream fields are set to ByteWriteStream / ByteReadStream.
     """
 
     root: ProcessNode
+    stdin: ByteWriteStream | None = field(default=None, init=False)
+    stdout: ByteReadStream | None = field(default=None, init=False)
+    returncode: int | None = field(default=None, init=False)
+    cleaned_up: bool = field(default=False, init=False)
 
     async def wait(self) -> int:
         """Wait for all processes and return the pipefail exit code.
@@ -238,16 +236,33 @@ class Execution:
         Gathers all tasks (process waits + data writes) concurrently,
         then computes pipefail (rightmost non-zero from root_procs).
         Finally: SIGKILL+reap + close all fds (idempotent, shielded).
+        Idempotent — second call returns cached returncode.
         """
-        procs = list(self.root.all_procs())
-        fds = list(self.root.all_fds())
+        if self.returncode is not None:
+            return self.returncode
         try:
             await asyncio.gather(*self.root.tasks())
-            return self._pipefail_code()
+            self.returncode = self._pipefail_code()
+            return self.returncode
         finally:
-            await _kill_and_reap(*procs)
-            for fd_entry in fds:
+            self.cleaned_up = True
+            await _kill_and_reap(*self.root.all_procs())
+            for fd_entry in self.root.all_fds():
                 fd_entry.close()
+
+    def signal(self, sig: int) -> None:
+        """Send a signal to all root processes. Skips dead processes."""
+        for proc in self.root.all_procs():
+            with contextlib.suppress(ProcessLookupError):
+                proc.send_signal(sig)
+
+    def terminate(self) -> None:
+        """Send SIGTERM to all root processes."""
+        self.signal(signal_mod.SIGTERM)
+
+    def kill(self) -> None:
+        """Send SIGKILL to all root processes."""
+        self.signal(signal_mod.SIGKILL)
 
     def _pipefail_code(self) -> int:
         """Compute pipefail exit code: rightmost non-zero from root returncodes."""
@@ -341,8 +356,8 @@ async def _spawn_fn(
     Dups the received fds so the pipeline's close-after-spawn logic (which closes the
     originals) doesn't affect the Fn.
     """
-    dup_stdin = ctx.dup(std_fds.stdin_fd)
-    dup_stdout = ctx.dup(std_fds.stdout_fd)
+    dup_stdin = ctx.dup(std_fds.stdin.fd)
+    dup_stdout = ctx.dup(std_fds.stdout.fd)
     return FnNode(
         fds=[dup_stdin, dup_stdout],
         _func=fn_ir.func,
@@ -582,8 +597,8 @@ async def _spawn_cmd(
     proc, spawned = await asyncio.gather(
         ctx.exec_(
             *resolved_args,
-            stdin=std_fds.stdin_fd,
-            stdout=std_fds.stdout_fd,
+            stdin=std_fds.stdin.fd,
+            stdout=std_fds.stdout.fd,
             # Exclude 0/1/2 — subprocess handles those via stdin=/stdout=
             pass_fds=spawn_ctx.build_pass_fds(ignore=SUBPROCESS_DEFAULT_FDS),
             preexec_fn=spawn_ctx.build_preexec(),
@@ -650,7 +665,7 @@ async def _spawn_pipeline(
     return PipelineNode(stages=stage_nodes)
 
 
-async def prepare(
+async def _spawn_tree(
     cmd: Runnable,
     stdin_fd: int | None = None,
     stdout_fd: int | None = None,
@@ -663,7 +678,7 @@ async def prepare(
     On spawn failure, cleans up before re-raising.
 
     Callers retain ownership of the raw fds they pass and must close
-    them after prepare() returns (prepare only closes its dups).
+    them after _spawn_tree() returns (_spawn_tree only closes its dups).
 
     Args:
         cmd: Command or pipeline to spawn.
@@ -692,9 +707,88 @@ async def prepare(
     return Execution(root=root)
 
 
+@asynccontextmanager
+async def start(
+    cmd: Runnable,
+    stdin: int | None = None,
+    stdout: int | None = None,
+) -> AsyncIterator[Execution]:
+    """Spawn a process tree and yield an Execution handle.
+
+    On context exit without wait(), SIGKILL all processes and reap.
+
+    Args:
+        cmd: Command or pipeline to spawn.
+        stdin: Fd for child stdin, or PIPE for auto-pipe, or None to inherit.
+        stdout: Fd for child stdout, or PIPE for auto-pipe, or None to inherit.
+    """
+    stdin_pipe_r: OwnedFd | None = None
+    stdin_pipe_w: OwnedFd | None = None
+    stdout_pipe_r: OwnedFd | None = None
+    stdout_pipe_w: OwnedFd | None = None
+    spawn_stdin_fd: int | None = None
+    spawn_stdout_fd: int | None = None
+
+    try:
+        if stdin == PIPE:
+            raw_r, raw_w = os.pipe()
+            stdin_pipe_r = OwnedFd(raw_r)
+            stdin_pipe_w = OwnedFd(raw_w)
+            spawn_stdin_fd = stdin_pipe_r.fd
+        elif stdin is not None:
+            spawn_stdin_fd = stdin
+
+        if stdout == PIPE:
+            raw_r, raw_w = os.pipe()
+            stdout_pipe_r = OwnedFd(raw_r)
+            stdout_pipe_w = OwnedFd(raw_w)
+            spawn_stdout_fd = stdout_pipe_w.fd
+        elif stdout is not None:
+            spawn_stdout_fd = stdout
+
+        execution = await _spawn_tree(
+            cmd, stdin_fd=spawn_stdin_fd, stdout_fd=spawn_stdout_fd
+        )
+    except BaseException:
+        if stdin_pipe_r is not None:
+            stdin_pipe_r.close()
+        if stdin_pipe_w is not None:
+            stdin_pipe_w.close()
+        if stdout_pipe_r is not None:
+            stdout_pipe_r.close()
+        if stdout_pipe_w is not None:
+            stdout_pipe_w.close()
+        raise
+
+    # _spawn_tree dup'd these fds; close our copies so EOF propagates
+    if stdin_pipe_r is not None:
+        stdin_pipe_r.close()
+    if stdout_pipe_w is not None:
+        stdout_pipe_w.close()
+
+    # Wrap remaining pipe ends as streams on Execution
+    if stdin_pipe_w is not None:
+        execution.stdin = ByteWriteStream(stdin_pipe_w)
+    if stdout_pipe_r is not None:
+        execution.stdout = ByteReadStream(stdout_pipe_r)
+
+    try:
+        yield execution
+    finally:
+        # Close stdin first (sends EOF to child), then stdout
+        if execution.stdin is not None:
+            await execution.stdin.close()
+        if execution.stdout is not None:
+            await execution.stdout.close()
+        if execution.returncode is None and not execution.cleaned_up:
+            execution.kill()
+            await execution.wait()
+
+
 async def run(cmd: Runnable) -> int:
     """Execute a command or pipeline and return exit code."""
-    return await (await prepare(cmd)).wait()
+    async with start(cmd) as execution:
+        return await execution.wait()
 
 
 @overload
@@ -706,10 +800,10 @@ async def out(cmd: Runnable, encoding: str = "utf-8") -> str: ...
 async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
     """Execute a command and return its captured stdout.
 
-    Allocates a pipe, spawns via prepare(), then reads stdout
-    concurrently with wait(). Concurrency is required to avoid
-    deadlock: if the child fills the pipe buffer, it blocks until
-    someone reads, but if we wait() first we never read.
+    Spawns with stdout=PIPE, then reads stdout concurrently with
+    wait(). Concurrency is required to avoid deadlock: if the child
+    fills the pipe buffer, it blocks until someone reads, but if we
+    wait() first we never read.
 
     Args:
         cmd: Command to execute.
@@ -719,27 +813,14 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
         subprocess.CalledProcessError: On non-zero exit code, with
             the captured stdout attached for diagnostic use.
     """
-    read_fd, write_fd = os.pipe()
-    owned_read = OwnedFd(read_fd)
-    owned_write = OwnedFd(write_fd)
-    try:
-        execution = await prepare(cmd, stdout_fd=write_fd)
-    except BaseException:
-        owned_read.close()
-        owned_write.close()
-        raise
-    # prepare() dup'd write_fd; close our copy so readers see EOF
-    owned_write.close()
-    reader = ByteReadStream(owned_read)
-    try:
-        code, stdout = await asyncio.gather(
+    async with start(cmd, stdout=PIPE) as execution:
+        assert execution.stdout is not None
+        code, captured = await asyncio.gather(
             execution.wait(),
-            reader.read(),
+            execution.stdout.read(),
         )
-    finally:
-        await reader.close()
     if code != 0:
-        raise subprocess.CalledProcessError(code, [], stdout)
+        raise subprocess.CalledProcessError(code, [], captured)
     if encoding is None:
-        return stdout
-    return stdout.decode(encoding)
+        return captured
+    return captured.decode(encoding)
