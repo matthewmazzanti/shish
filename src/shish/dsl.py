@@ -16,7 +16,7 @@ from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
     from shish.aio import ByteStageCtx, TextStageCtx
-    from shish.runtime import _StartCtx  # pyright: ignore[reportPrivateUsage]
+    from shish.runtime import StartCtx
 
 Flag = ir.PathLike | bool
 
@@ -321,7 +321,7 @@ def sub_out(sink: Runnable) -> ir.SubOut:
     return ir.SubOut(unwrap(sink))
 
 
-def start(cmd: Runnable) -> _StartCtx[None, None]:
+def start(cmd: Runnable) -> StartCtx[None, None]:
     """Spawn a command or pipeline and yield an Execution via async context manager."""
     return unwrap(cmd).start()
 

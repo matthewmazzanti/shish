@@ -259,7 +259,7 @@ class Execution[
 ]:
     """Handle for a spawned process tree.
 
-    Created by _StartCtx.__aenter__. Provides signal/terminate/kill for
+    Created by StartCtx.__aenter__. Provides signal/terminate/kill for
     explicit control and wait() for exit code retrieval. wait() is
     idempotent — second call returns cached returncode.
 
@@ -302,7 +302,7 @@ class Execution[
         self.signal(signal_mod.SIGKILL)
 
 
-class _StartCtx[
+class StartCtx[
     StdinT: (ByteWriteStream, None) = None,
     StdoutT: (ByteReadStream, None) = None,
 ]:
@@ -329,22 +329,22 @@ class _StartCtx[
         self._execution: Execution[Any, Any] | None = None
 
     @overload
-    def stdin(self, arg: Pipe) -> _StartCtx[ByteWriteStream, StdoutT]: ...
+    def stdin(self, arg: Pipe) -> StartCtx[ByteWriteStream, StdoutT]: ...
     @overload
-    def stdin(self, arg: int | None) -> _StartCtx[None, StdoutT]: ...
+    def stdin(self, arg: int | None) -> StartCtx[None, StdoutT]: ...
 
-    def stdin(self, arg: int | Pipe | None) -> _StartCtx[Any, Any]:
+    def stdin(self, arg: int | Pipe | None) -> StartCtx[Any, Any]:
         """Set stdin fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
-        return _StartCtx(self._cmd, _stdin=arg, _stdout=self._stdout_arg)
+        return StartCtx(self._cmd, _stdin=arg, _stdout=self._stdout_arg)
 
     @overload
-    def stdout(self, arg: Pipe) -> _StartCtx[StdinT, ByteReadStream]: ...
+    def stdout(self, arg: Pipe) -> StartCtx[StdinT, ByteReadStream]: ...
     @overload
-    def stdout(self, arg: int | None) -> _StartCtx[StdinT, None]: ...
+    def stdout(self, arg: int | None) -> StartCtx[StdinT, None]: ...
 
-    def stdout(self, arg: int | Pipe | None) -> _StartCtx[Any, Any]:
+    def stdout(self, arg: int | Pipe | None) -> StartCtx[Any, Any]:
         """Set stdout fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
-        return _StartCtx(self._cmd, _stdin=self._stdin_arg, _stdout=arg)
+        return StartCtx(self._cmd, _stdin=self._stdin_arg, _stdout=arg)
 
     async def __aenter__(self) -> Execution[StdinT, StdoutT]:
         """Spawn the process tree, allocating PIPE fds if requested."""
@@ -808,7 +808,7 @@ async def _spawn_pipeline(
     return PipelineNode(stages=stage_nodes)
 
 
-def start(cmd: Runnable) -> _StartCtx[None, None]:
+def start(cmd: Runnable) -> StartCtx[None, None]:
     """Create an async context manager that spawns and manages an Execution.
 
     Use chained builder methods to configure streams::
@@ -820,7 +820,7 @@ def start(cmd: Runnable) -> _StartCtx[None, None]:
             await execution.stdin.write(b"data")
             captured = await execution.stdout.read()
     """
-    return _StartCtx(cmd)
+    return StartCtx(cmd)
 
 
 async def run(cmd: Runnable) -> int:

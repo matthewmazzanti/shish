@@ -11,7 +11,7 @@ from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
     from shish.aio import ByteStageCtx
-    from shish.runtime import _StartCtx  # pyright: ignore[reportPrivateUsage]
+    from shish.runtime import StartCtx
 
 
 class _Unset:
@@ -173,7 +173,7 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    def start(self) -> _StartCtx[None, None]:
+    def start(self) -> StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
@@ -208,7 +208,7 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    def start(self) -> _StartCtx[None, None]:
+    def start(self) -> StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
@@ -235,7 +235,7 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def start(self) -> _StartCtx[None, None]:
+    def start(self) -> StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
