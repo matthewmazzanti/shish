@@ -79,6 +79,7 @@ async def test_write_broken_pipe() -> None:
     writer = ByteWriteStream(OwnedFd(write_fd))
     with pytest.raises(BrokenPipeError):
         await writer.write(b"hello")
+    await writer.close()
 
 
 async def test_write_backpressure() -> None:
@@ -433,6 +434,7 @@ async def test_decode_bare_decorator() -> None:
         stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
     )
     result = await upper(byte_ctx)
+    await byte_ctx.stdin.close()
     await byte_ctx.stdout.close()
 
     output = os.read(stdout_read_fd, 1024)
@@ -462,6 +464,7 @@ async def test_decode_with_parens() -> None:
         stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
     )
     result = await upper(byte_ctx)
+    await byte_ctx.stdin.close()
     await byte_ctx.stdout.close()
 
     output = os.read(stdout_read_fd, 1024)
@@ -492,6 +495,7 @@ async def test_decode_with_encoding() -> None:
         stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
     )
     result = await passthrough(byte_ctx)
+    await byte_ctx.stdin.close()
     await byte_ctx.stdout.close()
 
     output = os.read(stdout_read_fd, 1024)

@@ -676,6 +676,7 @@ async def test_prepare_stdin_fd() -> None:
     """prepare(stdin_fd=...) feeds stdin via caller-owned pipe."""
     read_fd, write_fd = os.pipe()
     execution = await prepare(ir.Cmd(("cat",)), stdin_fd=read_fd)
+    os.close(read_fd)  # prepare() dup'd it; close our copy
     async with ByteWriteStream(OwnedFd(write_fd)) as writer:
         await writer.write(b"hello from pipe")
     assert await execution.wait() == 0
@@ -686,6 +687,8 @@ async def test_prepare_stdin_fd_with_stdout_fd() -> None:
     stdin_r, stdin_w = os.pipe()
     stdout_r, stdout_w = os.pipe()
     execution = await prepare(ir.Cmd(("cat",)), stdin_fd=stdin_r, stdout_fd=stdout_w)
+    os.close(stdin_r)  # prepare() dup'd these; close our copies
+    os.close(stdout_w)
 
     async def do_write() -> None:
         async with ByteWriteStream(OwnedFd(stdin_w)) as writer:
@@ -712,17 +715,6 @@ async def test_out_raises_preserves_output() -> None:
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         await out(ir.Cmd(("sh", "-c", "echo partial; exit 1")))
     assert exc_info.value.output == b"partial\n"
-
-
-async def test_out_no_fd_leak_on_failure() -> None:
-    """out() doesn't leak its capture pipe when command fails."""
-    import os
-
-    before = set(os.listdir("/dev/fd"))
-    with pytest.raises(subprocess.CalledProcessError):
-        await out(ir.Cmd(("false",)))
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
 
 
 # =============================================================================
@@ -781,29 +773,6 @@ async def test_cancel_pipeline_kills_all_stages() -> None:
         await task
 
 
-async def test_cancel_no_fd_leak() -> None:
-    """No fds leak in the parent after cancellation."""
-    import os
-
-    before = set(os.listdir("/dev/fd"))
-    task = asyncio.create_task(
-        run(
-            ir.Pipeline(
-                (
-                    ir.Cmd(("sleep", "60")),
-                    ir.Cmd(("sleep", "60")),
-                )
-            )
-        )
-    )
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
 # =============================================================================
 # Factory functions used by runtime
 # =============================================================================
@@ -814,35 +783,6 @@ async def test_signal_killed_exit_code() -> None:
     # SIGKILL = 9, so exit code should be 137
     result = await run(ir.Cmd(("sh", "-c", "kill -9 $$")))
     assert result == 137
-
-
-async def test_no_fd_leak_after_error() -> None:
-    """No fds leak in the parent when command-not-found raises."""
-    import os
-
-    before = set(os.listdir("/dev/fd"))
-    with pytest.raises(FileNotFoundError):
-        await run(ir.Cmd(("nonexistent_command_xyz_12345",)))
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
-async def test_no_fd_leak_after_pipeline_error() -> None:
-    """No fds leak when one pipeline stage fails to spawn."""
-    import os
-
-    before = set(os.listdir("/dev/fd"))
-    with pytest.raises(FileNotFoundError):
-        await run(
-            ir.Pipeline(
-                (
-                    ir.Cmd(("echo", "hello")),
-                    ir.Cmd(("nonexistent_command_xyz_12345",)),
-                )
-            )
-        )
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
 
 
 async def test_pipeline_factory_execution() -> None:
@@ -974,28 +914,6 @@ async def test_prepare_wait_pipefail() -> None:
     assert await execution.wait() == 2
 
 
-async def test_prepare_cleanup_on_spawn_failure() -> None:
-    """prepare() cleans up fds on spawn failure."""
-    import os
-
-    before = set(os.listdir("/dev/fd"))
-    with pytest.raises(FileNotFoundError):
-        await prepare(ir.Cmd(("nonexistent_command_xyz_12345",)))
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
-async def test_prepare_wait_no_fd_leak() -> None:
-    """No fds leak after prepare()+wait() completes."""
-    import os
-
-    before = set(os.listdir("/dev/fd"))
-    execution = await prepare(ir.Cmd(("true",)))
-    await execution.wait()
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
 # =============================================================================
 # Fn (Python function as pipeline stage)
 # =============================================================================
@@ -1088,20 +1006,6 @@ async def test_fn_exception_returns_1() -> None:
     assert await run(ir.Fn(_raises)) == 1
 
 
-async def test_fn_no_fd_leak() -> None:
-    """No fds leak after running Fn standalone or in a pipeline."""
-    before = set(os.listdir("/dev/fd"))
-
-    # Standalone Fn
-    await run(ir.Fn(_generate))
-
-    # Pipeline with Fn
-    await run(ir.Pipeline((ir.Cmd(("echo", "hello")), ir.Fn(_upper))))
-
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
 async def test_fn_as_sub_in() -> None:
     """Fn used as input process substitution via FdFromSub."""
     sub = ir.SubIn(ir.Fn(_generate))
@@ -1190,27 +1094,3 @@ async def test_fn_cancel_mid_write() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-
-
-async def test_fn_cancel_no_fd_leak() -> None:
-    """No fds leak in the parent after cancelling a mixed pipeline."""
-    import os
-
-    async def _slow(ctx: ByteStageCtx) -> int:
-        await asyncio.sleep(60)
-        return 0
-
-    before = set(os.listdir("/dev/fd"))
-    task = asyncio.create_task(
-        run(
-            ir.Pipeline(
-                (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
-            )
-        )
-    )
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    after = set(os.listdir("/dev/fd"))
-    assert before == after

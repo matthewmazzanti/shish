@@ -7,6 +7,7 @@ interprets the ops into real syscalls.
 
 from __future__ import annotations
 
+import typing as ty
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,7 +55,7 @@ class FdOps:
     know these exist as dup2 sources.
     """
 
-    def __init__(self, live: set[int] | None = None) -> None:
+    def __init__(self, live: ty.Iterable[int] | None = None) -> None:
         self._ops: list[Op] = []
         self._live: set[int] = set(live) if live is not None else set()
 
