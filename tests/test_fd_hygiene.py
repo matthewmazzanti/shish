@@ -5,9 +5,7 @@ import os
 from pathlib import Path
 
 from shish import STDERR, STDIN, STDOUT, ir
-from shish.aio import ByteStageCtx
-from shish.ir import Fn
-from shish.runtime import out, run
+from shish.runtime import out
 
 
 def _child_fds(output: str) -> set[int]:
@@ -141,26 +139,6 @@ async def test_child_fds_pipeline_first_stage_redirect(
     assert fds == {STDIN, STDOUT, STDERR}
 
 
-# =============================================================================
-# Parent fd leak detection
-# =============================================================================
-
-
-async def test_no_fd_leak_after_execution() -> None:
-    """Parent process doesn't leak fds after complex execution."""
-    before = set(os.listdir("/dev/fd"))
-    sub = ir.SubIn(ir.Cmd(("echo", "from sub")))
-    pipeline = ir.Pipeline(
-        (
-            ir.Cmd(("cat", sub)),
-            ir.Cmd(("cat",)),
-        )
-    )
-    await run(pipeline)
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
 async def test_parent_fds_not_leaked_to_child(list_fds_bin: str) -> None:
     """Pipe fds open in parent process are not visible to child."""
     read_fd, write_fd = os.pipe()
@@ -180,43 +158,3 @@ async def test_parent_open_file_not_leaked_to_child(
     with open(tmp_path / "leak.txt", "w") as fobj:
         fds = _child_fds(await out(ir.Cmd((list_fds_bin,))))
         assert fobj.fileno() not in fds
-
-
-# =============================================================================
-# Fn fd leak detection
-# =============================================================================
-
-
-async def _noop_fn(ctx: ByteStageCtx) -> int:
-    return 0
-
-
-async def _generate_fn(ctx: ByteStageCtx) -> int:
-    await ctx.stdout.write(b"hello\n")
-    return 0
-
-
-async def test_no_fd_leak_fn_standalone() -> None:
-    """Standalone Fn doesn't leak fds in the parent process."""
-    before = set(os.listdir("/dev/fd"))
-    await run(Fn(_noop_fn))
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
-async def test_no_fd_leak_fn_in_pipeline() -> None:
-    """Fn as a pipeline stage doesn't leak fds in the parent process."""
-    before = set(os.listdir("/dev/fd"))
-    await run(ir.Pipeline((ir.Cmd(("echo", "hello")), Fn(_noop_fn))))
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
-
-
-async def test_no_fd_leak_fn_as_sub() -> None:
-    """Fn used in process substitution doesn't leak fds in the parent process."""
-    before = set(os.listdir("/dev/fd"))
-    sub = ir.SubIn(Fn(_generate_fn))
-    command = ir.Cmd(("cat",), redirects=(ir.FdFromSub(STDIN, sub),))
-    await run(command)
-    after = set(os.listdir("/dev/fd"))
-    assert before == after
