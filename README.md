@@ -134,6 +134,40 @@ await pipeline.run()
 stdout = await cmd("ls", "-la").out()
 ```
 
+## Interactive processes
+
+`start()` spawns a process and gives you direct access to its stdin/stdout streams. Streams not configured with `.stdin()`/`.stdout()` inherit from the parent process:
+
+```python
+from shish import start, PIPE
+from shish.ir import cmd
+
+# Inherit parent stdin/stdout — no .stdin()/.stdout() needed
+async with start(cmd("ls", "-la")) as proc:
+    code = await proc.wait()
+
+# Write to stdin, read from stdout
+async with start(cmd("cat")).stdin(PIPE).stdout(PIPE) as proc:
+    await proc.stdin.write("hello\n")
+    await proc.stdin.close()
+    output = await proc.stdout.read()   # "hello\n"
+    code = await proc.wait()
+
+# Custom encoding
+async with start(cmd("cat")).stdin(PIPE, "latin-1").stdout(PIPE, "latin-1") as proc:
+    await proc.stdin.write("café\n")
+    await proc.stdin.close()
+    output = await proc.stdout.read()
+
+# Raw bytes
+async with start(cmd("cat")).stdin(PIPE, encoding=None).stdout(PIPE, encoding=None) as proc:
+    await proc.stdin.write(b"\x00\x01\x02")
+    await proc.stdin.close()
+    output = await proc.stdout.read()   # b"\x00\x01\x02"
+```
+
+The context manager handles cleanup: closes streams, kills orphans, and reaps processes on exit.
+
 ## Control flow
 
 Use Python:

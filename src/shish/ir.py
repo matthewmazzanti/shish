@@ -11,7 +11,7 @@ from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
     from shish.aio import ByteStageCtx
-    from shish.runtime import Execution
+    from shish.runtime import StartCtx
 
 
 class _Unset:
@@ -173,11 +173,11 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    async def prepare(self) -> Execution:
-        """Spawn and return an Execution handle."""
+    def start(self) -> StartCtx[None, None]:
+        """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return await runtime.prepare(self)
+        return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -208,11 +208,11 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    async def prepare(self) -> Execution:
-        """Spawn and return an Execution handle."""
+    def start(self) -> StartCtx[None, None]:
+        """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return await runtime.prepare(self)
+        return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
@@ -235,11 +235,11 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    async def prepare(self) -> Execution:
-        """Spawn and return an Execution handle."""
+    def start(self) -> StartCtx[None, None]:
+        """Spawn and yield an Execution via async context manager."""
         from shish import runtime
 
-        return await runtime.prepare(self)
+        return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""

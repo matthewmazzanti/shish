@@ -16,7 +16,7 @@ from shish.fdops import STDIN, STDOUT
 
 if TYPE_CHECKING:
     from shish.aio import ByteStageCtx, TextStageCtx
-    from shish.runtime import Execution
+    from shish.runtime import StartCtx
 
 Flag = ir.PathLike | bool
 
@@ -321,9 +321,9 @@ def sub_out(sink: Runnable) -> ir.SubOut:
     return ir.SubOut(unwrap(sink))
 
 
-async def prepare(cmd: Runnable) -> Execution:
-    """Spawn a command or pipeline and return an Execution handle."""
-    return await unwrap(cmd).prepare()
+def start(cmd: Runnable) -> StartCtx[None, None]:
+    """Spawn a command or pipeline and yield an Execution via async context manager."""
+    return unwrap(cmd).start()
 
 
 async def run(cmd: Runnable) -> int:

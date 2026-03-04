@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from shish import (
+    PIPE,
     STDERR,
     STDIN,
     STDOUT,
@@ -16,9 +17,9 @@ from shish import (
     env,
     fn,
     out,
-    prepare,
     run,
     sh,
+    start,
     sub_in,
     sub_out,
     write,
@@ -661,27 +662,27 @@ async def test_rmod_matmul_bash_style(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# prepare() + wait() via DSL
+# start() + wait() via DSL
 # =============================================================================
 
 
-async def test_prepare_dsl_cmd() -> None:
-    """DSL prepare() returns Execution, wait() returns exit code."""
-    execution = await prepare(sh.true())
-    assert isinstance(execution, Execution)
-    assert await execution.wait() == 0
+async def test_start_dsl_cmd() -> None:
+    """DSL start() yields Execution, wait() returns exit code."""
+    async with start(sh.true()) as execution:
+        assert isinstance(execution, Execution)
+        assert await execution.wait() == 0
 
 
-async def test_prepare_dsl_pipeline() -> None:
-    """DSL prepare() works with pipelines."""
-    execution = await prepare(sh.echo("hello") | sh.cat())
-    assert await execution.wait() == 0
+async def test_start_dsl_pipeline() -> None:
+    """DSL start() works with pipelines."""
+    async with start(sh.echo("hello") | sh.cat()) as execution:
+        assert await execution.wait() == 0
 
 
-async def test_prepare_builder_method() -> None:
-    """IR builder prepare() method works."""
-    execution = await cmd("echo", "hello").prepare()
-    assert await execution.wait() == 0
+async def test_start_ir_builder() -> None:
+    """IR builder start() method works."""
+    async with cmd("echo", "hello").start() as execution:
+        assert await execution.wait() == 0
 
 
 # =============================================================================
@@ -892,3 +893,127 @@ async def test_fn_encoding_latin1_direct() -> None:
 
     result = await out(fn(echo_latin, encoding="latin-1"), encoding=None)
     assert result == b"caf\xe9\n"
+
+
+# =============================================================================
+# start() — async context manager lifecycle
+# =============================================================================
+
+
+async def test_start_echo() -> None:
+    """start() + wait() on a simple command."""
+    async with start(sh.echo("hello")) as execution:
+        assert isinstance(execution, Execution)
+        code = await execution.wait()
+    assert code == 0
+    assert execution.returncode == 0
+
+
+async def test_start_auto_kill() -> None:
+    """Context exit kills long-running process."""
+    async with start(sh.sleep("60")) as execution:
+        pass  # no wait — __aexit__ kills + reaps
+    assert execution.returncode is not None
+
+
+async def test_start_pipeline() -> None:
+    """start() works with pipelines."""
+    async with start(sh.yes() | sh.head(n="5")) as execution:
+        code = await execution.wait()
+    assert code in (0, 141)
+
+
+async def test_start_terminate() -> None:
+    """execution.terminate() sends SIGTERM."""
+    import signal
+
+    async with start(sh.sleep("60")) as execution:
+        await asyncio.sleep(0.05)
+        execution.terminate()
+        code = await execution.wait()
+    assert code == 128 + signal.SIGTERM
+
+
+async def test_start_idempotent_wait() -> None:
+    """Calling wait() twice returns the same code."""
+    async with start(sh.true()) as execution:
+        first = await execution.wait()
+        second = await execution.wait()
+    assert first == second == 0
+
+
+async def test_start_ir_builder_cm() -> None:
+    """IR builder start() as context manager works."""
+    from shish.ir import cmd
+
+    async with cmd("echo", "hello").start() as execution:
+        code = await execution.wait()
+    assert code == 0
+
+
+# =============================================================================
+# start() with PIPE
+# =============================================================================
+
+
+async def test_start_dsl_stdin_pipe() -> None:
+    """DSL start(stdin=PIPE) defaults to text mode."""
+    async with start(sh.cat()).stdin(PIPE) as execution:
+        await execution.stdin.write("hello from pipe")
+        await execution.stdin.close()
+        assert await execution.wait() == 0
+
+
+async def test_start_dsl_stdout_pipe() -> None:
+    """DSL start(stdout=PIPE) defaults to text mode."""
+    async with start(sh.echo("hello")).stdout(PIPE) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == "hello\n"
+
+
+async def test_start_dsl_stdin_stdout_pipe() -> None:
+    """DSL start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
+    async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:
+        await execution.stdin.write("round trip")
+        await execution.stdin.close()
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == "round trip"
+
+
+async def test_start_dsl_stdout_pipe_bytes() -> None:
+    """DSL start(stdout=PIPE, encoding=None) gives ByteReadStream."""
+    async with start(sh.echo("hello")).stdout(PIPE, encoding=None) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+        )
+    assert code == 0
+    assert captured == b"hello\n"
+
+
+async def test_start_ir_builder_pipe() -> None:
+    """IR builder .start(stdin=PIPE) defaults to text mode."""
+    from shish.ir import cmd
+
+    async with cmd("cat").start().stdin(PIPE) as execution:
+        await execution.stdin.write("builder pipe")
+        await execution.stdin.close()
+        assert await execution.wait() == 0
+
+
+async def test_start_ir_builder_pipe_bytes() -> None:
+    """IR builder .start(stdin=PIPE, encoding=None) gives ByteWriteStream."""
+    from shish.ir import cmd
+
+    async with cmd("cat").start().stdin(PIPE, encoding=None) as execution:
+        await execution.stdin.write(b"builder bytes")
+        await execution.stdin.close()
+        assert await execution.wait() == 0
