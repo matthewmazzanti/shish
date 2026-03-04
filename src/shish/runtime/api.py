@@ -77,19 +77,32 @@ class Execution[
         """Send SIGKILL to all processes in the tree."""
         self.signal(signal_mod.SIGKILL)
 
+    async def cleanup(self) -> None:
+        """Close streams, kill+reap if still running, close fds."""
+        if self.stdin is not None:
+            await self.stdin.close()
+        if self.stdout is not None:
+            await self.stdout.close()
+        if self.returncode is None:
+            await asyncio.shield(self.root.kill())
+            code = self.root.returncode()
+            assert code is not None
+            self.returncode = code
+        self.root.close_fds()
+
 
 class StartCtx[
     StdinT: (ByteWriteStream, TextWriteStream, None) = None,
     StdoutT: (ByteReadStream, TextReadStream, None) = None,
 ]:
-    """Async context manager that owns the lifecycle of an Execution.
+    """Async context manager that spawns and owns an Execution.
 
     Returned by start(). Use chained builder methods to configure streams::
 
         async with start(cmd).stdin(PIPE).stdout(PIPE) as execution: ...
 
     __aenter__ spawns the process tree and creates an Execution handle.
-    __aexit__ closes streams, kills+reaps if needed, and closes fds.
+    __aexit__ delegates to Execution.cleanup() for full teardown.
     """
 
     _cmd: Runnable
@@ -224,21 +237,9 @@ class StartCtx[
         return self._execution
 
     async def __aexit__(self, *exc_info: object) -> None:
-        """Single cleanup owner: close streams, kill+reap if needed, close fds."""
-        execution = self._execution
-        if execution is None:
-            return
-        # Close stdin first (sends EOF to child), then stdout
-        if execution.stdin is not None:
-            await execution.stdin.close()
-        if execution.stdout is not None:
-            await execution.stdout.close()
-        if execution.returncode is None:
-            await asyncio.shield(execution.root.kill())
-            code = execution.root.returncode()
-            assert code is not None
-            execution.returncode = code
-        execution.root.close_fds()
+        """Delegate full cleanup to Execution."""
+        assert self._execution is not None
+        await self._execution.cleanup()
 
 
 def start(cmd: Runnable) -> StartCtx[None, None]:

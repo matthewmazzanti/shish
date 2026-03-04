@@ -1,7 +1,9 @@
-"""Process tree nodes and helpers for runtime execution.
+"""Process tree — the witness of a successful spawn.
 
-Defines the process tree structure (CmdNode, PipelineNode, FnNode)
-and utility functions for returncode normalization.
+A ProcessNode tree is only constructed once all processes have been
+forked and all fds allocated. It tracks every open resource (procs,
+tasks, fds) and owns their lifecycle: signal, kill, close_fds.
+SpawnCtx handles the error path when spawn fails partway.
 """
 
 from __future__ import annotations
@@ -72,7 +74,7 @@ class CmdNode:
         for sub in self.subs:
             sub.close_fds()
 
-    def tasks(self) -> Iterator[Awaitable[object]]:
+    def tasks(self) -> Iterator[Awaitable[int]]:
         """Yield coroutines to gather: proc wait + sub tasks."""
         yield self.proc.wait()
         for sub in self.subs:
@@ -117,7 +119,7 @@ class PipelineNode:
         for stage in self.stages:
             stage.close_fds()
 
-    def tasks(self) -> Iterator[Awaitable[object]]:
+    def tasks(self) -> Iterator[Awaitable[int]]:
         """Yield coroutines to gather: all stage tasks."""
         for stage in self.stages:
             yield from stage.tasks()

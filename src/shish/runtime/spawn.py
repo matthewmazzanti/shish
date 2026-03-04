@@ -66,10 +66,13 @@ FD_DIR = Path("/dev/fd")
 
 @dataclass
 class SpawnCtx:
-    """Tracks fds and procs during spawn, and builds the process tree.
+    """Tracks fds, procs, and fn_tasks during spawn for error cleanup.
 
-    Provides low-level primitives (exec_, pipe, dup) for fd/proc tracking,
-    plus spawn methods that dispatch IR nodes to the appropriate builder.
+    Spawn can fail partway — some processes already forked, some fds
+    already allocated — before a full process tree exists. SpawnCtx
+    records everything allocated so that cleanup() can tear it all
+    down. Also provides low-level primitives (exec_, pipe, dup) and
+    spawn methods that dispatch IR nodes to the appropriate builder.
     """
 
     fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
@@ -79,11 +82,10 @@ class SpawnCtx:
     )
 
     async def cleanup(self) -> None:
-        """Kill procs, cancel fn_tasks, close all tracked fds.
-
-        Used when spawn fails before a full process tree is built.
-        Shielded from cancellation so cleanup completes even if the
-        calling task is cancelled.
+        """Tear down everything allocated so far: kill procs, cancel
+        fn_tasks, close fds. Called when spawn fails before a full
+        process tree is built — the tree's own cleanup methods can't
+        be used yet. Shielded from cancellation.
         """
         reap: list[Awaitable[int]] = []
         for proc in self.procs:
