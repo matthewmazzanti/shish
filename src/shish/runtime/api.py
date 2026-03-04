@@ -294,13 +294,13 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
         subprocess.CalledProcessError: On non-zero exit code, with
             the captured stdout attached for diagnostic use.
     """
-    async with start(cmd).stdout(PIPE, encoding=None) as execution:
+    async with start(cmd).stdout(PIPE, encoding=encoding) as execution:
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
         )
+
     if code != 0:
         raise subprocess.CalledProcessError(code, [], captured)
-    if encoding is None:
-        return captured
-    return captured.decode(encoding)
+
+    return captured
