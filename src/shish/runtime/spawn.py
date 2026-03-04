@@ -14,13 +14,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import sys
+import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from shish.aio import (
+    ByteReadStream,
     ByteStageCtx,
+    ByteWriteStream,
     OwnedFd,
     TextStageCtx,
     make_byte_wrapper,
@@ -62,14 +66,40 @@ FD_DIR = Path("/dev/fd")
 
 @dataclass
 class SpawnCtx:
-    """Tracks fds and procs during spawn, and builds the process tree.
+    """Tracks fds, procs, and fn_tasks during spawn for error cleanup.
 
-    Provides low-level primitives (exec_, pipe, dup) for fd/proc tracking,
-    plus spawn methods that dispatch IR nodes to the appropriate builder.
+    Spawn can fail partway — some processes already forked, some fds
+    already allocated — before a full process tree exists. SpawnCtx
+    records everything allocated so that cleanup() can tear it all
+    down. Also provides low-level primitives (exec_, pipe, dup) and
+    spawn methods that dispatch IR nodes to the appropriate builder.
     """
 
     fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
     procs: list[Process] = field(default_factory=lambda: list[Process]())
+    fn_tasks: list[asyncio.Task[int]] = field(
+        default_factory=lambda: list[asyncio.Task[int]]()
+    )
+
+    async def cleanup(self) -> None:
+        """Tear down everything allocated so far: kill procs, cancel
+        fn_tasks, close fds. Called when spawn fails before a full
+        process tree is built — the tree's own cleanup methods can't
+        be used yet. Shielded from cancellation.
+        """
+        reap: list[Awaitable[int]] = []
+        for proc in self.procs:
+            if proc.returncode is None:
+                proc.kill()
+                reap.append(proc.wait())
+        for task in self.fn_tasks:
+            task.cancel()
+        pending: list[Awaitable[object]] = list(reap)
+        pending.extend(self.fn_tasks)
+        if pending:
+            await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
+        for fd_entry in self.fds:
+            fd_entry.close()
 
     async def exec_(
         self,
@@ -152,15 +182,29 @@ class SpawnCtx:
 
         Dups the received fds so the pipeline's close-after-spawn
         logic (which closes the originals) doesn't affect the Fn.
+        The task is started eagerly so the function begins executing
+        immediately, matching the behavior of spawn_cmd.
         """
         dup_stdin = self.dup(std_fds.stdin.fd)
         dup_stdout = self.dup(std_fds.stdout.fd)
-        return FnNode(
-            fds=[dup_stdin, dup_stdout],
-            _func=fn_ir.func,
-            _stdin_fd=dup_stdin,
-            _stdout_fd=dup_stdout,
-        )
+        func = fn_ir.func
+
+        async def execute() -> int:
+            stdin_stream = ByteReadStream(dup_stdin)
+            stdout_stream = ByteWriteStream(dup_stdout)
+            try:
+                ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
+                return await func(ctx)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                return 1
+            finally:
+                await stdout_stream.close()
+                await stdin_stream.close()
+
+        task = asyncio.create_task(execute())
+        self.fn_tasks.append(task)
+        return FnNode(_task=task, _stdin_fd=dup_stdin, _stdout_fd=dup_stdout)
 
     async def spawn_pipeline(
         self,
@@ -219,10 +263,9 @@ class SpawnCmdCtx:
 
     All fds are closed in the parent immediately after spawn — children
     inherit via fork, so parent copies must close for EOF propagation.
-    CmdNode receives the (already closed) fds for idempotent cleanup in
-    StartCtx.__aexit__. Child spawns must dup fds to survive this close;
-    subprocess handles this automatically, but in-process Fn stages must
-    dup manually (see SpawnCtx.spawn_fn).
+    Child spawns must dup fds to survive this close; subprocess handles
+    this automatically, but in-process Fn stages must dup manually
+    (see SpawnCtx.spawn_fn).
     """
 
     ctx: SpawnCtx
@@ -291,7 +334,7 @@ class SpawnCmdCtx:
         for fd_entry in self.fds:
             fd_entry.close()
 
-        return CmdNode(proc=proc, fds=self.fds, subs=self.subs)
+        return CmdNode(proc=proc, subs=self.subs)
 
     def _spawn_with_pipe(
         self, inner: Runnable, *, to_stdin: bool

@@ -975,6 +975,24 @@ async def test_start_dsl_stdout_pipe() -> None:
     assert captured == "hello\n"
 
 
+async def test_start_feed_stdout_read_before_wait() -> None:
+    """Reading stdout before wait() with heredoc should not deadlock."""
+    async with start(sh.cat() << "hello").stdout(PIPE) as execution:
+        captured = await asyncio.wait_for(execution.stdout.read(), timeout=2.0)
+        code = await execution.wait()
+    assert code == 0
+    assert captured == "hello"
+
+
+async def test_start_fn_pipeline_stdout_read_before_wait() -> None:
+    """Reading stdout before wait() on fn | cmd should not deadlock."""
+    async with start(_generate | sh.cat()).stdout(PIPE) as execution:
+        captured = await asyncio.wait_for(execution.stdout.read(), timeout=2.0)
+        code = await execution.wait()
+    assert code == 0
+    assert captured == "generated\n"
+
+
 async def test_start_dsl_stdin_stdout_pipe() -> None:
     """DSL start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
     async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:

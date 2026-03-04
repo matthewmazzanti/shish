@@ -7,8 +7,6 @@ process trees built from IR commands.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import signal as signal_mod
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
@@ -26,9 +24,6 @@ from shish.runtime.spawn import SpawnCtx
 from shish.runtime.tree import (
     ProcessNode,
     StdFds,
-    kill_and_reap,
-    mark_killed_fns,
-    pipefail_code,
 )
 
 
@@ -55,45 +50,64 @@ class Execution[
     returncode: int | None = field(default=None, init=False)
 
     async def wait(self) -> int:
-        """Wait for all processes and return the pipefail exit code.
+        """Wait for all processes and return the exit code.
 
-        Gathers all tasks (process waits + data writes) concurrently,
-        then computes pipefail (rightmost non-zero from root_returncodes).
         Idempotent — second call returns cached returncode.
         """
         if self.returncode is not None:
             return self.returncode
-        await asyncio.gather(*self.root.tasks())
-        self.returncode = pipefail_code(self.root)
+        await self.root.wait()
+        code = self.root.returncode()
+        assert code is not None
+        self.returncode = code
         return self.returncode
 
-    def signal(self, sig: int) -> None:
-        """Send a signal to all processes in the tree. Skips dead processes."""
-        for proc in self.root.all_procs():
-            with contextlib.suppress(ProcessLookupError):
-                proc.send_signal(sig)
-
     def terminate(self) -> None:
-        """Send SIGTERM to all processes in the tree."""
-        self.signal(signal_mod.SIGTERM)
+        """Ask nicely, don't wait. SIGTERM for processes, cancel for tasks.
+
+        Call wait() afterwards to collect the exit code.
+        """
+        self.root.terminate()
 
     def kill(self) -> None:
-        """Send SIGKILL to all processes in the tree."""
-        self.signal(signal_mod.SIGKILL)
+        """Tell, don't wait. SIGKILL for processes, cancel for tasks.
+
+        Call wait() afterwards to collect the exit code.
+        """
+        self.root.kill()
+
+    async def cleanup(self) -> None:
+        """Close streams, kill+wait if still running, close fds.
+
+        wait() may hang if a task is stalled in synchronous code —
+        Fn functions must be cooperative (yield at await points).
+        """
+        if self.stdin is not None:
+            await self.stdin.close()
+        if self.stdout is not None:
+            await self.stdout.close()
+        if self.returncode is None:
+            self.root.kill()
+            await asyncio.shield(self.root.wait())
+        self.root.close_fds()
+        if self.returncode is None:
+            code = self.root.returncode()
+            assert code is not None
+            self.returncode = code
 
 
 class StartCtx[
     StdinT: (ByteWriteStream, TextWriteStream, None) = None,
     StdoutT: (ByteReadStream, TextReadStream, None) = None,
 ]:
-    """Async context manager that owns the lifecycle of an Execution.
+    """Async context manager that spawns and owns an Execution.
 
     Returned by start(). Use chained builder methods to configure streams::
 
         async with start(cmd).stdin(PIPE).stdout(PIPE) as execution: ...
 
     __aenter__ spawns the process tree and creates an Execution handle.
-    __aexit__ closes streams, kills+reaps if needed, and closes fds.
+    __aexit__ delegates to Execution.cleanup() for full teardown.
     """
 
     _cmd: Runnable
@@ -210,20 +224,14 @@ class StartCtx[
 
             # Spawn process tree
             std_fds = StdFds(stdin=spawn_stdin, stdout=spawn_stdout)
-            try:
-                root = await ctx.spawn(self._cmd, std_fds)
-            except BaseException:
-                await kill_and_reap(*ctx.procs)
-                raise
+            root = await ctx.spawn(self._cmd, std_fds)
 
             # Children inherited via fork; close spawn-side fds so EOF propagates.
             # (FnNode dups from SpawnCtx.spawn_fn are separate — closed by __aexit__.)
             spawn_stdin.close()
             spawn_stdout.close()
-
         except BaseException:
-            for fd_entry in ctx.fds:
-                fd_entry.close()
+            await ctx.cleanup()
             raise
 
         self._execution = Execution(
@@ -234,21 +242,9 @@ class StartCtx[
         return self._execution
 
     async def __aexit__(self, *exc_info: object) -> None:
-        """Single cleanup owner: close streams, kill+reap if needed, close fds."""
-        execution = self._execution
-        if execution is None:
-            return
-        # Close stdin first (sends EOF to child), then stdout
-        if execution.stdin is not None:
-            await execution.stdin.close()
-        if execution.stdout is not None:
-            await execution.stdout.close()
-        if execution.returncode is None:
-            await kill_and_reap(*execution.root.all_procs())
-            mark_killed_fns(execution.root)
-            execution.returncode = pipefail_code(execution.root)
-        for fd_entry in execution.root.all_fds():
-            fd_entry.close()
+        """Delegate full cleanup to Execution."""
+        assert self._execution is not None
+        await self._execution.cleanup()
 
 
 def start(cmd: Runnable) -> StartCtx[None, None]:
