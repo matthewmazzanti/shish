@@ -401,7 +401,7 @@ async def test_out_raises_on_failure() -> None:
 async def test_out_raises_preserves_output() -> None:
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         await out(sh.sh("-c", "echo partial; exit 1"))
-    assert exc_info.value.output == b"partial\n"
+    assert exc_info.value.output == "partial\n"
 
 
 async def test_out_empty() -> None:
