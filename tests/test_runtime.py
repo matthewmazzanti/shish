@@ -1293,3 +1293,37 @@ async def test_start_pipeline_auto_kill() -> None:
     async with start(pipeline) as execution:
         pass
     assert execution.returncode is not None
+
+
+# =============================================================================
+# spawn_fn deferred start deadlocks
+# =============================================================================
+
+
+async def test_start_fn_stdout_read_before_wait() -> None:
+    """Reading stdout before wait() on a standalone Fn should not deadlock."""
+    async with start(ir.Fn(_generate)).stdout(PIPE) as execution:
+        captured = await asyncio.wait_for(execution.stdout.read(), timeout=2.0)
+        code = await execution.wait()
+    assert code == 0
+    assert captured == "generated\n"
+
+
+async def test_start_fn_pipeline_stdout_read_before_wait() -> None:
+    """Reading stdout before wait() on an Fn|cmd pipeline should not deadlock."""
+    pipeline = ir.Pipeline((ir.Fn(_generate), ir.Cmd(("cat",))))
+    async with start(pipeline).stdout(PIPE) as execution:
+        captured = await asyncio.wait_for(execution.stdout.read(), timeout=2.0)
+        code = await execution.wait()
+    assert code == 0
+    assert captured == "generated\n"
+
+
+async def test_start_feed_stdout_read_before_wait() -> None:
+    """Reading stdout before wait() with FdFromData should not deadlock."""
+    command = ir.Cmd(("cat",), redirects=(ir.FdFromData(STDIN, "hello"),))
+    async with start(command).stdout(PIPE) as execution:
+        captured = await asyncio.wait_for(execution.stdout.read(), timeout=2.0)
+        code = await execution.wait()
+    assert code == 0
+    assert captured == "hello"

@@ -26,9 +26,8 @@ from shish.runtime.spawn import SpawnCtx
 from shish.runtime.tree import (
     ProcessNode,
     StdFds,
+    cancel_fn_tasks,
     kill_and_reap,
-    mark_killed_fns,
-    pipefail_code,
 )
 
 
@@ -58,13 +57,13 @@ class Execution[
         """Wait for all processes and return the pipefail exit code.
 
         Gathers all tasks (process waits + data writes) concurrently,
-        then computes pipefail (rightmost non-zero from root_returncodes).
+        then delegates to the root node's returncode() method.
         Idempotent — second call returns cached returncode.
         """
         if self.returncode is not None:
             return self.returncode
         await asyncio.gather(*self.root.tasks())
-        self.returncode = pipefail_code(self.root)
+        self.returncode = self.root.returncode()
         return self.returncode
 
     def signal(self, sig: int) -> None:
@@ -214,6 +213,12 @@ class StartCtx[
                 root = await ctx.spawn(self._cmd, std_fds)
             except BaseException:
                 await kill_and_reap(*ctx.procs)
+                for task in ctx.fn_tasks:
+                    task.cancel()
+                if ctx.fn_tasks:
+                    await asyncio.shield(
+                        asyncio.gather(*ctx.fn_tasks, return_exceptions=True)
+                    )
                 raise
 
             # Children inherited via fork; close spawn-side fds so EOF propagates.
@@ -245,8 +250,8 @@ class StartCtx[
             await execution.stdout.close()
         if execution.returncode is None:
             await kill_and_reap(*execution.root.all_procs())
-            mark_killed_fns(execution.root)
-            execution.returncode = pipefail_code(execution.root)
+            await cancel_fn_tasks(execution.root)
+            execution.returncode = execution.root.returncode()
         for fd_entry in execution.root.all_fds():
             fd_entry.close()
 
