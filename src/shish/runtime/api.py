@@ -7,7 +7,6 @@ process trees built from IR commands.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import signal as signal_mod
 import subprocess
 from dataclasses import dataclass, field
@@ -26,8 +25,6 @@ from shish.runtime.spawn import SpawnCtx
 from shish.runtime.tree import (
     ProcessNode,
     StdFds,
-    cancel_fn_tasks,
-    kill_and_reap,
 )
 
 
@@ -70,9 +67,7 @@ class Execution[
 
     def signal(self, sig: int) -> None:
         """Send a signal to all processes in the tree. Skips dead processes."""
-        for proc in self.root.all_procs():
-            with contextlib.suppress(ProcessLookupError):
-                proc.send_signal(sig)
+        self.root.signal(sig)
 
     def terminate(self) -> None:
         """Send SIGTERM to all processes in the tree."""
@@ -211,26 +206,14 @@ class StartCtx[
 
             # Spawn process tree
             std_fds = StdFds(stdin=spawn_stdin, stdout=spawn_stdout)
-            try:
-                root = await ctx.spawn(self._cmd, std_fds)
-            except BaseException:
-                await kill_and_reap(*ctx.procs)
-                for task in ctx.fn_tasks:
-                    task.cancel()
-                if ctx.fn_tasks:
-                    await asyncio.shield(
-                        asyncio.gather(*ctx.fn_tasks, return_exceptions=True)
-                    )
-                raise
+            root = await ctx.spawn(self._cmd, std_fds)
 
             # Children inherited via fork; close spawn-side fds so EOF propagates.
             # (FnNode dups from SpawnCtx.spawn_fn are separate — closed by __aexit__.)
             spawn_stdin.close()
             spawn_stdout.close()
-
         except BaseException:
-            for fd_entry in ctx.fds:
-                fd_entry.close()
+            await ctx.cleanup()
             raise
 
         self._execution = Execution(
@@ -251,13 +234,11 @@ class StartCtx[
         if execution.stdout is not None:
             await execution.stdout.close()
         if execution.returncode is None:
-            await kill_and_reap(*execution.root.all_procs())
-            await cancel_fn_tasks(execution.root)
+            await asyncio.shield(execution.root.kill())
             code = execution.root.returncode()
             assert code is not None
             execution.returncode = code
-        for fd_entry in execution.root.all_fds():
-            fd_entry.close()
+        execution.root.close_fds()
 
 
 def start(cmd: Runnable) -> StartCtx[None, None]:

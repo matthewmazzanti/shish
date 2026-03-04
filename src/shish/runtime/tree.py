@@ -1,12 +1,13 @@
 """Process tree nodes and helpers for runtime execution.
 
 Defines the process tree structure (CmdNode, PipelineNode, FnNode)
-and utility functions for returncode normalization and cleanup (kill+reap).
+and utility functions for returncode normalization.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal as signal_mod
 from asyncio.subprocess import Process
 from collections.abc import Awaitable, Iterator
@@ -47,21 +48,29 @@ class CmdNode:
             return None
         return _normalize_returncode(self.proc.returncode)
 
-    def all_procs(self) -> Iterator[Process]:
-        """Yield all processes in the subtree (main + subs, recursive)."""
-        yield self.proc
+    def signal(self, sig: int) -> None:
+        """Send a signal to main proc and all subs. Skips dead processes."""
+        with contextlib.suppress(ProcessLookupError):
+            self.proc.send_signal(sig)
         for sub in self.subs:
-            yield from sub.all_procs()
+            sub.signal(sig)
 
-    def all_fds(self) -> Iterator[OwnedFd]:
-        """Yield owned fds from sub-processes (recursive)."""
+    async def kill(self) -> None:
+        """SIGKILL + wait proc if still running, recurse subs."""
+        reap: list[Awaitable[int]] = []
+        if self.proc.returncode is None:
+            self.proc.kill()
+            reap.append(self.proc.wait())
+        pending: list[Awaitable[object]] = list(reap)
         for sub in self.subs:
-            yield from sub.all_fds()
+            pending.append(sub.kill())
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
-    def all_fn_tasks(self) -> Iterator[asyncio.Task[int]]:
-        """Yield FnNode tasks from sub-processes (recursive)."""
+    def close_fds(self) -> None:
+        """Close owned fds in sub-processes (recursive)."""
         for sub in self.subs:
-            yield from sub.all_fn_tasks()
+            sub.close_fds()
 
     def tasks(self) -> Iterator[Awaitable[object]]:
         """Yield coroutines to gather: proc wait + sub tasks."""
@@ -92,20 +101,21 @@ class PipelineNode:
                 code = stage_code
         return code
 
-    def all_procs(self) -> Iterator[Process]:
-        """Yield all processes across all stages (recursive)."""
+    def signal(self, sig: int) -> None:
+        """Send a signal to all stages (recursive)."""
         for stage in self.stages:
-            yield from stage.all_procs()
+            stage.signal(sig)
 
-    def all_fds(self) -> Iterator[OwnedFd]:
-        """Yield all owned fds across all stages (recursive)."""
-        for stage in self.stages:
-            yield from stage.all_fds()
+    async def kill(self) -> None:
+        """Kill all stages concurrently."""
+        pending = [stage.kill() for stage in self.stages]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
-    def all_fn_tasks(self) -> Iterator[asyncio.Task[int]]:
-        """Yield FnNode tasks across all stages (recursive)."""
+    def close_fds(self) -> None:
+        """Close owned fds across all stages (recursive)."""
         for stage in self.stages:
-            yield from stage.all_fn_tasks()
+            stage.close_fds()
 
     def tasks(self) -> Iterator[Awaitable[object]]:
         """Yield coroutines to gather: all stage tasks."""
@@ -134,20 +144,20 @@ class FnNode:
             return None
         return _normalize_returncode(self._task.result())
 
-    def all_procs(self) -> Iterator[Process]:
-        """No OS process to signal."""
-        yield from ()
+    def signal(self, sig: int) -> None:
+        """No-op — FnNode has no OS process to signal."""
 
-    def all_fds(self) -> Iterator[OwnedFd]:
-        """Yield owned fds for cleanup."""
-        yield self._stdin_fd
-        yield self._stdout_fd
+    async def kill(self) -> None:
+        """Cancel task and await it."""
+        self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
 
-    def all_fn_tasks(self) -> Iterator[asyncio.Task[int]]:
-        """Yield this node's task."""
-        yield self._task
+    def close_fds(self) -> None:
+        """Close owned stdin/stdout fds."""
+        self._stdin_fd.close()
+        self._stdout_fd.close()
 
-    def tasks(self) -> Iterator[Awaitable[object]]:
+    def tasks(self) -> Iterator[Awaitable[int]]:
         """Yield the eagerly-started task."""
         yield self._task
 
@@ -160,33 +170,3 @@ def _normalize_returncode(code: int) -> int:
     if code < 0:
         return 128 + (-code)
     return code
-
-
-async def kill_and_reap(*procs: Process) -> None:
-    """SIGKILL all still-running processes and wait for them to exit.
-
-    Shielded from cancellation so that cleanup completes even if the
-    calling task is cancelled — without this, orphan zombies would
-    accumulate. Only processes with returncode=None (not yet reaped)
-    are killed; already-exited processes are skipped.
-    """
-    reap: list[Awaitable[int]] = []
-    for proc in procs:
-        if proc.returncode is None:
-            proc.kill()
-            reap.append(proc.wait())
-    if reap:
-        await asyncio.shield(asyncio.gather(*reap))
-
-
-async def cancel_fn_tasks(node: ProcessNode) -> None:
-    """Cancel and await all eagerly-started FnNode tasks in the tree.
-
-    Shielded from cancellation so cleanup completes even if the
-    calling task is cancelled — mirrors kill_and_reap for OS processes.
-    """
-    tasks = list(node.all_fn_tasks())
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))

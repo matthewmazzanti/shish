@@ -78,6 +78,27 @@ class SpawnCtx:
         default_factory=lambda: list[asyncio.Task[int]]()
     )
 
+    async def cleanup(self) -> None:
+        """Kill procs, cancel fn_tasks, close all tracked fds.
+
+        Used when spawn fails before a full process tree is built.
+        Shielded from cancellation so cleanup completes even if the
+        calling task is cancelled.
+        """
+        reap: list[Awaitable[int]] = []
+        for proc in self.procs:
+            if proc.returncode is None:
+                proc.kill()
+                reap.append(proc.wait())
+        for task in self.fn_tasks:
+            task.cancel()
+        pending: list[Awaitable[object]] = list(reap)
+        pending.extend(self.fn_tasks)
+        if pending:
+            await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
+        for fd_entry in self.fds:
+            fd_entry.close()
+
     async def exec_(
         self,
         *args: str,
