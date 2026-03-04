@@ -1247,15 +1247,15 @@ async def test_start_signal_term() -> None:
     assert code == 128 + signal.SIGTERM
 
 
-async def test_start_signal_arbitrary() -> None:
-    """send arbitrary signal via execution.signal()."""
+async def test_start_kill() -> None:
+    """execution.kill() sends SIGKILL, wait() collects exit code."""
     import signal
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
         await asyncio.sleep(0.05)
-        execution.signal(signal.SIGUSR1)
+        execution.kill()
         code = await execution.wait()
-    assert code == 128 + signal.SIGUSR1
+    assert code == 128 + signal.SIGKILL
 
 
 async def test_start_idempotent_wait() -> None:

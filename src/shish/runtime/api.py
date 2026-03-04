@@ -7,7 +7,6 @@ process trees built from IR commands.
 from __future__ import annotations
 
 import asyncio
-import signal as signal_mod
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
@@ -51,44 +50,50 @@ class Execution[
     returncode: int | None = field(default=None, init=False)
 
     async def wait(self) -> int:
-        """Wait for all processes and return the pipefail exit code.
+        """Wait for all processes and return the exit code.
 
-        Gathers all tasks (process waits + data writes) concurrently,
-        then delegates to the root node's returncode() method.
         Idempotent — second call returns cached returncode.
         """
         if self.returncode is not None:
             return self.returncode
-        await asyncio.gather(*self.root.tasks())
+        await self.root.wait()
         code = self.root.returncode()
         assert code is not None
         self.returncode = code
         return self.returncode
 
-    def signal(self, sig: int) -> None:
-        """Send a signal to all processes in the tree. Skips dead processes."""
-        self.root.signal(sig)
-
     def terminate(self) -> None:
-        """Send SIGTERM to all processes in the tree."""
-        self.signal(signal_mod.SIGTERM)
+        """Ask nicely, don't wait. SIGTERM for processes, cancel for tasks.
+
+        Call wait() afterwards to collect the exit code.
+        """
+        self.root.terminate()
 
     def kill(self) -> None:
-        """Send SIGKILL to all processes in the tree."""
-        self.signal(signal_mod.SIGKILL)
+        """Tell, don't wait. SIGKILL for processes, cancel for tasks.
+
+        Call wait() afterwards to collect the exit code.
+        """
+        self.root.kill()
 
     async def cleanup(self) -> None:
-        """Close streams, kill+reap if still running, close fds."""
+        """Close streams, kill+wait if still running, close fds.
+
+        wait() may hang if a task is stalled in synchronous code —
+        Fn functions must be cooperative (yield at await points).
+        """
         if self.stdin is not None:
             await self.stdin.close()
         if self.stdout is not None:
             await self.stdout.close()
         if self.returncode is None:
-            await asyncio.shield(self.root.kill())
+            self.root.kill()
+            await asyncio.shield(self.root.wait())
+        self.root.close_fds()
+        if self.returncode is None:
             code = self.root.returncode()
             assert code is not None
             self.returncode = code
-        self.root.close_fds()
 
 
 class StartCtx[
