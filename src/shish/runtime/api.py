@@ -68,17 +68,17 @@ class Execution[
         return self.returncode
 
     def signal(self, sig: int) -> None:
-        """Send a signal to all root processes. Skips dead processes."""
+        """Send a signal to all processes in the tree. Skips dead processes."""
         for proc in self.root.all_procs():
             with contextlib.suppress(ProcessLookupError):
                 proc.send_signal(sig)
 
     def terminate(self) -> None:
-        """Send SIGTERM to all root processes."""
+        """Send SIGTERM to all processes in the tree."""
         self.signal(signal_mod.SIGTERM)
 
     def kill(self) -> None:
-        """Send SIGKILL to all root processes."""
+        """Send SIGKILL to all processes in the tree."""
         self.signal(signal_mod.SIGKILL)
 
 

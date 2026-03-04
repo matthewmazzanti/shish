@@ -217,11 +217,12 @@ class SpawnCmdCtx:
     Accumulates fds, sub-process spawns, and fd ops while resolving a single Cmd,
     then builds the preexec_fn and pass_fds for the main process spawn.
 
-    All fds are closed in the parent immediately after spawn — children inherit via
-    fork, so parent copies must close for EOF propagation. CmdNode receives the (already
-    closed) fds for idempotent cleanup in Execution.wait(). Child spawns must dup fds to
-    survive this close; subprocess handles this automatically, but in-process Fn stages
-    must dup manually (see SpawnCtx.spawn_fn).
+    All fds are closed in the parent immediately after spawn — children
+    inherit via fork, so parent copies must close for EOF propagation.
+    CmdNode receives the (already closed) fds for idempotent cleanup in
+    StartCtx.__aexit__. Child spawns must dup fds to survive this close;
+    subprocess handles this automatically, but in-process Fn stages must
+    dup manually (see SpawnCtx.spawn_fn).
     """
 
     ctx: SpawnCtx
@@ -426,10 +427,10 @@ class SpawnCmdCtx:
         All operations (open, dup2, close) run in the child between fork()
         and exec(). Only async-signal-safe syscalls: open, dup2, close.
 
-        Target fds from OpOpen are protected by pass_fds, so close_fds
-        (which runs after preexec_fn) won't close them. The intermediate
-        fd from os.open() gets dup2'd to the target then closed — close_fds
-        cleans it up if we don't.
+        Target fds from OpOpen are protected by pass_fds, so the
+        default fd cleanup (which closes fds >2 after preexec_fn)
+        won't close them. The intermediate fd from os.open() gets
+        dup2'd to the target then closed.
         """
 
         # Capture ops in closure to avoid preexec allocation
