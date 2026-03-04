@@ -31,16 +31,14 @@ class StdFds:
 class CmdNode:
     """Process tree node for a single spawned command.
 
-    Holds the main process, fds allocated during spawn, and any
-    substitution sub-processes (from FdToSub, FdFromSub, SubOut, SubIn
-    redirects/args). Fds are closed in the parent immediately after spawn
-    (children inherit via fork); Execution.wait() closes again idempotently.
-    Sub-processes are excluded from pipefail — only the main proc
-    participates in exit code reporting.
+    Holds the main process and any substitution sub-processes (from
+    FdToSub, FdFromSub, SubOut, SubIn redirects/args). Does not own
+    fds — spawn closes them in the parent after fork; children inherit
+    copies via pass_fds. Sub-processes are excluded from pipefail —
+    only the main proc participates in exit code reporting.
     """
 
     proc: Process
-    fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
     subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
 
     def returncode(self) -> int | None:
@@ -56,8 +54,7 @@ class CmdNode:
             yield from sub.all_procs()
 
     def all_fds(self) -> Iterator[OwnedFd]:
-        """Yield all owned fds in the subtree (own + subs, recursive)."""
-        yield from self.fds
+        """Yield owned fds from sub-processes (recursive)."""
         for sub in self.subs:
             yield from sub.all_fds()
 

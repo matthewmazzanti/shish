@@ -240,10 +240,9 @@ class SpawnCmdCtx:
 
     All fds are closed in the parent immediately after spawn — children
     inherit via fork, so parent copies must close for EOF propagation.
-    CmdNode receives the (already closed) fds for idempotent cleanup in
-    StartCtx.__aexit__. Child spawns must dup fds to survive this close;
-    subprocess handles this automatically, but in-process Fn stages must
-    dup manually (see SpawnCtx.spawn_fn).
+    Child spawns must dup fds to survive this close; subprocess handles
+    this automatically, but in-process Fn stages must dup manually
+    (see SpawnCtx.spawn_fn).
     """
 
     ctx: SpawnCtx
@@ -312,7 +311,7 @@ class SpawnCmdCtx:
         for fd_entry in self.fds:
             fd_entry.close()
 
-        return CmdNode(proc=proc, fds=self.fds, subs=self.subs)
+        return CmdNode(proc=proc, subs=self.subs)
 
     def _spawn_with_pipe(
         self, inner: Runnable, *, to_stdin: bool
