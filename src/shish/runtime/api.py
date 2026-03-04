@@ -63,7 +63,9 @@ class Execution[
         if self.returncode is not None:
             return self.returncode
         await asyncio.gather(*self.root.tasks())
-        self.returncode = self.root.returncode()
+        code = self.root.returncode()
+        assert code is not None
+        self.returncode = code
         return self.returncode
 
     def signal(self, sig: int) -> None:
@@ -251,7 +253,9 @@ class StartCtx[
         if execution.returncode is None:
             await kill_and_reap(*execution.root.all_procs())
             await cancel_fn_tasks(execution.root)
-            execution.returncode = execution.root.returncode()
+            code = execution.root.returncode()
+            assert code is not None
+            execution.returncode = code
         for fd_entry in execution.root.all_fds():
             fd_entry.close()
 

@@ -43,8 +43,10 @@ class CmdNode:
     fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
     subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
 
-    def returncode(self) -> int:
-        """Normalized returncode: 128 + signal for killed processes."""
+    def returncode(self) -> int | None:
+        """Normalized returncode: 128 + signal for killed processes, None if running."""
+        if self.proc.returncode is None:
+            return None
         return _normalize_returncode(self.proc.returncode)
 
     def all_procs(self) -> Iterator[Process]:
@@ -82,11 +84,13 @@ class PipelineNode:
 
     stages: list[CmdNode | FnNode]
 
-    def returncode(self) -> int:
-        """Pipefail exit code: rightmost non-zero from stage returncodes."""
+    def returncode(self) -> int | None:
+        """Pipefail exit code: rightmost non-zero, None if running."""
         code = 0
         for stage in self.stages:
             stage_code = stage.returncode()
+            if stage_code is None:
+                return None
             if stage_code != 0:
                 code = stage_code
         return code
@@ -125,10 +129,12 @@ class FnNode:
     _stdin_fd: OwnedFd = field(repr=False)
     _stdout_fd: OwnedFd = field(repr=False)
 
-    def returncode(self) -> int:
-        """Return code from task state: cancelled → SIGKILL, done → result."""
+    def returncode(self) -> int | None:
+        """Task return code: cancelled→SIGKILL, done→result, None if running."""
         if self._task.cancelled():
             return 128 + signal_mod.SIGKILL
+        if not self._task.done():
+            return None
         return _normalize_returncode(self._task.result())
 
     def all_procs(self) -> Iterator[Process]:
@@ -152,10 +158,8 @@ class FnNode:
 ProcessNode = CmdNode | PipelineNode | FnNode
 
 
-def _normalize_returncode(code: int | None) -> int:
+def _normalize_returncode(code: int) -> int:
     """Convert returncode to bash-style: 128 + signal for killed processes."""
-    if code is None:
-        raise RuntimeError("Process returncode is None — process never reaped")
     if code < 0:
         return 128 + (-code)
     return code
