@@ -135,7 +135,7 @@ class FnNode:
     def returncode(self) -> int | None:
         """Task return code: cancelled→SIGKILL, done→result, None if running."""
         if self._task.cancelled():
-            return 128 + signal_mod.SIGKILL
+            return _normalize_returncode(-signal_mod.SIGKILL)
         if not self._task.done():
             return None
         return _normalize_returncode(self._task.result())
