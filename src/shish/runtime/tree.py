@@ -196,9 +196,9 @@ async def kill_and_reap(*procs: Process) -> None:
 def mark_killed_fns(node: ProcessNode) -> None:
     """Assign SIGKILL exit code to FnNodes that never completed.
 
-    After _kill_and_reap, OS processes have returncodes but FnNode
+    After kill_and_reap, OS processes have returncodes but FnNode
     tasks may not (e.g., never started, or cancelled mid-flight).
-    This fills in a kill-equivalent code so _pipefail_code can
+    This fills in a kill-equivalent code so pipefail_code can
     iterate root_returncodes without hitting None.
     """
     killed = 128 + signal_mod.SIGKILL

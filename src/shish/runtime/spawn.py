@@ -1,6 +1,6 @@
 """Spawn machinery for building process trees from IR.
 
-Contains SpawnCtx (fd/proc tracking and process tree construction)
+Contains SpawnCtx (fd/proc tracking and process tree spawning)
 and SpawnCmdCtx (per-command redirect resolution and spawn).
 
 Fd ownership invariant:
@@ -322,7 +322,7 @@ class SpawnCmdCtx:
     def _feed_with_pipe(self, data: str | bytes) -> OwnedFd:
         """Allocate pipe, schedule FnNode data write, return read end."""
         pipe_r, pipe_w = self.ctx.pipe()
-        # Both ends closed after spawn: spawn_fn dups pipe_w,
+        # Both ends closed after spawn: SpawnCtx.spawn_fn dups pipe_w,
         # so the FnNode's write end survives parent cleanup.
         self.fds.extend([pipe_r, pipe_w])
         self.fdo.add_live(pipe_r.fd)

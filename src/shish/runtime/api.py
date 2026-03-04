@@ -58,7 +58,7 @@ class Execution[
         """Wait for all processes and return the pipefail exit code.
 
         Gathers all tasks (process waits + data writes) concurrently,
-        then computes pipefail (rightmost non-zero from root_procs).
+        then computes pipefail (rightmost non-zero from root_returncodes).
         Idempotent — second call returns cached returncode.
         """
         if self.returncode is not None:
@@ -217,7 +217,7 @@ class StartCtx[
                 raise
 
             # Children inherited via fork; close spawn-side fds so EOF propagates.
-            # (FnNode dups from spawn_node_fn are separate — closed by __aexit__.)
+            # (FnNode dups from SpawnCtx.spawn_fn are separate — closed by __aexit__.)
             spawn_stdin.close()
             spawn_stdout.close()
 
