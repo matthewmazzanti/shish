@@ -5,6 +5,10 @@
 - CalledProcessError in `out` passes empty list for cmd arg
 - Exhaustive FD checking — verify no leaked fds after each spawn (e.g. walk `/dev/fd` in child)
 - Sporadic "cat: write error: Resource temporarily unavailable" in tests (not yet reproducible)
+- KeyboardInterrupt testing — verify fn() tasks that raise KeyboardInterrupt
+  propagate it through wait() and kill the event loop (not swallowed by
+  `return_exceptions=True`). Needs subprocess-based test since
+  KeyboardInterrupt kills the event loop before in-process assertions can run.
 
 ## Features
 - Stderr capture — currently stderr is completely untouched (inherited from parent).

@@ -52,6 +52,7 @@ TODO.md         # planned features and known issues
 - No one or two letter variable names except loop indexes
 - Conventional Commits: messages use `feat:`, `fix:`, `chore:`, `docs:`, etc. prefix
 - Branch names match: `feat/`, `fix/`, `chore/`, `docs/`, etc.
+- Always ask before committing to main — use a feature branch instead
 
 ## Implementation Notes
 

@@ -118,7 +118,7 @@ class ByteReadStream:
         """Read all remaining lines until EOF."""
         return [line async for line in self]
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the fd."""
         self._fd.close()
 
@@ -158,7 +158,7 @@ class ByteReadStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+        self.close()
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         """Yield lines with trailing newline. Stops at EOF."""
@@ -204,7 +204,7 @@ class ByteWriteStream:
         for chunk in data:
             await self.write(chunk)
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the fd."""
         self._fd.close()
 
@@ -221,7 +221,7 @@ class ByteWriteStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+        self.close()
 
 
 # =============================================================================
@@ -280,9 +280,9 @@ class TextReadStream:
         """Read all remaining lines until EOF."""
         return [line async for line in self]
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the underlying byte stream."""
-        await self._stream.close()
+        self._stream.close()
 
     async def _read_all(self) -> str:
         """Read until EOF, return everything decoded."""
@@ -307,7 +307,7 @@ class TextReadStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+        self.close()
 
     async def __aiter__(self) -> AsyncIterator[str]:
         """Yield decoded lines with trailing newline. Stops at EOF."""
@@ -347,15 +347,15 @@ class TextWriteStream:
         for line in lines:
             await self.write(line)
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the underlying byte stream."""
-        await self._stream.close()
+        self._stream.close()
 
     async def __aenter__(self) -> TextWriteStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+        self.close()
 
 
 # =============================================================================

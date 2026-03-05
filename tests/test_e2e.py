@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import subprocess
 from pathlib import Path
 
@@ -910,10 +911,14 @@ async def test_start_echo() -> None:
 
 
 async def test_start_auto_kill() -> None:
-    """Context exit kills long-running process."""
-    async with start(sh.sleep("60")) as execution:
-        pass  # no wait — __aexit__ kills + reaps
-    assert execution.returncode is not None
+    """Exception exit SIGTERM→SIGKILL long-running process."""
+
+    execution: Execution[None, None] | None = None
+    with pytest.raises(RuntimeError, match="bail"):
+        async with start(sh.sleep("60")) as execution:
+            raise RuntimeError("bail")
+    assert execution is not None
+    assert execution.returncode == 128 + signal.SIGTERM
 
 
 async def test_start_pipeline() -> None:
@@ -925,7 +930,6 @@ async def test_start_pipeline() -> None:
 
 async def test_start_terminate() -> None:
     """execution.terminate() sends SIGTERM."""
-    import signal
 
     async with start(sh.sleep("60")) as execution:
         await asyncio.sleep(0.05)
@@ -944,7 +948,6 @@ async def test_start_idempotent_wait() -> None:
 
 async def test_start_ir_builder_cm() -> None:
     """IR builder start() as context manager works."""
-    from shish.ir import cmd
 
     async with cmd("echo", "hello").start() as execution:
         code = await execution.wait()
@@ -960,7 +963,7 @@ async def test_start_dsl_stdin_pipe() -> None:
     """DSL start(stdin=PIPE) defaults to text mode."""
     async with start(sh.cat()).stdin(PIPE) as execution:
         await execution.stdin.write("hello from pipe")
-        await execution.stdin.close()
+        execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -997,7 +1000,7 @@ async def test_start_dsl_stdin_stdout_pipe() -> None:
     """DSL start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
     async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:
         await execution.stdin.write("round trip")
-        await execution.stdin.close()
+        execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -1019,19 +1022,17 @@ async def test_start_dsl_stdout_pipe_bytes() -> None:
 
 async def test_start_ir_builder_pipe() -> None:
     """IR builder .start(stdin=PIPE) defaults to text mode."""
-    from shish.ir import cmd
 
     async with cmd("cat").start().stdin(PIPE) as execution:
         await execution.stdin.write("builder pipe")
-        await execution.stdin.close()
+        execution.stdin.close()
         assert await execution.wait() == 0
 
 
 async def test_start_ir_builder_pipe_bytes() -> None:
     """IR builder .start(stdin=PIPE, encoding=None) gives ByteWriteStream."""
-    from shish.ir import cmd
 
     async with cmd("cat").start().stdin(PIPE, encoding=None) as execution:
         await execution.stdin.write(b"builder bytes")
-        await execution.stdin.close()
+        execution.stdin.close()
         assert await execution.wait() == 0

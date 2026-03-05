@@ -175,19 +175,19 @@ class Cmd:
 
     def start(self) -> StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return await runtime.run(self)
 
     async def out(self, encoding: str | None = "utf-8") -> str | bytes:
         """Execute and return stdout."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return await runtime.out(self, encoding)
 
@@ -210,19 +210,19 @@ class Fn:
 
     def start(self) -> StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return await runtime.run(self)
 
     async def out(self, encoding: str | None = "utf-8") -> str | bytes:
         """Execute and return stdout."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return await runtime.out(self, encoding)
 
@@ -237,19 +237,19 @@ class Pipeline:
 
     def start(self) -> StartCtx[None, None]:
         """Spawn and yield an Execution via async context manager."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
 
     async def run(self) -> int:
         """Execute and return exit code."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return await runtime.run(self)
 
     async def out(self, encoding: str | None = "utf-8") -> str | bytes:
         """Execute and return stdout."""
-        from shish import runtime
+        from shish import runtime  # noqa: PLC0415
 
         return await runtime.out(self, encoding)
 

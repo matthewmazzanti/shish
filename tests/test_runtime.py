@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from shish import PIPE, STDERR, STDIN, STDOUT, ir
 from shish.aio import ByteReadStream, ByteStageCtx, ByteWriteStream, OwnedFd
-from shish.runtime import Execution, out, run, start
+from shish.runtime import CloseMethod, Execution, out, run, start
 
 # =============================================================================
 # Basic Execution
@@ -726,7 +727,7 @@ async def test_start_stdin_pipe() -> None:
     """start(stdin=PIPE) defaults to text mode."""
     async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
         await execution.stdin.write("hello from pipe")
-        await execution.stdin.close()
+        execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -745,7 +746,7 @@ async def test_start_stdin_stdout_pipe() -> None:
     """start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
     async with start(ir.Cmd(("cat",))).stdin(PIPE).stdout(PIPE) as execution:
         await execution.stdin.write("round trip")
-        await execution.stdin.close()
+        execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -772,7 +773,7 @@ async def test_start_stdin_pipe_bytes() -> None:
     """start(stdin=PIPE, encoding=None) gives ByteWriteStream."""
     async with start(ir.Cmd(("cat",))).stdin(PIPE, encoding=None) as execution:
         await execution.stdin.write(b"hello bytes")
-        await execution.stdin.close()
+        execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -797,7 +798,7 @@ async def test_start_stdin_stdout_pipe_bytes() -> None:
         .stdout(PIPE, encoding=None) as execution
     ):
         await execution.stdin.write(b"bytes round trip")
-        await execution.stdin.close()
+        execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -939,7 +940,6 @@ async def test_env_vars_unset() -> None:
 
 async def test_env_vars_override() -> None:
     """Env vars override inherited values."""
-    import os
 
     original = os.environ.get("HOME", "")
     command = ir.Cmd(("printenv", "HOME"), env_vars=(("HOME", "/fake/home"),))
@@ -1230,15 +1230,18 @@ async def test_start_wait_failure() -> None:
 
 
 async def test_start_auto_kill_on_exit() -> None:
-    """Exiting context without wait() kills the process."""
-    async with start(ir.Cmd(("sleep", "60"))) as execution:
-        pass  # no wait — __aexit__ should SIGKILL + reap
-    assert execution.returncode is not None
+    """Exception exit SIGTERM→SIGKILL long-running process."""
+
+    execution: Execution[None, None] | None = None
+    with pytest.raises(RuntimeError, match="bail"):
+        async with start(ir.Cmd(("sleep", "60"))) as execution:
+            raise RuntimeError("bail")
+    assert execution is not None
+    assert execution.returncode == 128 + signal.SIGTERM
 
 
 async def test_start_signal_term() -> None:
     """send SIGTERM via execution.terminate(), check 128+SIGTERM exit."""
-    import signal
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
         await asyncio.sleep(0.05)
@@ -1249,7 +1252,6 @@ async def test_start_signal_term() -> None:
 
 async def test_start_kill() -> None:
     """execution.kill() sends SIGKILL, wait() collects exit code."""
-    import signal
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
         await asyncio.sleep(0.05)
@@ -1283,16 +1285,20 @@ async def test_start_pipeline() -> None:
 
 
 async def test_start_pipeline_auto_kill() -> None:
-    """Exiting start() pipeline context without wait() kills all stages."""
+    """Exception exit kills all pipeline stages."""
+
     pipeline = ir.Pipeline(
         (
             ir.Cmd(("sleep", "60")),
             ir.Cmd(("sleep", "60")),
         )
     )
-    async with start(pipeline) as execution:
-        pass
-    assert execution.returncode is not None
+    execution: Execution[None, None] | None = None
+    with pytest.raises(RuntimeError, match="bail"):
+        async with start(pipeline) as execution:
+            raise RuntimeError("bail")
+    assert execution is not None
+    assert execution.returncode == 128 + signal.SIGTERM
 
 
 # =============================================================================
@@ -1327,3 +1333,151 @@ async def test_start_feed_stdout_read_before_wait() -> None:
         code = await execution.wait()
     assert code == 0
     assert captured == "hello"
+
+
+# =============================================================================
+# Execution.close()
+# =============================================================================
+
+
+async def test_close_eof_with_stdin_pipe() -> None:
+    """EOF close: cat sees EOF from closed stdin pipe and exits naturally."""
+    async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
+        used = await execution.close(method=CloseMethod.EOF, timeout=2.0)
+    assert used == CloseMethod.EOF
+    assert execution.returncode == 0
+
+
+async def test_close_eof_without_stdin_escalates() -> None:
+    """EOF close without stdin pipe auto-escalates to TERMINATE."""
+
+    async with start(ir.Cmd(("sleep", "60"))) as execution:
+        used = await execution.close(method=CloseMethod.EOF, timeout=0.5)
+    assert used == CloseMethod.TERMINATE
+    assert execution.returncode == 128 + signal.SIGTERM
+
+
+async def test_close_terminate() -> None:
+    """TERMINATE close sends SIGTERM, process exits."""
+
+    async with start(ir.Cmd(("sleep", "60"))) as execution:
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
+    assert execution.returncode == 128 + signal.SIGTERM
+
+
+async def test_close_kill() -> None:
+    """KILL close sends SIGKILL immediately."""
+
+    async with start(ir.Cmd(("sleep", "60"))) as execution:
+        used = await execution.close(method=CloseMethod.KILL, timeout=2.0)
+    assert used == CloseMethod.KILL
+    assert execution.returncode == 128 + signal.SIGKILL
+
+
+async def test_close_terminate_escalates_to_kill() -> None:
+    """TERMINATE escalates to KILL when process ignores SIGTERM."""
+
+    # Python with SIG_IGN reliably ignores SIGTERM at kernel level
+    ignore_term = ir.Cmd(
+        (
+            "python3",
+            "-c",
+            "import signal,time;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "time.sleep(60)",
+        )
+    )
+    async with start(ignore_term) as execution:
+        await asyncio.sleep(0.1)  # let Python start and install SIG_IGN
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=0.5)
+    assert used == CloseMethod.KILL
+    assert execution.returncode == 128 + signal.SIGKILL
+
+
+async def test_close_eof_escalates_through_terminate_to_kill() -> None:
+    """EOF escalates through TERMINATE to KILL when process ignores both."""
+
+    # Ignores SIGTERM, no stdin pipe → EOF step skipped, TERM ignored, escalates to KILL
+    ignore_term = ir.Cmd(
+        (
+            "python3",
+            "-c",
+            "import signal,time;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "time.sleep(60)",
+        )
+    )
+    async with start(ignore_term) as execution:
+        await asyncio.sleep(0.1)  # let Python start and install SIG_IGN
+        used = await execution.close(method=CloseMethod.EOF, timeout=0.3)
+    assert used == CloseMethod.KILL
+    assert execution.returncode == 128 + signal.SIGKILL
+
+
+async def test_close_pipeline_terminate() -> None:
+    """TERMINATE close kills all pipeline stages."""
+
+    pipeline = ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Cmd(("sleep", "60"))))
+    async with start(pipeline) as execution:
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
+    assert execution.returncode == 128 + signal.SIGTERM
+
+
+async def test_close_default_is_eof() -> None:
+    """Default close method is EOF — cat exits on EOF from closed stdin pipe."""
+    async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
+        used = await execution.close(timeout=2.0)
+    assert used == CloseMethod.EOF
+    assert execution.returncode == 0
+
+
+async def test_close_idempotent() -> None:
+    """Calling close() twice does not error."""
+    async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
+        await execution.close(timeout=2.0)
+        await execution.close(timeout=2.0)
+    assert execution.returncode == 0
+
+
+async def test_close_fn_terminate() -> None:
+    """TERMINATE cancels a long-running fn() task."""
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    async with start(ir.Fn(_slow)) as execution:
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
+    assert execution.returncode == 128 + signal.SIGKILL
+
+
+async def test_close_fn_kill() -> None:
+    """KILL cancels a long-running fn() task."""
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    async with start(ir.Fn(_slow)) as execution:
+        used = await execution.close(method=CloseMethod.KILL, timeout=2.0)
+    assert used == CloseMethod.KILL
+    assert execution.returncode == 128 + signal.SIGKILL
+
+
+async def test_close_fn_pipeline() -> None:
+    """TERMINATE close kills cmd and fn stages in a mixed pipeline."""
+
+    async def _slow(ctx: ByteStageCtx) -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    pipeline = ir.Pipeline(
+        (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
+    )
+    async with start(pipeline) as execution:
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
+    assert execution.returncode != 0

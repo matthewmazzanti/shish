@@ -2,17 +2,18 @@
 
 A ProcessNode tree is only constructed once all processes have been
 forked and all fds allocated. It tracks every open resource (procs,
-tasks, fds) and owns their lifecycle: terminate, kill, close_fds.
+tasks, fds) and owns their lifecycle: wait, terminate, kill, close_fds.
 SpawnCtx handles the error path when spawn fails partway.
 """
 
 from __future__ import annotations
 
+import abc
 import asyncio
 import contextlib
 import signal as signal_mod
 from asyncio.subprocess import Process
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
 from dataclasses import dataclass, field
 
 from shish.aio import OwnedFd
@@ -30,8 +31,39 @@ class StdFds:
     stdout: OwnedFd
 
 
+class ProcessNodeBase(abc.ABC):
+    """Base class for process tree nodes.
+
+    Provides wait() from awaitables() + returncode().
+    Subclasses implement returncode(), awaitables(), terminate(),
+    kill(), and close_fds().
+    """
+
+    @abc.abstractmethod
+    def returncode(self) -> int | None: ...
+
+    @abc.abstractmethod
+    def awaitables(self) -> Iterator[Awaitable[int]]: ...
+
+    @abc.abstractmethod
+    def terminate(self) -> None: ...
+
+    @abc.abstractmethod
+    def kill(self) -> None: ...
+
+    @abc.abstractmethod
+    def close_fds(self) -> None: ...
+
+    async def wait(self) -> int:
+        """Wait for all awaitables, return exit code."""
+        await asyncio.gather(*self.awaitables(), return_exceptions=True)
+        code = self.returncode()
+        assert code is not None
+        return code
+
+
 @dataclass
-class CmdNode:
+class CmdNode(ProcessNodeBase):
     """Process tree node for a single spawned command.
 
     Holds the main process and any substitution sub-processes (from
@@ -69,16 +101,15 @@ class CmdNode:
         for sub in self.subs:
             sub.close_fds()
 
-    async def wait(self) -> None:
-        """Wait for proc and all subs to exit."""
-        pending: list[Awaitable[object]] = [self.proc.wait()]
+    def awaitables(self) -> Iterator[Awaitable[int]]:
+        """Yield awaitables for this proc and subs."""
+        yield self.proc.wait()
         for sub in self.subs:
-            pending.append(sub.wait())
-        await asyncio.gather(*pending)
+            yield from sub.awaitables()
 
 
 @dataclass
-class PipelineNode:
+class PipelineNode(ProcessNodeBase):
     """Process tree node for a pipeline (cmd1 | cmd2 | ...).
 
     Each stage is a CmdNode or FnNode. Pipefail semantics:
@@ -114,13 +145,14 @@ class PipelineNode:
         for stage in self.stages:
             stage.close_fds()
 
-    async def wait(self) -> None:
-        """Wait for all stages to exit."""
-        await asyncio.gather(*[stage.wait() for stage in self.stages])
+    def awaitables(self) -> Iterator[Awaitable[int]]:
+        """Yield awaitables across all stages."""
+        for stage in self.stages:
+            yield from stage.awaitables()
 
 
 @dataclass
-class FnNode:
+class FnNode(ProcessNodeBase):
     """Process tree node for an in-process Python function.
 
     No OS process is spawned — the function runs as an asyncio task,
@@ -128,34 +160,34 @@ class FnNode:
     so pipeline close-after-spawn logic doesn't affect it.
     """
 
-    _task: asyncio.Task[int]
+    task: asyncio.Task[int]
     _stdin_fd: OwnedFd = field(repr=False)
     _stdout_fd: OwnedFd = field(repr=False)
 
     def returncode(self) -> int | None:
-        """Task return code: cancelled→SIGKILL, done→result, None if running."""
-        if self._task.cancelled():
-            return _normalize_returncode(-signal_mod.SIGKILL)
-        if not self._task.done():
+        """Task return code, None if running."""
+        if not self.task.done():
             return None
-        return _normalize_returncode(self._task.result())
+        if self.task.cancelled():
+            return _normalize_returncode(-signal_mod.SIGKILL)
+        return _normalize_returncode(self.task.result())
 
     def terminate(self) -> None:
         """Cancel the task (graceful stop for in-process functions)."""
-        self._task.cancel()
+        self.task.cancel()
 
     def kill(self) -> None:
         """Cancel the task (same mechanism as terminate for tasks)."""
-        self._task.cancel()
+        self.task.cancel()
 
     def close_fds(self) -> None:
         """Close owned stdin/stdout fds."""
         self._stdin_fd.close()
         self._stdout_fd.close()
 
-    async def wait(self) -> None:
-        """Wait for the task to complete."""
-        await asyncio.gather(self._task, return_exceptions=True)
+    def awaitables(self) -> Iterator[Awaitable[int]]:
+        """Yield awaitable for this task."""
+        yield self.task
 
 
 ProcessNode = CmdNode | PipelineNode | FnNode
