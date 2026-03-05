@@ -12,9 +12,26 @@ from shish.fn_stage import ByteStageCtx
 from shish.runtime import start
 from tests.core import process_fds
 
-# asyncio uses pidfd on Linux to monitor children (1 fd per child),
-# kqueue + SIGCHLD on macOS (0 fds per child).
-PIDFD_PER_CHILD = 1 if sys.platform == "linux" else 0
+# asyncio uses pidfd on Linux to monitor children (1 fd per child) when
+# available; falls back to threaded watcher (0 fds) otherwise.
+# macOS uses kqueue + SIGCHLD (0 fds per child).
+
+
+def _pidfd_per_child() -> int:
+    if sys.platform != "linux":
+        return 0
+    try:
+        # Guarded: only exists on Linux, may be removed in future Python versions.
+        from asyncio.unix_events import (  # noqa: PLC0415
+            can_use_pidfd,  # type: ignore[attr-defined]
+        )
+
+        return 1 if can_use_pidfd() else 0
+    except (ImportError, AttributeError):
+        return 0
+
+
+PIDFD_PER_CHILD = _pidfd_per_child()
 
 
 async def test_cmd_no_pipe() -> None:
