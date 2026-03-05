@@ -45,7 +45,7 @@ async def test_write_close_closes_fd() -> None:
     """close() closes the underlying fd."""
     read_fd, write_fd = os.pipe()
     writer = ByteWriteStream(OwnedFd(write_fd))
-    await writer.close()
+    writer.close()
     with pytest.raises(OSError):
         os.fstat(write_fd)
     os.close(read_fd)
@@ -66,7 +66,7 @@ async def test_write_after_close() -> None:
     """write() on a closed stream raises."""
     read_fd, write_fd = os.pipe()
     writer = ByteWriteStream(OwnedFd(write_fd))
-    await writer.close()
+    writer.close()
     with pytest.raises(OSError):
         await writer.write(b"hello")
     os.close(read_fd)
@@ -79,7 +79,7 @@ async def test_write_broken_pipe() -> None:
     writer = ByteWriteStream(OwnedFd(write_fd))
     with pytest.raises(BrokenPipeError):
         await writer.write(b"hello")
-    await writer.close()
+    writer.close()
 
 
 async def test_write_backpressure() -> None:
@@ -176,7 +176,7 @@ async def test_read_close_closes_fd() -> None:
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
     reader = ByteReadStream(OwnedFd(read_fd))
-    await reader.close()
+    reader.close()
     with pytest.raises(OSError):
         os.fstat(read_fd)
 
@@ -249,7 +249,7 @@ async def test_text_write_close_closes_fd() -> None:
     """close() propagates through to the fd."""
     read_fd, write_fd = os.pipe()
     writer = TextWriteStream(ByteWriteStream(OwnedFd(write_fd)))
-    await writer.close()
+    writer.close()
     with pytest.raises(OSError):
         os.fstat(write_fd)
     os.close(read_fd)
@@ -331,7 +331,7 @@ async def test_text_read_close_closes_fd() -> None:
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
     reader = TextReadStream(ByteReadStream(OwnedFd(read_fd)))
-    await reader.close()
+    reader.close()
     with pytest.raises(OSError):
         os.fstat(read_fd)
 
@@ -394,8 +394,8 @@ async def test_byte_stage_ctx_fields() -> None:
     ctx = ByteStageCtx(stdin=reader, stdout=writer)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
-    await reader.close()
-    await writer.close()
+    reader.close()
+    writer.close()
 
 
 async def test_text_stage_ctx_fields() -> None:
@@ -408,8 +408,8 @@ async def test_text_stage_ctx_fields() -> None:
     ctx = TextStageCtx(stdin=reader, stdout=writer)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
-    await reader.close()
-    await writer.close()
+    reader.close()
+    writer.close()
 
 
 async def test_decode_bare_decorator() -> None:
@@ -434,8 +434,8 @@ async def test_decode_bare_decorator() -> None:
         stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
     )
     result = await upper(byte_ctx)
-    await byte_ctx.stdin.close()
-    await byte_ctx.stdout.close()
+    byte_ctx.stdin.close()
+    byte_ctx.stdout.close()
 
     output = os.read(stdout_read_fd, 1024)
     os.close(stdout_read_fd)
@@ -464,8 +464,8 @@ async def test_decode_with_parens() -> None:
         stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
     )
     result = await upper(byte_ctx)
-    await byte_ctx.stdin.close()
-    await byte_ctx.stdout.close()
+    byte_ctx.stdin.close()
+    byte_ctx.stdout.close()
 
     output = os.read(stdout_read_fd, 1024)
     os.close(stdout_read_fd)
@@ -495,8 +495,8 @@ async def test_decode_with_encoding() -> None:
         stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
     )
     result = await passthrough(byte_ctx)
-    await byte_ctx.stdin.close()
-    await byte_ctx.stdout.close()
+    byte_ctx.stdin.close()
+    byte_ctx.stdout.close()
 
     output = os.read(stdout_read_fd, 1024)
     os.close(stdout_read_fd)
@@ -534,6 +534,6 @@ async def test_decode_does_not_close_byte_streams() -> None:
     assert not stdout_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
 
     # Clean up
-    await stdin_stream.close()
-    await stdout_stream.close()
+    stdin_stream.close()
+    stdout_stream.close()
     os.close(stdout_read_fd)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import signal as signal_mod
 import sys
 import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
@@ -195,16 +196,18 @@ class SpawnCtx:
             try:
                 ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
                 return await func(ctx)
+            except asyncio.CancelledError:
+                return -signal_mod.SIGKILL
             except Exception:
                 traceback.print_exc(file=sys.stderr)
                 return 1
             finally:
-                await stdout_stream.close()
-                await stdin_stream.close()
+                stdout_stream.close()
+                stdin_stream.close()
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)
-        return FnNode(_task=task, _stdin_fd=dup_stdin, _stdout_fd=dup_stdout)
+        return FnNode(task=task, _stdin_fd=dup_stdin, _stdout_fd=dup_stdout)
 
     async def spawn_pipeline(
         self,

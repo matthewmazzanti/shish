@@ -44,7 +44,7 @@ asyncio_mode = "auto"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PLC0415"]
 
 [tool.pyright]
 pythonVersion = "3.13"

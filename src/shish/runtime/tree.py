@@ -12,8 +12,9 @@ import asyncio
 import contextlib
 import signal as signal_mod
 from asyncio.subprocess import Process
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
 from dataclasses import dataclass, field
+from typing import Literal
 
 from shish.aio import OwnedFd
 
@@ -69,12 +70,14 @@ class CmdNode:
         for sub in self.subs:
             sub.close_fds()
 
-    async def wait(self) -> None:
-        """Wait for proc and all subs to exit."""
-        pending: list[Awaitable[object]] = [self.proc.wait()]
+    def awaitables(
+        self, only: Literal["procs", "tasks"] | None = None
+    ) -> Iterator[Awaitable[int]]:
+        """Yield awaitables for this proc and subs."""
+        if only in ("procs", None):
+            yield self.proc.wait()
         for sub in self.subs:
-            pending.append(sub.wait())
-        await asyncio.gather(*pending)
+            yield from sub.awaitables(only)
 
 
 @dataclass
@@ -114,9 +117,12 @@ class PipelineNode:
         for stage in self.stages:
             stage.close_fds()
 
-    async def wait(self) -> None:
-        """Wait for all stages to exit."""
-        await asyncio.gather(*[stage.wait() for stage in self.stages])
+    def awaitables(
+        self, only: Literal["procs", "tasks"] | None = None
+    ) -> Iterator[Awaitable[int]]:
+        """Yield awaitables across all stages."""
+        for stage in self.stages:
+            yield from stage.awaitables(only)
 
 
 @dataclass
@@ -128,34 +134,37 @@ class FnNode:
     so pipeline close-after-spawn logic doesn't affect it.
     """
 
-    _task: asyncio.Task[int]
+    task: asyncio.Task[int]
     _stdin_fd: OwnedFd = field(repr=False)
     _stdout_fd: OwnedFd = field(repr=False)
 
     def returncode(self) -> int | None:
-        """Task return code: cancelled→SIGKILL, done→result, None if running."""
-        if self._task.cancelled():
-            return _normalize_returncode(-signal_mod.SIGKILL)
-        if not self._task.done():
+        """Task return code, None if running."""
+        if not self.task.done():
             return None
-        return _normalize_returncode(self._task.result())
+        if self.task.cancelled():
+            return _normalize_returncode(-signal_mod.SIGKILL)
+        return _normalize_returncode(self.task.result())
 
     def terminate(self) -> None:
         """Cancel the task (graceful stop for in-process functions)."""
-        self._task.cancel()
+        self.task.cancel()
 
     def kill(self) -> None:
         """Cancel the task (same mechanism as terminate for tasks)."""
-        self._task.cancel()
+        self.task.cancel()
 
     def close_fds(self) -> None:
         """Close owned stdin/stdout fds."""
         self._stdin_fd.close()
         self._stdout_fd.close()
 
-    async def wait(self) -> None:
-        """Wait for the task to complete."""
-        await asyncio.gather(self._task, return_exceptions=True)
+    def awaitables(
+        self, only: Literal["procs", "tasks"] | None = None
+    ) -> Iterator[Awaitable[int]]:
+        """Yield awaitable for this task."""
+        if only in ("tasks", None):
+            yield self.task
 
 
 ProcessNode = CmdNode | PipelineNode | FnNode

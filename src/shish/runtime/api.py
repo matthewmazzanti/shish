@@ -7,7 +7,9 @@ process trees built from IR commands.
 from __future__ import annotations
 
 import asyncio
+import enum
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
@@ -25,6 +27,18 @@ from shish.runtime.tree import (
     ProcessNode,
     StdFds,
 )
+
+
+class CloseMethod(enum.IntEnum):
+    """Shutdown escalation level for Execution.close().
+
+    Each level escalates to the next on timeout:
+    EOF → TERMINATE → KILL.
+    """
+
+    EOF = 0
+    TERMINATE = 1
+    KILL = 2
 
 
 @dataclass
@@ -56,7 +70,7 @@ class Execution[
         """
         if self.returncode is not None:
             return self.returncode
-        await self.root.wait()
+        await asyncio.gather(*self.root.awaitables(), return_exceptions=True)
         code = self.root.returncode()
         assert code is not None
         self.returncode = code
@@ -76,24 +90,76 @@ class Execution[
         """
         self.root.kill()
 
-    async def cleanup(self) -> None:
-        """Close streams, kill+wait if still running, close fds.
+    async def _eof_wait(self, timeout: float) -> bool:
+        """Wait for natural exit (processes see EOF). True if exited in time."""
+        try:
+            await asyncio.wait_for(self.wait(), timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            return False
+        return True
 
-        wait() may hang if a task is stalled in synchronous code —
-        Fn functions must be cooperative (yield at await points).
+    async def _terminate_wait(self, timeout: float) -> bool:
+        """SIGTERM + wait. True if exited in time."""
+        self.terminate()
+        try:
+            await asyncio.wait_for(self.wait(), timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            return False
+        return True
+
+    async def _kill_wait(self, timeout: float) -> bool:
+        """SIGKILL + wait. Procs always die; warns if fn() tasks leak."""
+        self.kill()
+        procs = asyncio.gather(*self.root.awaitables("procs"), return_exceptions=True)
+        tasks = asyncio.gather(*self.root.awaitables("tasks"), return_exceptions=True)
+        try:
+            await asyncio.shield(
+                asyncio.gather(
+                    procs,
+                    asyncio.wait_for(tasks, timeout=timeout),
+                )
+            )
+        except (TimeoutError, asyncio.CancelledError):
+            warnings.warn(
+                "close() timed out waiting for fn() tasks after "
+                "SIGKILL — a task is likely stuck in synchronous code. "
+                "The leaked task will keep running in the background.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return True
+
+    async def close(
+        self,
+        *,
+        method: CloseMethod = CloseMethod.EOF,
+        timeout: float = 3,
+    ) -> None:
+        """Close streams and fds, then wait for processes to exit.
+
+        Starts at the given method and escalates on timeout:
+        EOF → TERMINATE → KILL.
+
+        Args:
+            method: Starting shutdown level.
+                EOF — wait for natural exit (processes see EOF).
+                TERMINATE — SIGTERM, escalate to KILL on timeout.
+                KILL — SIGKILL immediately.
+            timeout: Seconds to wait at each escalation step.
         """
         if self.stdin is not None:
-            await self.stdin.close()
+            self.stdin.close()
         if self.stdout is not None:
-            await self.stdout.close()
-        if self.returncode is None:
-            self.root.kill()
-            await asyncio.shield(self.root.wait())
+            self.stdout.close()
         self.root.close_fds()
-        if self.returncode is None:
-            code = self.root.returncode()
-            assert code is not None
-            self.returncode = code
+
+        if method == CloseMethod.EOF and self.stdin is None:
+            method = CloseMethod.TERMINATE
+
+        steps = [self._eof_wait, self._terminate_wait, self._kill_wait]
+        for step in steps[method:]:
+            if await step(timeout):
+                return
 
 
 class StartCtx[
@@ -107,7 +173,7 @@ class StartCtx[
         async with start(cmd).stdin(PIPE).stdout(PIPE) as execution: ...
 
     __aenter__ spawns the process tree and creates an Execution handle.
-    __aexit__ delegates to Execution.cleanup() for full teardown.
+    __aexit__ calls close() which escalates EOF → TERMINATE → KILL.
     """
 
     _cmd: Runnable
@@ -115,6 +181,7 @@ class StartCtx[
     _stdout_arg: int | Pipe | None
     _stdin_encoding: str | None
     _stdout_encoding: str | None
+    _cleanup_timeout: float
     _execution: Execution[Any, Any] | None
 
     def __init__(
@@ -125,12 +192,14 @@ class StartCtx[
         _stdout: int | Pipe | None = None,
         _stdin_encoding: str | None = "utf-8",
         _stdout_encoding: str | None = "utf-8",
+        _cleanup_timeout: float = 3,
     ) -> None:
         self._cmd = cmd
         self._stdin_arg = _stdin
         self._stdout_arg = _stdout
         self._stdin_encoding = _stdin_encoding
         self._stdout_encoding = _stdout_encoding
+        self._cleanup_timeout = _cleanup_timeout
         self._execution = None
 
     @overload
@@ -154,6 +223,7 @@ class StartCtx[
             _stdout=self._stdout_arg,
             _stdin_encoding=encoding,
             _stdout_encoding=self._stdout_encoding,
+            _cleanup_timeout=self._cleanup_timeout,
         )
 
     @overload
@@ -173,6 +243,7 @@ class StartCtx[
             self._cmd,
             _stdin=self._stdin_arg,
             _stdout=arg,
+            _cleanup_timeout=self._cleanup_timeout,
             _stdin_encoding=self._stdin_encoding,
             _stdout_encoding=encoding,
         )
@@ -241,13 +312,18 @@ class StartCtx[
         )
         return self._execution
 
-    async def __aexit__(self, *exc_info: object) -> None:
-        """Delegate full cleanup to Execution."""
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """Close streams, escalate from EOF → TERMINATE → KILL."""
         assert self._execution is not None
-        await self._execution.cleanup()
+        await self._execution.close(timeout=self._cleanup_timeout)
 
 
-def start(cmd: Runnable) -> StartCtx[None, None]:
+def start(cmd: Runnable, *, cleanup_timeout: float = 3) -> StartCtx[None, None]:
     """Create an async context manager that spawns and manages an Execution.
 
     Use chained builder methods to configure streams::
@@ -258,8 +334,13 @@ def start(cmd: Runnable) -> StartCtx[None, None]:
         async with start(cmd).stdin(PIPE).stdout(PIPE) as execution:
             await execution.stdin.write("data")
             captured = await execution.stdout.read()
+
+    Args:
+        cmd: Command to execute.
+        cleanup_timeout: Seconds to wait at each escalation step
+            (SIGTERM → SIGKILL) during exception close. Default 3s.
     """
-    return StartCtx(cmd)
+    return StartCtx(cmd, _cleanup_timeout=cleanup_timeout)
 
 
 async def run(cmd: Runnable) -> int:

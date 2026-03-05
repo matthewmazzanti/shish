@@ -35,7 +35,7 @@ from shish.dsl import (
 )
 from shish.fdops import PIPE, STDERR, STDIN, STDOUT, Pipe
 from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
-from shish.runtime import Execution, StartCtx
+from shish.runtime import CloseMethod, Execution, StartCtx
 
 __all__ = [
     "PIPE",
@@ -46,6 +46,7 @@ __all__ = [
     "ByteReadStream",
     "ByteStageCtx",
     "ByteWriteStream",
+    "CloseMethod",
     "Cmd",
     "Data",
     "Execution",
