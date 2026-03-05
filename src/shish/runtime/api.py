@@ -142,6 +142,9 @@ class Execution[
             self.stdout.close()
         self.root.close_fds()
 
+        if self.returncode is not None:
+            return method
+
         if method == CloseMethod.EOF and self.stdin is None:
             method = CloseMethod.TERMINATE
 
