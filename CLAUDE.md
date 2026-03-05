@@ -23,6 +23,7 @@ src/shish/          # main package
   builders.py       # frozen dataclass builders: Cmd, Pipeline, per-fd redirects
   syntax.py         # thin wrappers (Cmd, Pipeline), operators, combinators
   fd.py             # fd constants (STDIN/STDOUT/STDERR/PIPE), Fd
+  fn_stage.py       # Fn stage contexts, ByteFn/TextFn aliases, decode wrapper
   streams.py        # async byte/text streams for subprocess pipes
   runtime/
     __init__.py     # re-exports from api + tree
@@ -80,10 +81,10 @@ TODO.md             # planned features and known issues
 
 ## Test Organization
 
-- `test_ir.py` — Builder layer: `cmd()` builder methods, `builders.pipeline()` flattening. Sync only, no execution.
-- `test_dsl.py` — `sh` magic + operators produce correct builders. Sync only, no execution.
-- `test_fdops.py` — FdOps fd-table simulation. Sync only, no execution.
-- `test_streams.py` — async byte/text streams, fd utilities.
+- `test_builders.py` — Builder layer: `cmd()` builder methods, `builders.pipeline()` flattening. Sync only, no execution.
+- `test_syntax.py` — `sh` magic + operators produce correct builders. Sync only, no execution.
+- `test_fd_ops.py` — FdOps fd-table simulation. Sync only, no execution.
+- `test_streams.py` — async byte/text streams.
 - `test_runtime.py` — Raw builders → run. No syntax layer. Tests runtime behavior.
 - `test_e2e.py` — Full integration from syntax or builder → run.
 - `test_fd_hygiene.py` — Verifies child processes see exactly the expected fd set.
