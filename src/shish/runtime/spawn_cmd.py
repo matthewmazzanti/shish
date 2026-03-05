@@ -174,12 +174,6 @@ class SpawnCmdCtx:
         self.fds.extend([pipe_r, pipe_w])
         return pipe_r, pipe_w
 
-    def _dup(self, fd: int) -> Fd:
-        """Dup a raw fd, tracking the result for post-spawn cleanup."""
-        duped = self.ctx.dup(fd)
-        self.fds.append(duped)
-        return duped
-
     def _spawn(self, cmd: Runnable, std_fds: StdFds) -> None:
         """Schedule a sub-process spawn, tracking it for concurrent execution."""
         self.pending.append(self.ctx.spawn(cmd, std_fds))
