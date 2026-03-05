@@ -69,10 +69,7 @@ class Execution[
         """
         if self.returncode is not None:
             return self.returncode
-        await asyncio.gather(*self.root.awaitables(), return_exceptions=True)
-        code = self.root.returncode()
-        assert code is not None
-        self.returncode = code
+        self.returncode = await self.root.wait()
         return self.returncode
 
     def terminate(self) -> None:
