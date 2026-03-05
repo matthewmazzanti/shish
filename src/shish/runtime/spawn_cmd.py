@@ -233,28 +233,30 @@ class SpawnCmdCtx:
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
             inherit_stdout = self.ctx.dup(STDOUT)
-            self.fds.append(inherit_stdout)
+            inherit_stderr = self.ctx.dup(STDERR)
+            self.fds.extend([inherit_stdout, inherit_stderr])
             self.pending.append(
                 self.ctx.spawn(
                     inner,
                     StdFds(
                         stdin=pipe_r,
                         stdout=inherit_stdout,
-                        stderr=self.std_fds.stderr,
+                        stderr=inherit_stderr,
                     ),
                 )
             )
         else:
             self.fdo.add_live(pipe_r.fd)
             inherit_stdin = self.ctx.dup(STDIN)
-            self.fds.append(inherit_stdin)
+            inherit_stderr = self.ctx.dup(STDERR)
+            self.fds.extend([inherit_stdin, inherit_stderr])
             self.pending.append(
                 self.ctx.spawn(
                     inner,
                     StdFds(
                         stdin=inherit_stdin,
                         stdout=pipe_w,
-                        stderr=self.std_fds.stderr,
+                        stderr=inherit_stderr,
                     ),
                 )
             )
@@ -287,14 +289,15 @@ class SpawnCmdCtx:
             write_data = make_byte_wrapper(write_str_data, "utf-8")
 
         inherit_stdin = self.ctx.dup(STDIN)
-        self.fds.append(inherit_stdin)
+        inherit_stderr = self.ctx.dup(STDERR)
+        self.fds.extend([inherit_stdin, inherit_stderr])
         self.pending.append(
             self.ctx.spawn_fn(
                 Fn(write_data),
                 StdFds(
                     stdin=inherit_stdin,
                     stdout=pipe_w,
-                    stderr=self.std_fds.stderr,
+                    stderr=inherit_stderr,
                 ),
             )
         )
