@@ -12,19 +12,18 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
-from shish.aio import (
-    ByteReadStream,
-    ByteWriteStream,
-    OwnedFd,
-    TextReadStream,
-    TextWriteStream,
-)
-from shish.fdops import PIPE, STDIN, STDOUT, Pipe
-from shish.ir import Runnable
+from shish.builders import Runnable
+from shish.fd import PIPE, STDIN, STDOUT, OwnedFd, Pipe
 from shish.runtime.spawn import SpawnCtx
 from shish.runtime.tree import (
     ProcessNode,
     StdFds,
+)
+from shish.streams import (
+    ByteReadStream,
+    ByteWriteStream,
+    TextReadStream,
+    TextWriteStream,
 )
 
 

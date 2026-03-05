@@ -16,7 +16,7 @@ from asyncio.subprocess import Process
 from collections.abc import Awaitable, Iterator
 from dataclasses import dataclass, field
 
-from shish.aio import OwnedFd
+from shish.fd import OwnedFd
 
 
 @dataclass

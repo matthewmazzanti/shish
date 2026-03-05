@@ -25,7 +25,7 @@ from shish import (
     sub_out,
     write,
 )
-from shish.ir import cmd
+from shish.builders import cmd
 
 # =============================================================================
 # Basic Execution

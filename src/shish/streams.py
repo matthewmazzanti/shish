@@ -40,24 +40,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import overload
 
-
-@dataclass
-class OwnedFd:
-    """Tracked file descriptor with idempotent close."""
-
-    fd: int
-    closed: bool = False
-
-    def fileno(self) -> int:
-        """Return the raw fd number."""
-        return self.fd
-
-    def close(self) -> None:
-        """Close the fd if not already closed."""
-        if not self.closed:
-            self.closed = True
-            os.close(self.fd)
-
+from shish.fd import OwnedFd
 
 # =============================================================================
 # Byte streams — non-blocking fd + event loop

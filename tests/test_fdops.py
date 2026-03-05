@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from shish.fdops import FdOps, OpClose, OpDup2, OpOpen
+from shish.runtime.spawn_cmd import FdOps, OpClose, OpDup2, OpOpen
 
 # =============================================================================
 # Empty state

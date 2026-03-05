@@ -4,11 +4,11 @@ import os
 
 import pytest
 
-from shish.aio import (
+from shish.fd import OwnedFd
+from shish.streams import (
     ByteReadStream,
     ByteStageCtx,
     ByteWriteStream,
-    OwnedFd,
     TextReadStream,
     TextStageCtx,
     TextWriteStream,

@@ -1,4 +1,4 @@
-"""IR: frozen dataclasses with chainable builder methods."""
+"""Builders: frozen dataclasses with chainable builder methods."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shish.fdops import STDIN, STDOUT
+from shish.fd import STDIN, STDOUT
 
 if TYPE_CHECKING:
-    from shish.aio import ByteStageCtx
     from shish.runtime import StartCtx
+    from shish.streams import ByteStageCtx
 
 
 class _Unset:

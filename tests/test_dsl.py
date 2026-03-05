@@ -9,13 +9,13 @@ from shish import (
     Cmd,
     Fn,
     Pipeline,
+    builders,
     close,
     cmd,
     cwd,
     env,
     feed,
     fn,
-    ir,
     pipe,
     read,
     sh,
@@ -24,7 +24,7 @@ from shish import (
     unwrap,
     write,
 )
-from shish.aio import ByteStageCtx, TextStageCtx
+from shish.streams import ByteStageCtx, TextStageCtx
 
 # =============================================================================
 # Magic cmd() builder
@@ -32,33 +32,35 @@ from shish.aio import ByteStageCtx, TextStageCtx
 
 
 def test_cmd_getattr() -> None:
-    assert unwrap(cmd().echo) == ir.Cmd(("echo",))
+    assert unwrap(cmd().echo) == builders.Cmd(("echo",))
 
 
 def test_cmd_chain() -> None:
-    assert unwrap(cmd().git.status) == ir.Cmd(("git", "status"))
+    assert unwrap(cmd().git.status) == builders.Cmd(("git", "status"))
 
 
 def test_cmd_call_args() -> None:
-    assert unwrap(cmd().echo("hello", "world")) == ir.Cmd(("echo", "hello", "world"))
+    assert unwrap(cmd().echo("hello", "world")) == builders.Cmd(
+        ("echo", "hello", "world")
+    )
 
 
 def test_cmd_call_short_flag() -> None:
-    assert unwrap(cmd().ls(l=True, a=True)) == ir.Cmd(("ls", "-l", "-a"))
+    assert unwrap(cmd().ls(l=True, a=True)) == builders.Cmd(("ls", "-l", "-a"))
 
 
 def test_cmd_call_long_flag() -> None:
-    assert unwrap(cmd().git.commit(message="fix")) == ir.Cmd(
+    assert unwrap(cmd().git.commit(message="fix")) == builders.Cmd(
         ("git", "commit", "--message", "fix")
     )
 
 
 def test_cmd_call_flag_false() -> None:
-    assert unwrap(cmd().ls(l=True, a=False)) == ir.Cmd(("ls", "-l"))
+    assert unwrap(cmd().ls(l=True, a=False)) == builders.Cmd(("ls", "-l"))
 
 
 def test_cmd_underscore_to_dash() -> None:
-    assert unwrap(cmd().foo(some_flag="value")) == ir.Cmd(
+    assert unwrap(cmd().foo(some_flag="value")) == builders.Cmd(
         ("foo", "--some-flag", "value")
     )
 
@@ -69,53 +71,55 @@ def test_cmd_underscore_to_dash() -> None:
 
 
 def test_sh_basic() -> None:
-    assert unwrap(sh.echo("hello")) == ir.Cmd(("echo", "hello"))
+    assert unwrap(sh.echo("hello")) == builders.Cmd(("echo", "hello"))
 
 
 def test_sh_subcommand() -> None:
-    assert unwrap(sh.git.status()) == ir.Cmd(("git", "status"))
+    assert unwrap(sh.git.status()) == builders.Cmd(("git", "status"))
 
 
 def test_sh_deep_chain() -> None:
-    assert unwrap(sh.docker.compose.up(d=True)) == ir.Cmd(
+    assert unwrap(sh.docker.compose.up(d=True)) == builders.Cmd(
         ("docker", "compose", "up", "-d")
     )
 
 
 def test_sh_args_then_chain() -> None:
-    assert unwrap(sh.env("FOO=1").cat("file")) == ir.Cmd(
+    assert unwrap(sh.env("FOO=1").cat("file")) == builders.Cmd(
         ("env", "FOO=1", "cat", "file")
     )
 
 
 def test_sh_args_at_each_level() -> None:
-    assert unwrap(sh.kubectl("-n", "default").get.pods(o="json")) == ir.Cmd(
+    assert unwrap(sh.kubectl("-n", "default").get.pods(o="json")) == builders.Cmd(
         ("kubectl", "-n", "default", "get", "pods", "-o", "json")
     )
 
 
 def test_sh_flags_then_chain() -> None:
-    assert unwrap(sh.git(no_pager=True).log(oneline=True)) == ir.Cmd(
+    assert unwrap(sh.git(no_pager=True).log(oneline=True)) == builders.Cmd(
         ("git", "--no-pager", "log", "--oneline")
     )
 
 
 def test_sh_mixed() -> None:
-    assert unwrap(sh.git.commit("file.txt", m="fix", amend=True)) == ir.Cmd(
+    assert unwrap(sh.git.commit("file.txt", m="fix", amend=True)) == builders.Cmd(
         ("git", "commit", "file.txt", "-m", "fix", "--amend")
     )
 
 
 def test_cmd_path_arg() -> None:
-    assert unwrap(sh.cat(Path("/tmp/file.txt"))) == ir.Cmd(("cat", "/tmp/file.txt"))
+    assert unwrap(sh.cat(Path("/tmp/file.txt"))) == builders.Cmd(
+        ("cat", "/tmp/file.txt")
+    )
 
 
 def test_sh_callable() -> None:
-    assert unwrap(sh("echo", "hello")) == ir.Cmd(("echo", "hello"))
+    assert unwrap(sh("echo", "hello")) == builders.Cmd(("echo", "hello"))
 
 
 def test_sh_callable_with_flags() -> None:
-    assert unwrap(sh("ls", l=True)) == ir.Cmd(("ls", "-l"))
+    assert unwrap(sh("ls", l=True)) == builders.Cmd(("ls", "-l"))
 
 
 # =============================================================================
@@ -126,21 +130,21 @@ def test_sh_callable_with_flags() -> None:
 def test_pipe_creates_pipeline() -> None:
     result = sh.echo("hello") | sh.cat()
     assert isinstance(result, Pipeline)
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(("cat",)),
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(("cat",)),
         )
     )
 
 
 def test_pipe_chain() -> None:
     result = sh.echo("hello") | sh.grep("h") | sh.wc(l=True)
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(("grep", "h")),
-            ir.Cmd(("wc", "-l")),
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(("grep", "h")),
+            builders.Cmd(("wc", "-l")),
         )
     )
 
@@ -148,11 +152,11 @@ def test_pipe_chain() -> None:
 def test_pipe_flattens_left() -> None:
     p1 = sh.a() | sh.b()
     result = p1 | sh.c()
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
         )
     )
 
@@ -160,11 +164,11 @@ def test_pipe_flattens_left() -> None:
 def test_pipe_flattens_right() -> None:
     p1 = sh.b() | sh.c()
     result = sh.a() | p1
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
         )
     )
 
@@ -173,12 +177,12 @@ def test_pipe_flattens_both() -> None:
     p1 = sh.a() | sh.b()
     p2 = sh.c() | sh.d()
     result = p1 | p2
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
-            ir.Cmd(("d",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
+            builders.Cmd(("d",)),
         )
     )
 
@@ -191,66 +195,66 @@ def test_pipe_flattens_both() -> None:
 def test_redirect_stdout() -> None:
     result = sh.echo("hello") > "out.txt"
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("echo", "hello"),
-        redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+        redirects=(builders.FdToFile(STDOUT, Path("out.txt")),),
     )
 
 
 def test_redirect_stdout_append() -> None:
     result = sh.echo("hello") >> "out.txt"
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("echo", "hello"),
-        redirects=(ir.FdToFile(STDOUT, Path("out.txt"), append=True),),
+        redirects=(builders.FdToFile(STDOUT, Path("out.txt"), append=True),),
     )
 
 
 def test_redirect_stdin_file() -> None:
     result = sh.cat() < "in.txt"
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
+        redirects=(builders.FdFromFile(STDIN, Path("in.txt")),),
     )
 
 
 def test_redirect_stdin_data() -> None:
     result = sh.cat() << "hello"
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdFromData(STDIN, "hello"),),
+        redirects=(builders.FdFromData(STDIN, "hello"),),
     )
 
 
 def test_redirect_chain_stdin_stdout() -> None:
     result = (sh.cat() < "in.txt") > "out.txt"
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
         redirects=(
-            ir.FdFromFile(STDIN, Path("in.txt")),
-            ir.FdToFile(STDOUT, Path("out.txt")),
+            builders.FdFromFile(STDIN, Path("in.txt")),
+            builders.FdToFile(STDOUT, Path("out.txt")),
         ),
     )
 
 
 def test_redirect_chain_stdout_stdin() -> None:
     result = (sh.cat() > "out.txt") < "in.txt"
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
         redirects=(
-            ir.FdToFile(STDOUT, Path("out.txt")),
-            ir.FdFromFile(STDIN, Path("in.txt")),
+            builders.FdToFile(STDOUT, Path("out.txt")),
+            builders.FdFromFile(STDIN, Path("in.txt")),
         ),
     )
 
 
 def test_redirect_stdin_data_bytes() -> None:
     result = sh.cat() << b"binary"
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdFromData(STDIN, b"binary"),),
+        redirects=(builders.FdFromData(STDIN, b"binary"),),
     )
 
 
@@ -291,33 +295,33 @@ def test_pipeline_lshift_raises() -> None:
 
 def test_cmd_write_tuple_fd() -> None:
     result = sh.foo() > (STDERR, "err.log")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("foo",),
-        redirects=(ir.FdToFile(STDERR, Path("err.log")),),
+        redirects=(builders.FdToFile(STDERR, Path("err.log")),),
     )
 
 
 def test_cmd_append_tuple_fd() -> None:
     result = sh.foo() >> (STDERR, "err.log")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("foo",),
-        redirects=(ir.FdToFile(STDERR, Path("err.log"), append=True),),
+        redirects=(builders.FdToFile(STDERR, Path("err.log"), append=True),),
     )
 
 
 def test_cmd_read_tuple_fd() -> None:
     result = sh.foo() < (3, "data.txt")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("foo",),
-        redirects=(ir.FdFromFile(3, Path("data.txt")),),
+        redirects=(builders.FdFromFile(3, Path("data.txt")),),
     )
 
 
 def test_cmd_feed_tuple_fd() -> None:
     result = sh.foo() << (3, "injected")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("foo",),
-        redirects=(ir.FdFromData(3, "injected"),),
+        redirects=(builders.FdFromData(3, "injected"),),
     )
 
 
@@ -328,31 +332,37 @@ def test_cmd_feed_tuple_fd() -> None:
 
 def test_redirect_in_pipeline_first() -> None:
     result = (sh.cat() < "in.txt") | sh.grep("x")
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("cat",), redirects=(ir.FdFromFile(STDIN, Path("in.txt")),)),
-            ir.Cmd(("grep", "x")),
+            builders.Cmd(
+                ("cat",), redirects=(builders.FdFromFile(STDIN, Path("in.txt")),)
+            ),
+            builders.Cmd(("grep", "x")),
         )
     )
 
 
 def test_redirect_in_pipeline_last() -> None:
     result = sh.echo("hello") | (sh.cat() > "out.txt")
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),)),
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(
+                ("cat",), redirects=(builders.FdToFile(STDOUT, Path("out.txt")),)
+            ),
         )
     )
 
 
 def test_redirect_in_pipeline_middle() -> None:
     result = sh.a() | (sh.b() > "log.txt") | sh.c()
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",), redirects=(ir.FdToFile(STDOUT, Path("log.txt")),)),
-            ir.Cmd(("c",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(
+                ("b",), redirects=(builders.FdToFile(STDOUT, Path("log.txt")),)
+            ),
+            builders.Cmd(("c",)),
         )
     )
 
@@ -365,22 +375,22 @@ def test_redirect_in_pipeline_middle() -> None:
 def test_pipe_two() -> None:
     result = pipe(sh.echo("hello"), sh.cat())
     assert isinstance(result, Pipeline)
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(("cat",)),
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(("cat",)),
         )
     )
 
 
 def test_pipe_varargs() -> None:
     result = pipe(sh.a(), sh.b(), sh.c(), sh.d())
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
-            ir.Cmd(("d",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
+            builders.Cmd(("d",)),
         )
     )
 
@@ -388,11 +398,11 @@ def test_pipe_varargs() -> None:
 def test_pipe_flattens() -> None:
     p1 = pipe(sh.a(), sh.b())
     result = pipe(p1, sh.c())
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
         )
     )
 
@@ -400,61 +410,61 @@ def test_pipe_flattens() -> None:
 def test_write_fn() -> None:
     result = write(sh.echo("hello"), "out.txt")
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("echo", "hello"),
-        redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+        redirects=(builders.FdToFile(STDOUT, Path("out.txt")),),
     )
 
 
 def test_write_append_fn() -> None:
     result = write(sh.echo("hello"), "out.txt", append=True)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("echo", "hello"),
-        redirects=(ir.FdToFile(STDOUT, Path("out.txt"), append=True),),
+        redirects=(builders.FdToFile(STDOUT, Path("out.txt"), append=True),),
     )
 
 
 def test_read_fn() -> None:
     result = read(sh.cat(), "in.txt")
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdFromFile(STDIN, Path("in.txt")),),
+        redirects=(builders.FdFromFile(STDIN, Path("in.txt")),),
     )
 
 
 def test_feed_fn() -> None:
     result = feed(sh.cat(), "hello")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdFromData(STDIN, "hello"),),
+        redirects=(builders.FdFromData(STDIN, "hello"),),
     )
 
 
 def test_feed_bytes_fn() -> None:
     result = feed(sh.cat(), b"binary")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdFromData(STDIN, b"binary"),),
+        redirects=(builders.FdFromData(STDIN, b"binary"),),
     )
 
 
 def test_close_fn() -> None:
     result = close(sh.cat(), STDIN)
     assert isinstance(result, Cmd)
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
-        redirects=(ir.FdClose(STDIN),),
+        redirects=(builders.FdClose(STDIN),),
     )
 
 
 def test_chain_read_write() -> None:
     result = write(read(sh.cat(), "in.txt"), "out.txt")
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         ("cat",),
         redirects=(
-            ir.FdFromFile(STDIN, Path("in.txt")),
-            ir.FdToFile(STDOUT, Path("out.txt")),
+            builders.FdFromFile(STDIN, Path("in.txt")),
+            builders.FdToFile(STDOUT, Path("out.txt")),
         ),
     )
 
@@ -465,20 +475,20 @@ def test_chain_read_write() -> None:
 
 
 def test_sub_in() -> None:
-    assert sub_in(sh.sort("a.txt")) == ir.SubIn(ir.Cmd(("sort", "a.txt")))
+    assert sub_in(sh.sort("a.txt")) == builders.SubIn(builders.Cmd(("sort", "a.txt")))
 
 
 def test_sub_out() -> None:
-    assert sub_out(sh.gzip()) == ir.SubOut(ir.Cmd(("gzip",)))
+    assert sub_out(sh.gzip()) == builders.SubOut(builders.Cmd(("gzip",)))
 
 
 def test_sub_in_with_pipeline() -> None:
     result = sub_in(sh.cat("a") | sh.sort())
-    assert result == ir.SubIn(
-        ir.Pipeline(
+    assert result == builders.SubIn(
+        builders.Pipeline(
             (
-                ir.Cmd(("cat", "a")),
-                ir.Cmd(("sort",)),
+                builders.Cmd(("cat", "a")),
+                builders.Cmd(("sort",)),
             )
         )
     )
@@ -486,8 +496,8 @@ def test_sub_in_with_pipeline() -> None:
 
 def test_sub_in_as_arg() -> None:
     result = sh.cat(sub_in(sh.echo("hello")))
-    assert unwrap(result) == ir.Cmd(
-        ("cat", ir.SubIn(ir.Cmd(("echo", "hello")))),
+    assert unwrap(result) == builders.Cmd(
+        ("cat", builders.SubIn(builders.Cmd(("echo", "hello")))),
     )
 
 
@@ -496,22 +506,24 @@ def test_sub_in_multiple_args() -> None:
         sub_in(sh.sort("a.txt")),
         sub_in(sh.sort("b.txt")),
     )
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         (
             "diff",
-            ir.SubIn(ir.Cmd(("sort", "a.txt"))),
-            ir.SubIn(ir.Cmd(("sort", "b.txt"))),
+            builders.SubIn(builders.Cmd(("sort", "a.txt"))),
+            builders.SubIn(builders.Cmd(("sort", "b.txt"))),
         )
     )
 
 
 def test_sub_out_as_arg() -> None:
     result = sh.tee(sub_out(sh.cat() > "out.txt"))
-    assert unwrap(result) == ir.Cmd(
+    assert unwrap(result) == builders.Cmd(
         (
             "tee",
-            ir.SubOut(
-                ir.Cmd(("cat",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
+            builders.SubOut(
+                builders.Cmd(
+                    ("cat",), redirects=(builders.FdToFile(STDOUT, Path("out.txt")),)
+                )
             ),
         )
     )
@@ -519,8 +531,8 @@ def test_sub_out_as_arg() -> None:
 
 def test_sub_out_with_redirect() -> None:
     result = sub_out(sh.gzip() > "out.gz")
-    assert result == ir.SubOut(
-        ir.Cmd(("gzip",), redirects=(ir.FdToFile(STDOUT, Path("out.gz")),))
+    assert result == builders.SubOut(
+        builders.Cmd(("gzip",), redirects=(builders.FdToFile(STDOUT, Path("out.gz")),))
     )
 
 
@@ -591,10 +603,10 @@ def test_rmod_env_unset() -> None:
 def test_matmul_with_pipe() -> None:
     result = (sh.pwd() @ "/tmp") | sh.cat()
     assert isinstance(result, Pipeline)
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("pwd",), working_dir=Path("/tmp")),
-            ir.Cmd(("cat",)),
+            builders.Cmd(("pwd",), working_dir=Path("/tmp")),
+            builders.Cmd(("cat",)),
         )
     )
 
@@ -602,10 +614,10 @@ def test_matmul_with_pipe() -> None:
 def test_rmod_with_pipe() -> None:
     result = ({"FOO": "bar"} % sh.printenv("FOO")) | sh.cat()
     assert isinstance(result, Pipeline)
-    assert unwrap(result) == ir.Pipeline(
+    assert unwrap(result) == builders.Pipeline(
         (
-            ir.Cmd(("printenv", "FOO"), env_vars=(("FOO", "bar"),)),
-            ir.Cmd(("cat",)),
+            builders.Cmd(("printenv", "FOO"), env_vars=(("FOO", "bar"),)),
+            builders.Cmd(("cat",)),
         )
     )
 
@@ -646,43 +658,45 @@ def test_fn_constructor() -> None:
 
 
 def test_fn_pipe_cmd() -> None:
-    assert unwrap(_noop_fn | sh.cat()) == ir.Pipeline((_noop_ir, ir.Cmd(("cat",))))
+    assert unwrap(_noop_fn | sh.cat()) == builders.Pipeline(
+        (_noop_ir, builders.Cmd(("cat",)))
+    )
 
 
 def test_cmd_pipe_fn() -> None:
-    assert unwrap(sh.echo("hi") | _noop_fn) == ir.Pipeline(
-        (ir.Cmd(("echo", "hi")), _noop_ir)
+    assert unwrap(sh.echo("hi") | _noop_fn) == builders.Pipeline(
+        (builders.Cmd(("echo", "hi")), _noop_ir)
     )
 
 
 def test_pipeline_pipe_fn() -> None:
-    assert unwrap((sh.a() | sh.b()) | _noop_fn) == ir.Pipeline(
-        (ir.Cmd(("a",)), ir.Cmd(("b",)), _noop_ir)
+    assert unwrap((sh.a() | sh.b()) | _noop_fn) == builders.Pipeline(
+        (builders.Cmd(("a",)), builders.Cmd(("b",)), _noop_ir)
     )
 
 
 def test_fn_pipe_fn() -> None:
-    assert unwrap(_noop_fn | _noop_fn) == ir.Pipeline((_noop_ir, _noop_ir))
+    assert unwrap(_noop_fn | _noop_fn) == builders.Pipeline((_noop_ir, _noop_ir))
 
 
 def test_cmd_gt_fn() -> None:
-    assert unwrap(sh.echo("hi") > sub_out(_noop_fn)) == ir.Cmd(("echo", "hi")).write(
-        ir.SubOut(_noop_ir)
-    )
+    assert unwrap(sh.echo("hi") > sub_out(_noop_fn)) == builders.Cmd(
+        ("echo", "hi")
+    ).write(builders.SubOut(_noop_ir))
 
 
 def test_cmd_lt_fn() -> None:
-    assert unwrap(sh.cat() < sub_in(_noop_fn)) == ir.Cmd(("cat",)).read(
-        ir.SubIn(_noop_ir)
+    assert unwrap(sh.cat() < sub_in(_noop_fn)) == builders.Cmd(("cat",)).read(
+        builders.SubIn(_noop_ir)
     )
 
 
 def test_sub_in_fn() -> None:
-    assert sub_in(_noop_fn) == ir.SubIn(_noop_ir)
+    assert sub_in(_noop_fn) == builders.SubIn(_noop_ir)
 
 
 def test_sub_out_fn() -> None:
-    assert sub_out(_noop_fn) == ir.SubOut(_noop_ir)
+    assert sub_out(_noop_fn) == builders.SubOut(_noop_ir)
 
 
 def test_unwrap_fn() -> None:
@@ -710,7 +724,7 @@ def test_fn_encoding_none_decorator() -> None:
         return 0
 
     result = fn(raw, encoding=None)
-    assert unwrap(result) == ir.Fn(raw)
+    assert unwrap(result) == builders.Fn(raw)
 
 
 def test_fn_encoding_none_direct() -> None:
@@ -720,7 +734,7 @@ def test_fn_encoding_none_direct() -> None:
         return 0
 
     result = fn(raw, encoding=None)
-    assert unwrap(result) == ir.Fn(raw)
+    assert unwrap(result) == builders.Fn(raw)
 
 
 def test_fn_encoding_str_wraps() -> None:

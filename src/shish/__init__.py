@@ -1,14 +1,16 @@
-from shish.aio import (
+from shish.builders import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
+from shish.fd import PIPE, STDERR, STDIN, STDOUT, OwnedFd, Pipe
+from shish.runtime import CloseMethod, Execution, StartCtx
+from shish.streams import (
     ByteReadStream,
     ByteStageCtx,
     ByteWriteStream,
-    OwnedFd,
     TextReadStream,
     TextStageCtx,
     TextWriteStream,
     decode,
 )
-from shish.dsl import (
+from shish.syntax import (
     Cmd,
     Flag,
     Fn,
@@ -33,9 +35,6 @@ from shish.dsl import (
     wrap,
     write,
 )
-from shish.fdops import PIPE, STDERR, STDIN, STDOUT, Pipe
-from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
-from shish.runtime import CloseMethod, Execution, StartCtx
 
 __all__ = [
     "PIPE",
