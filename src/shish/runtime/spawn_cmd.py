@@ -238,7 +238,7 @@ class SpawnCmdCtx:
 
         to_stdin=True: pipe connects to sub's stdin; parent keeps write end.
         to_stdin=False: pipe connects to sub's stdout; parent keeps read end.
-        The other side dups from parent STDIN/STDOUT for inherit behavior.
+        The other side inherits from the parent command's std_fds.
         """
         pipe_r, pipe_w = self._pipe()
         if to_stdin:
@@ -248,8 +248,8 @@ class SpawnCmdCtx:
                     inner,
                     StdFds(
                         stdin=pipe_r,
-                        stdout=self._dup(STDOUT),
-                        stderr=self._dup(STDERR),
+                        stdout=self._dup(self.std_fds.stdout.fd),
+                        stderr=self._dup(self.std_fds.stderr.fd),
                     ),
                 )
             )
@@ -259,9 +259,9 @@ class SpawnCmdCtx:
                 self.ctx.spawn(
                     inner,
                     StdFds(
-                        stdin=self._dup(STDIN),
+                        stdin=self._dup(self.std_fds.stdin.fd),
                         stdout=pipe_w,
-                        stderr=self._dup(STDERR),
+                        stderr=self._dup(self.std_fds.stderr.fd),
                     ),
                 )
             )
@@ -296,9 +296,9 @@ class SpawnCmdCtx:
             self.ctx.spawn_fn(
                 Fn(write_data),
                 StdFds(
-                    stdin=self._dup(STDIN),
+                    stdin=self._dup(self.std_fds.stdin.fd),
                     stdout=pipe_w,
-                    stderr=self._dup(STDERR),
+                    stderr=self._dup(self.std_fds.stderr.fd),
                 ),
             )
         )
