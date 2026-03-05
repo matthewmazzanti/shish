@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Never, cast, overload
 
 import shish.builders as builders
 from shish.fd import STDIN, STDOUT
-from shish.stages import ByteFn, TextFn, make_byte_wrapper
+from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
 if TYPE_CHECKING:
     from shish.runtime import StartCtx

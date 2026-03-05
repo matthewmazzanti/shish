@@ -28,6 +28,7 @@ from shish.builders import (
     Runnable,
 )
 from shish.fd import Fd
+from shish.fn_stage import ByteStageCtx
 from shish.runtime.spawn_cmd import SpawnCmdCtx
 from shish.runtime.tree import (
     CmdNode,
@@ -36,7 +37,6 @@ from shish.runtime.tree import (
     ProcessNode,
     StdFds,
 )
-from shish.stages import ByteStageCtx
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,

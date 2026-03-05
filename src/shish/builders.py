@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from shish.fd import STDIN, STDOUT
 
 if TYPE_CHECKING:
+    from shish.fn_stage import ByteFn
     from shish.runtime import StartCtx
-    from shish.stages import ByteFn
 
 
 class _Unset:

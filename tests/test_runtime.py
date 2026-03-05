@@ -10,8 +10,8 @@ import pytest
 
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
 from shish.fd import Fd
+from shish.fn_stage import ByteStageCtx
 from shish.runtime import CloseMethod, Execution, out, run, start
-from shish.stages import ByteStageCtx
 from shish.streams import ByteReadStream, ByteWriteStream
 
 # =============================================================================

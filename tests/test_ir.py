@@ -4,7 +4,7 @@ from pathlib import Path
 
 from shish import STDERR, STDIN, STDOUT, builders
 from shish.builders import Fn, cmd
-from shish.stages import ByteStageCtx
+from shish.fn_stage import ByteStageCtx
 
 # =============================================================================
 # Cmd construction

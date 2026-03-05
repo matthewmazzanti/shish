@@ -34,15 +34,15 @@ from shish.builders import (
     SubOut,
 )
 from shish.fd import STDIN, STDOUT, Fd
+from shish.fn_stage import (
+    ByteStageCtx,
+    TextStageCtx,
+    make_byte_wrapper,
+)
 from shish.runtime.tree import (
     CmdNode,
     ProcessNode,
     StdFds,
-)
-from shish.stages import (
-    ByteStageCtx,
-    TextStageCtx,
-    make_byte_wrapper,
 )
 
 if ty.TYPE_CHECKING:

@@ -5,7 +5,7 @@ import os
 import pytest
 
 from shish.fd import Fd
-from shish.stages import ByteStageCtx, TextStageCtx, decode
+from shish.fn_stage import ByteStageCtx, TextStageCtx, decode
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,

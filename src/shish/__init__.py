@@ -9,8 +9,8 @@ from shish.builders import (
     WriteDst,
 )
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
+from shish.fn_stage import ByteFn, ByteStageCtx, TextFn, TextStageCtx, decode
 from shish.runtime import CloseMethod, Execution, StartCtx
-from shish.stages import ByteFn, ByteStageCtx, TextFn, TextStageCtx, decode
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,

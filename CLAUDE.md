@@ -7,8 +7,7 @@ Async shell command library for Python with operator-based DSL.
 direnv auto-activates venv via `.envrc` (runs `uv sync --frozen` + `source .venv/bin/activate`).
 
 ```bash
-just check      # lint + typecheck + test (CI-strict, fails on format)
-just fmtcheck   # format + typecheck + test (use this during development)
+just check      # format + typecheck + test
 just fmt        # format + autofix
 just lint       # ruff format --check + ruff check
 just typecheck  # pyright
