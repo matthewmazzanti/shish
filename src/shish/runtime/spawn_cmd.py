@@ -174,6 +174,19 @@ class SpawnCmdCtx:
         self.fds.extend([pipe_r, pipe_w])
         return pipe_r, pipe_w
 
+    def _sub_fds(
+        self,
+        *,
+        stdin: Fd | None = None,
+        stdout: Fd | None = None,
+    ) -> StdFds:
+        """Build StdFds from parent's std_fds with optional overrides."""
+        return StdFds(
+            stdin=stdin or self.std_fds.stdin,
+            stdout=stdout or self.std_fds.stdout,
+            stderr=self.std_fds.stderr,
+        )
+
     def _spawn(self, cmd: Runnable, std_fds: StdFds) -> None:
         """Schedule a sub-process spawn, tracking it for concurrent execution."""
         self.pending.append(self.ctx.spawn(cmd, std_fds))
@@ -241,24 +254,10 @@ class SpawnCmdCtx:
         pipe_r, pipe_w = self._pipe()
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
-            self._spawn(
-                inner,
-                StdFds(
-                    stdin=pipe_r,
-                    stdout=self.std_fds.stdout,
-                    stderr=self.std_fds.stderr,
-                ),
-            )
+            self._spawn(inner, self._sub_fds(stdin=pipe_r))
         else:
             self.fdo.add_live(pipe_r.fd)
-            self._spawn(
-                inner,
-                StdFds(
-                    stdin=self.std_fds.stdin,
-                    stdout=pipe_w,
-                    stderr=self.std_fds.stderr,
-                ),
-            )
+            self._spawn(inner, self._sub_fds(stdout=pipe_w))
         return pipe_r, pipe_w
 
     def _feed_with_pipe(self, data: str | bytes) -> Fd:
@@ -286,14 +285,7 @@ class SpawnCmdCtx:
 
             write_data = make_byte_wrapper(write_str_data, "utf-8")
 
-        self._spawn(
-            Fn(write_data),
-            StdFds(
-                stdin=self.std_fds.stdin,
-                stdout=pipe_w,
-                stderr=self.std_fds.stderr,
-            ),
-        )
+        self._spawn(Fn(write_data), self._sub_fds(stdout=pipe_w))
         return pipe_r
 
     def _resolve_redirects(self) -> None:
