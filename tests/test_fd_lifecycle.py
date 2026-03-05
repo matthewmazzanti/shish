@@ -7,7 +7,7 @@ execution — no leaks, no unexpected fds.
 import asyncio
 import sys
 
-from shish import builders
+from shish.builders import Fn, cmd, pipeline
 from shish.fn_stage import ByteStageCtx
 from shish.runtime import start
 from tests.core import process_fds
@@ -21,7 +21,7 @@ async def test_cmd_no_pipe() -> None:
     """Cmd with inherited stdio has no shish-allocated fds."""
     baseline = process_fds()
 
-    async with start(builders.Cmd(("sleep", "10"))) as execution:
+    async with start(cmd("sleep", "10")) as execution:
         during = process_fds()
         execution.kill()
         await execution.wait()
@@ -36,8 +36,8 @@ async def test_two_cmds_no_pipe() -> None:
     baseline = process_fds()
 
     async with (
-        start(builders.Cmd(("sleep", "10"))) as ex1,
-        start(builders.Cmd(("sleep", "10"))) as ex2,
+        start(cmd("sleep", "10")) as ex1,
+        start(cmd("sleep", "10")) as ex2,
     ):
         during = process_fds()
         ex1.kill()
@@ -54,12 +54,10 @@ async def test_pipeline_no_pipe() -> None:
     baseline = process_fds()
 
     async with start(
-        builders.Pipeline(
-            (
-                builders.Cmd(("sleep", "10")),
-                builders.Cmd(("sleep", "10")),
-                builders.Cmd(("sleep", "10")),
-            )
+        pipeline(
+            cmd("sleep", "10"),
+            cmd("sleep", "10"),
+            cmd("sleep", "10"),
         )
     ) as execution:
         during = process_fds()
@@ -79,7 +77,7 @@ async def test_fn_no_pipe() -> None:
         await done.wait()
         return 0
 
-    async with start(builders.Fn(wait_fn)) as execution:
+    async with start(Fn(wait_fn)) as execution:
         during = process_fds()
         done.set()
         await execution.wait()
@@ -99,8 +97,8 @@ async def test_two_fns_no_pipe() -> None:
         return 0
 
     async with (
-        start(builders.Fn(wait_fn)) as ex1,
-        start(builders.Fn(wait_fn)) as ex2,
+        start(Fn(wait_fn)) as ex1,
+        start(Fn(wait_fn)) as ex2,
     ):
         during = process_fds()
         done.set()
@@ -121,12 +119,10 @@ async def test_fn_pipeline_no_pipe() -> None:
         return 0
 
     async with start(
-        builders.Pipeline(
-            (
-                builders.Fn(wait_fn),
-                builders.Fn(wait_fn),
-                builders.Fn(wait_fn),
-            )
+        pipeline(
+            Fn(wait_fn),
+            Fn(wait_fn),
+            Fn(wait_fn),
         )
     ) as execution:
         during = process_fds()
@@ -142,12 +138,9 @@ async def test_cmd_with_sub_in_redirect() -> None:
     """FdFromSub: 2 procs (main + sub), pipe fds cleaned up."""
     baseline = process_fds()
 
-    sub = builders.SubIn(builders.Cmd(("sleep", "10")))
-    cmd = builders.Cmd(
-        ("sleep", "10"),
-        redirects=(builders.FdFromSub(3, sub),),
-    )
-    async with start(cmd) as execution:
+    sub = cmd("sleep", "10").sub_in()
+    command = cmd("sleep", "10").read(sub, fd=3)
+    async with start(command) as execution:
         during = process_fds()
         execution.kill()
         await execution.wait()
@@ -160,12 +153,9 @@ async def test_cmd_with_sub_out_redirect() -> None:
     """FdToSub: 2 procs (main + sub), pipe fds cleaned up."""
     baseline = process_fds()
 
-    sub = builders.SubOut(builders.Cmd(("sleep", "10")))
-    cmd = builders.Cmd(
-        ("sleep", "10"),
-        redirects=(builders.FdToSub(3, sub),),
-    )
-    async with start(cmd) as execution:
+    sub = cmd("sleep", "10").sub_out()
+    command = cmd("sleep", "10").write(sub, fd=3)
+    async with start(command) as execution:
         during = process_fds()
         execution.kill()
         await execution.wait()
@@ -178,9 +168,9 @@ async def test_cmd_with_sub_in_arg() -> None:
     """SubIn arg: 2 procs (main + sub), pipe fds cleaned up."""
     baseline = process_fds()
 
-    sub = builders.SubIn(builders.Cmd(("sleep", "10")))
-    cmd = builders.Cmd(("sleep", "10", sub))
-    async with start(cmd) as execution:
+    sub = cmd("sleep", "10").sub_in()
+    command = cmd("sleep", "10", sub)
+    async with start(command) as execution:
         during = process_fds()
         execution.kill()
         await execution.wait()
@@ -193,9 +183,9 @@ async def test_cmd_with_sub_out_arg() -> None:
     """SubOut arg: 2 procs (main + sub), pipe fds cleaned up."""
     baseline = process_fds()
 
-    sub = builders.SubOut(builders.Cmd(("sleep", "10")))
-    cmd = builders.Cmd(("sleep", "10", sub))
-    async with start(cmd) as execution:
+    sub = cmd("sleep", "10").sub_out()
+    command = cmd("sleep", "10", sub)
+    async with start(command) as execution:
         during = process_fds()
         execution.kill()
         await execution.wait()
