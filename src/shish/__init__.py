@@ -1,5 +1,5 @@
 from shish.builders import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
-from shish.fd import PIPE, STDERR, STDIN, STDOUT, OwnedFd, Pipe
+from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
 from shish.runtime import CloseMethod, Execution, StartCtx
 from shish.streams import (
     ByteReadStream,
@@ -49,9 +49,9 @@ __all__ = [
     "Cmd",
     "Data",
     "Execution",
+    "Fd",
     "Flag",
     "Fn",
-    "OwnedFd",
     "PathLike",
     "Pipe",
     "Pipeline",

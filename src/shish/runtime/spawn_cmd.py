@@ -33,7 +33,7 @@ from shish.builders import (
     SubIn,
     SubOut,
 )
-from shish.fd import STDIN, STDOUT, OwnedFd
+from shish.fd import STDIN, STDOUT, Fd
 from shish.runtime.tree import (
     CmdNode,
     ProcessNode,
@@ -156,7 +156,7 @@ class SpawnCmdCtx:
     cmd: Cmd
     std_fds: StdFds
     fdo: FdOps
-    fds: list[OwnedFd]
+    fds: list[Fd]
     pending: list[Awaitable[ProcessNode]]
     subs: list[ProcessNode]
 
@@ -220,9 +220,7 @@ class SpawnCmdCtx:
 
         return CmdNode(proc=proc, subs=self.subs)
 
-    def _spawn_with_pipe(
-        self, inner: Runnable, *, to_stdin: bool
-    ) -> tuple[OwnedFd, OwnedFd]:
+    def _spawn_with_pipe(self, inner: Runnable, *, to_stdin: bool) -> tuple[Fd, Fd]:
         """Allocate pipe, track fds, register in fdo, schedule sub spawn.
 
         to_stdin=True: pipe connects to sub's stdin; parent keeps write end.
@@ -247,7 +245,7 @@ class SpawnCmdCtx:
             )
         return pipe_r, pipe_w
 
-    def _feed_with_pipe(self, data: str | bytes) -> OwnedFd:
+    def _feed_with_pipe(self, data: str | bytes) -> Fd:
         """Allocate pipe, schedule FnNode data write, return read end."""
         pipe_r, pipe_w = self.ctx.pipe()
         # Both ends closed after spawn: SpawnCtx.spawn_fn dups pipe_w,

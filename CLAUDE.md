@@ -23,7 +23,7 @@ src/shish/          # main package
   __init__.py       # re-exports from syntax + runtime
   builders.py       # frozen dataclass builders: Cmd, Pipeline, per-fd redirects
   syntax.py         # thin wrappers (Cmd, Pipeline), operators, combinators
-  fd.py             # fd constants (STDIN/STDOUT/STDERR/PIPE), OwnedFd
+  fd.py             # fd constants (STDIN/STDOUT/STDERR/PIPE), Fd
   streams.py        # async byte/text streams for subprocess pipes
   runtime/
     __init__.py     # re-exports from api + tree

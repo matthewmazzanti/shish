@@ -27,7 +27,7 @@ from shish.builders import (
     Pipeline,
     Runnable,
 )
-from shish.fd import OwnedFd
+from shish.fd import Fd
 from shish.runtime.spawn_cmd import SpawnCmdCtx
 from shish.runtime.tree import (
     CmdNode,
@@ -54,7 +54,7 @@ class SpawnCtx:
     spawn methods that dispatch IR nodes to the appropriate builder.
     """
 
-    fds: list[OwnedFd] = field(default_factory=lambda: list[OwnedFd]())
+    fds: list[Fd] = field(default_factory=lambda: list[Fd]())
     procs: list[Process] = field(default_factory=lambda: list[Process]())
     fn_tasks: list[asyncio.Task[int]] = field(
         default_factory=lambda: list[asyncio.Task[int]]()
@@ -110,7 +110,7 @@ class SpawnCtx:
         self.procs.append(proc)
         return proc
 
-    def pipe(self) -> tuple[OwnedFd, OwnedFd]:
+    def pipe(self) -> tuple[Fd, Fd]:
         """Allocate an os.pipe(), tracking both ends for cleanup.
 
         Returns (read_end, write_end). Both are registered so the
@@ -118,14 +118,14 @@ class SpawnCtx:
         caller gets to close them after fork inheritance.
         """
         read_fd, write_fd = os.pipe()
-        read_entry = OwnedFd(read_fd)
+        read_entry = Fd(read_fd)
         self.fds.append(read_entry)
-        write_entry = OwnedFd(write_fd)
+        write_entry = Fd(write_fd)
         self.fds.append(write_entry)
         return read_entry, write_entry
 
-    def dup(self, fd: int) -> OwnedFd:
-        duped = OwnedFd(os.dup(fd))
+    def dup(self, fd: int) -> Fd:
+        duped = Fd(os.dup(fd))
         self.fds.append(duped)
         return duped
 

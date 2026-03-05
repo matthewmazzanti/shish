@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from shish.fd import OwnedFd
+from shish.fd import Fd
 from shish.streams import (
     ByteReadStream,
     ByteStageCtx,
@@ -23,7 +23,7 @@ from shish.streams import (
 async def test_write() -> None:
     """write() delivers all bytes and returns the count."""
     read_fd, write_fd = os.pipe()
-    async with ByteWriteStream(OwnedFd(write_fd)) as writer:
+    async with ByteWriteStream(Fd(write_fd)) as writer:
         count = await writer.write(b"hello")
     result = os.read(read_fd, 1024)
     os.close(read_fd)
@@ -34,7 +34,7 @@ async def test_write() -> None:
 async def test_writelines() -> None:
     """writelines() writes all chunks in order."""
     read_fd, write_fd = os.pipe()
-    async with ByteWriteStream(OwnedFd(write_fd)) as writer:
+    async with ByteWriteStream(Fd(write_fd)) as writer:
         await writer.writelines([b"aaa", b"bbb", b"ccc"])
     result = os.read(read_fd, 1024)
     os.close(read_fd)
@@ -44,7 +44,7 @@ async def test_writelines() -> None:
 async def test_write_close_closes_fd() -> None:
     """close() closes the underlying fd."""
     read_fd, write_fd = os.pipe()
-    writer = ByteWriteStream(OwnedFd(write_fd))
+    writer = ByteWriteStream(Fd(write_fd))
     writer.close()
     with pytest.raises(OSError):
         os.fstat(write_fd)
@@ -55,7 +55,7 @@ async def test_write_context_manager_closes_on_exception() -> None:
     """__aexit__ closes the fd even when the block raises."""
     read_fd, write_fd = os.pipe()
     with pytest.raises(RuntimeError):
-        async with ByteWriteStream(OwnedFd(write_fd)):
+        async with ByteWriteStream(Fd(write_fd)):
             raise RuntimeError("boom")
     with pytest.raises(OSError):
         os.fstat(write_fd)
@@ -65,7 +65,7 @@ async def test_write_context_manager_closes_on_exception() -> None:
 async def test_write_after_close() -> None:
     """write() on a closed stream raises."""
     read_fd, write_fd = os.pipe()
-    writer = ByteWriteStream(OwnedFd(write_fd))
+    writer = ByteWriteStream(Fd(write_fd))
     writer.close()
     with pytest.raises(OSError):
         await writer.write(b"hello")
@@ -76,7 +76,7 @@ async def test_write_broken_pipe() -> None:
     """write() raises when the read end is already closed."""
     _read_fd, write_fd = os.pipe()
     os.close(_read_fd)
-    writer = ByteWriteStream(OwnedFd(write_fd))
+    writer = ByteWriteStream(Fd(write_fd))
     with pytest.raises(BrokenPipeError):
         await writer.write(b"hello")
     writer.close()
@@ -91,11 +91,11 @@ async def test_write_backpressure() -> None:
     data = b"x" * 262144
 
     async def do_write() -> None:
-        async with ByteWriteStream(OwnedFd(write_fd)) as writer:
+        async with ByteWriteStream(Fd(write_fd)) as writer:
             await writer.write(data)
 
     write_task = asyncio.create_task(do_write())
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         result = await reader.read()
     await write_task
     assert result == data
@@ -111,7 +111,7 @@ async def test_read_all() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"hello world")
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         result = await reader.read()
     assert result == b"hello world"
 
@@ -121,7 +121,7 @@ async def test_read_partial() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"hello world")
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         chunk1 = await reader.read(5)
         chunk2 = await reader.read(10)
         chunk3 = await reader.read(10)
@@ -134,7 +134,7 @@ async def test_read_eof_empty() -> None:
     """read() on an already-closed pipe returns empty bytes."""
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         result = await reader.read()
     assert result == b""
 
@@ -144,7 +144,7 @@ async def test_readline() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"line1\nline2\nline3")
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         assert await reader.readline() == b"line1\n"
         assert await reader.readline() == b"line2\n"
         assert await reader.readline() == b"line3"
@@ -156,7 +156,7 @@ async def test_readlines() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"aaa\nbbb\nccc\n")
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         lines = await reader.readlines()
     assert lines == [b"aaa\n", b"bbb\n", b"ccc\n"]
 
@@ -166,7 +166,7 @@ async def test_read_iteration() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"aaa\nbbb\nccc\n")
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         lines = [line async for line in reader]
     assert lines == [b"aaa\n", b"bbb\n", b"ccc\n"]
 
@@ -175,7 +175,7 @@ async def test_read_close_closes_fd() -> None:
     """close() closes the underlying fd."""
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
-    reader = ByteReadStream(OwnedFd(read_fd))
+    reader = ByteReadStream(Fd(read_fd))
     reader.close()
     with pytest.raises(OSError):
         os.fstat(read_fd)
@@ -187,7 +187,7 @@ async def test_read_binary_data() -> None:
     data = bytes(range(256))
     os.write(write_fd, data)
     os.close(write_fd)
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         result = await reader.read()
     assert result == data
 
@@ -198,11 +198,11 @@ async def test_read_large() -> None:
     data = b"x" * (256 * 1024)
 
     async def do_write() -> None:
-        async with ByteWriteStream(OwnedFd(write_fd)) as writer:
+        async with ByteWriteStream(Fd(write_fd)) as writer:
             await writer.write(data)
 
     write_task = asyncio.create_task(do_write())
-    async with ByteReadStream(OwnedFd(read_fd)) as reader:
+    async with ByteReadStream(Fd(read_fd)) as reader:
         result = await reader.read()
     await write_task
     assert result == data
@@ -216,7 +216,7 @@ async def test_read_large() -> None:
 async def test_text_write() -> None:
     """write() encodes and delivers string, returns char count."""
     read_fd, write_fd = os.pipe()
-    async with TextWriteStream(ByteWriteStream(OwnedFd(write_fd))) as writer:
+    async with TextWriteStream(ByteWriteStream(Fd(write_fd))) as writer:
         count = await writer.write("hello")
     result = os.read(read_fd, 1024)
     os.close(read_fd)
@@ -227,7 +227,7 @@ async def test_text_write() -> None:
 async def test_text_write_unicode() -> None:
     """write() handles multi-byte characters, returns char count not byte count."""
     read_fd, write_fd = os.pipe()
-    async with TextWriteStream(ByteWriteStream(OwnedFd(write_fd))) as writer:
+    async with TextWriteStream(ByteWriteStream(Fd(write_fd))) as writer:
         count = await writer.write("héllo 🎉")
     result = os.read(read_fd, 1024)
     os.close(read_fd)
@@ -238,7 +238,7 @@ async def test_text_write_unicode() -> None:
 async def test_text_writelines() -> None:
     """writelines() writes all strings in order."""
     read_fd, write_fd = os.pipe()
-    async with TextWriteStream(ByteWriteStream(OwnedFd(write_fd))) as writer:
+    async with TextWriteStream(ByteWriteStream(Fd(write_fd))) as writer:
         await writer.writelines(["aaa\n", "bbb\n", "ccc\n"])
     result = os.read(read_fd, 1024)
     os.close(read_fd)
@@ -248,7 +248,7 @@ async def test_text_writelines() -> None:
 async def test_text_write_close_closes_fd() -> None:
     """close() propagates through to the fd."""
     read_fd, write_fd = os.pipe()
-    writer = TextWriteStream(ByteWriteStream(OwnedFd(write_fd)))
+    writer = TextWriteStream(ByteWriteStream(Fd(write_fd)))
     writer.close()
     with pytest.raises(OSError):
         os.fstat(write_fd)
@@ -265,7 +265,7 @@ async def test_text_read_all() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"hello world")
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         result = await reader.read()
     assert result == "hello world"
 
@@ -275,7 +275,7 @@ async def test_text_read_unicode() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, "héllo 🎉".encode())
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         result = await reader.read()
     assert result == "héllo 🎉"
 
@@ -285,7 +285,7 @@ async def test_text_read_chars() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, "aé🎉b".encode())
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         chunk1 = await reader.read(2)
         chunk2 = await reader.read(2)
         chunk3 = await reader.read(10)
@@ -299,7 +299,7 @@ async def test_text_readline() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"line1\nline2\nline3")
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         assert await reader.readline() == "line1\n"
         assert await reader.readline() == "line2\n"
         assert await reader.readline() == "line3"
@@ -311,7 +311,7 @@ async def test_text_readlines() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"aaa\nbbb\nccc\n")
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         lines = await reader.readlines()
     assert lines == ["aaa\n", "bbb\n", "ccc\n"]
 
@@ -321,7 +321,7 @@ async def test_text_read_iteration() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"aaa\nbbb\nccc\n")
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         lines = [line async for line in reader]
     assert lines == ["aaa\n", "bbb\n", "ccc\n"]
 
@@ -330,7 +330,7 @@ async def test_text_read_close_closes_fd() -> None:
     """close() propagates through to the fd."""
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
-    reader = TextReadStream(ByteReadStream(OwnedFd(read_fd)))
+    reader = TextReadStream(ByteReadStream(Fd(read_fd)))
     reader.close()
     with pytest.raises(OSError):
         os.fstat(read_fd)
@@ -341,7 +341,7 @@ async def test_text_read_then_readline() -> None:
     read_fd, write_fd = os.pipe()
     os.write(write_fd, b"abcdef\nghij\n")
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         chunk = await reader.read(3)
         line = await reader.readline()
         rest = await reader.readline()
@@ -364,9 +364,7 @@ async def test_text_read_split_multibyte() -> None:
         os.close(write_fd)
 
     write_task = asyncio.create_task(do_write())
-    async with TextReadStream(
-        ByteReadStream(OwnedFd(read_fd), buffer_size=2)
-    ) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd), buffer_size=2)) as reader:
         result = await reader.read()
     await write_task
     assert result == "🎉"
@@ -376,7 +374,7 @@ async def test_text_read_eof_empty() -> None:
     """read() on an already-closed pipe returns empty string."""
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
-    async with TextReadStream(ByteReadStream(OwnedFd(read_fd))) as reader:
+    async with TextReadStream(ByteReadStream(Fd(read_fd))) as reader:
         result = await reader.read()
     assert result == ""
 
@@ -389,8 +387,8 @@ async def test_text_read_eof_empty() -> None:
 async def test_byte_stage_ctx_fields() -> None:
     """ByteStageCtx has stdin (ByteReadStream) and stdout (ByteWriteStream) fields."""
     read_fd, write_fd = os.pipe()
-    reader = ByteReadStream(OwnedFd(read_fd))
-    writer = ByteWriteStream(OwnedFd(write_fd))
+    reader = ByteReadStream(Fd(read_fd))
+    writer = ByteWriteStream(Fd(write_fd))
     ctx = ByteStageCtx(stdin=reader, stdout=writer)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
@@ -401,8 +399,8 @@ async def test_byte_stage_ctx_fields() -> None:
 async def test_text_stage_ctx_fields() -> None:
     """TextStageCtx has stdin (TextReadStream) and stdout (TextWriteStream) fields."""
     read_fd, write_fd = os.pipe()
-    byte_reader = ByteReadStream(OwnedFd(read_fd))
-    byte_writer = ByteWriteStream(OwnedFd(write_fd))
+    byte_reader = ByteReadStream(Fd(read_fd))
+    byte_writer = ByteWriteStream(Fd(write_fd))
     reader = TextReadStream(byte_reader)
     writer = TextWriteStream(byte_writer)
     ctx = TextStageCtx(stdin=reader, stdout=writer)
@@ -430,8 +428,8 @@ async def test_decode_bare_decorator() -> None:
     stdout_read_fd, stdout_write_fd = os.pipe()
 
     byte_ctx = ByteStageCtx(
-        stdin=ByteReadStream(OwnedFd(stdin_read_fd)),
-        stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
+        stdin=ByteReadStream(Fd(stdin_read_fd)),
+        stdout=ByteWriteStream(Fd(stdout_write_fd)),
     )
     result = await upper(byte_ctx)
     byte_ctx.stdin.close()
@@ -460,8 +458,8 @@ async def test_decode_with_parens() -> None:
     stdout_read_fd, stdout_write_fd = os.pipe()
 
     byte_ctx = ByteStageCtx(
-        stdin=ByteReadStream(OwnedFd(stdin_read_fd)),
-        stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
+        stdin=ByteReadStream(Fd(stdin_read_fd)),
+        stdout=ByteWriteStream(Fd(stdout_write_fd)),
     )
     result = await upper(byte_ctx)
     byte_ctx.stdin.close()
@@ -491,8 +489,8 @@ async def test_decode_with_encoding() -> None:
     stdout_read_fd, stdout_write_fd = os.pipe()
 
     byte_ctx = ByteStageCtx(
-        stdin=ByteReadStream(OwnedFd(stdin_read_fd)),
-        stdout=ByteWriteStream(OwnedFd(stdout_write_fd)),
+        stdin=ByteReadStream(Fd(stdin_read_fd)),
+        stdout=ByteWriteStream(Fd(stdout_write_fd)),
     )
     result = await passthrough(byte_ctx)
     byte_ctx.stdin.close()
@@ -523,8 +521,8 @@ async def test_decode_does_not_close_byte_streams() -> None:
 
     stdout_read_fd, stdout_write_fd = os.pipe()
 
-    stdin_stream = ByteReadStream(OwnedFd(stdin_read_fd))
-    stdout_stream = ByteWriteStream(OwnedFd(stdout_write_fd))
+    stdin_stream = ByteReadStream(Fd(stdin_read_fd))
+    stdout_stream = ByteWriteStream(Fd(stdout_write_fd))
     byte_ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
 
     await noop(byte_ctx)

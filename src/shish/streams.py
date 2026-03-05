@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import overload
 
-from shish.fd import OwnedFd
+from shish.fd import Fd
 
 # =============================================================================
 # Byte streams — non-blocking fd + event loop
@@ -63,7 +63,7 @@ class ByteReadStream:
     normal when data arrives in chunks.
     """
 
-    def __init__(self, owned_fd: OwnedFd, buffer_size: int = 65536) -> None:
+    def __init__(self, owned_fd: Fd, buffer_size: int = 65536) -> None:
         self._fd = owned_fd
         self._loop = asyncio.get_running_loop()
         self._buf = bytearray()
@@ -164,7 +164,7 @@ class ByteWriteStream:
     all-or-error: it returns len(data) or raises, never a short count.
     """
 
-    def __init__(self, owned_fd: OwnedFd) -> None:
+    def __init__(self, owned_fd: Fd) -> None:
         self._fd = owned_fd
         self._loop = asyncio.get_running_loop()
         os.set_blocking(owned_fd.fd, False)

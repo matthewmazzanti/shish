@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
-from shish.fd import OwnedFd
+from shish.fd import Fd
 from shish.runtime import CloseMethod, Execution, out, run, start
 from shish.streams import ByteReadStream, ByteStageCtx, ByteWriteStream
 
@@ -707,7 +707,7 @@ async def test_start_stdin_fd() -> None:
     read_fd, write_fd = os.pipe()
     async with start(builders.Cmd(("cat",))).stdin(read_fd) as execution:
         os.close(read_fd)  # start() dup'd it; close our copy
-        async with ByteWriteStream(OwnedFd(write_fd)) as writer:
+        async with ByteWriteStream(Fd(write_fd)) as writer:
             await writer.write(b"hello from pipe")
         assert await execution.wait() == 0
 
@@ -723,10 +723,10 @@ async def test_start_stdin_fd_with_stdout_fd() -> None:
         os.close(stdout_w)
 
         async def do_write() -> None:
-            async with ByteWriteStream(OwnedFd(stdin_w)) as writer:
+            async with ByteWriteStream(Fd(stdin_w)) as writer:
                 await writer.write(b"round trip")
 
-        async with ByteReadStream(OwnedFd(stdout_r)) as reader:
+        async with ByteReadStream(Fd(stdout_r)) as reader:
             write_task = asyncio.create_task(do_write())
             code, captured = await asyncio.gather(
                 execution.wait(),

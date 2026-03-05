@@ -16,19 +16,19 @@ from asyncio.subprocess import Process
 from collections.abc import Awaitable, Iterator
 from dataclasses import dataclass, field
 
-from shish.fd import OwnedFd
+from shish.fd import Fd
 
 
 @dataclass
 class StdFds:
     """Owned stdin/stdout fds for a spawn subtree.
 
-    Each field is an OwnedFd — dup'd at start() entry from caller fds
+    Each field is an Fd — dup'd at start() entry from caller fds
     or parent STDIN/STDOUT, or allocated by pipeline pipe wiring.
     """
 
-    stdin: OwnedFd
-    stdout: OwnedFd
+    stdin: Fd
+    stdout: Fd
 
 
 class ProcessNodeBase(abc.ABC):
@@ -161,8 +161,8 @@ class FnNode(ProcessNodeBase):
     """
 
     task: asyncio.Task[int]
-    _stdin_fd: OwnedFd = field(repr=False)
-    _stdout_fd: OwnedFd = field(repr=False)
+    _stdin_fd: Fd = field(repr=False)
+    _stdout_fd: Fd = field(repr=False)
 
     def returncode(self) -> int | None:
         """Task return code, None if running."""

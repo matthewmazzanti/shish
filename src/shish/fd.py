@@ -18,7 +18,7 @@ STDERR: int = 2
 
 
 @dataclass
-class OwnedFd:
+class Fd:
     """Tracked file descriptor with idempotent close."""
 
     fd: int
