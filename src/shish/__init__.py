@@ -1,14 +1,21 @@
-from shish.builders import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
+from shish.builders import (
+    Arg,
+    Data,
+    PathLike,
+    ReadSrc,
+    Sub,
+    SubIn,
+    SubOut,
+    WriteDst,
+)
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
 from shish.runtime import CloseMethod, Execution, StartCtx
+from shish.stages import ByteFn, ByteStageCtx, TextFn, TextStageCtx, decode
 from shish.streams import (
     ByteReadStream,
-    ByteStageCtx,
     ByteWriteStream,
     TextReadStream,
-    TextStageCtx,
     TextWriteStream,
-    decode,
 )
 from shish.syntax import (
     Cmd,
@@ -42,6 +49,7 @@ __all__ = [
     "STDIN",
     "STDOUT",
     "Arg",
+    "ByteFn",
     "ByteReadStream",
     "ByteStageCtx",
     "ByteWriteStream",
@@ -62,6 +70,7 @@ __all__ = [
     "Sub",
     "SubIn",
     "SubOut",
+    "TextFn",
     "TextReadStream",
     "TextStageCtx",
     "TextWriteStream",

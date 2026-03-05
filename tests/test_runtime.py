@@ -11,7 +11,8 @@ import pytest
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
 from shish.fd import Fd
 from shish.runtime import CloseMethod, Execution, out, run, start
-from shish.streams import ByteReadStream, ByteStageCtx, ByteWriteStream
+from shish.stages import ByteStageCtx
+from shish.streams import ByteReadStream, ByteWriteStream
 
 # =============================================================================
 # Basic Execution

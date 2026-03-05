@@ -24,7 +24,7 @@ from shish import (
     unwrap,
     write,
 )
-from shish.streams import ByteStageCtx, TextStageCtx
+from shish.stages import ByteStageCtx, TextStageCtx
 
 # =============================================================================
 # Magic cmd() builder

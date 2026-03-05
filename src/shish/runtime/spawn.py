@@ -36,9 +36,9 @@ from shish.runtime.tree import (
     ProcessNode,
     StdFds,
 )
+from shish.stages import ByteStageCtx
 from shish.streams import (
     ByteReadStream,
-    ByteStageCtx,
     ByteWriteStream,
 )
 

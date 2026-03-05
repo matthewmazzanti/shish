@@ -5,14 +5,12 @@ import os
 import pytest
 
 from shish.fd import Fd
+from shish.stages import ByteStageCtx, TextStageCtx, decode
 from shish.streams import (
     ByteReadStream,
-    ByteStageCtx,
     ByteWriteStream,
     TextReadStream,
-    TextStageCtx,
     TextWriteStream,
-    decode,
 )
 
 # =============================================================================

@@ -39,7 +39,7 @@ from shish.runtime.tree import (
     ProcessNode,
     StdFds,
 )
-from shish.streams import (
+from shish.stages import (
     ByteStageCtx,
     TextStageCtx,
     make_byte_wrapper,

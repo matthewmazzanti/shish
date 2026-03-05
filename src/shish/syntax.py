@@ -7,21 +7,17 @@ are module-level combinator functions that unwrap, delegate, and re-wrap.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Never, cast, overload
 
 import shish.builders as builders
 from shish.fd import STDIN, STDOUT
-from shish.streams import make_byte_wrapper
+from shish.stages import ByteFn, TextFn, make_byte_wrapper
 
 if TYPE_CHECKING:
     from shish.runtime import StartCtx
-    from shish.streams import ByteStageCtx, TextStageCtx
 
 Flag = builders.PathLike | bool
-
-TextFn = Callable[["TextStageCtx"], Awaitable[int]]
-ByteFn = Callable[["ByteStageCtx"], Awaitable[int]]
 
 
 class Cmd:
