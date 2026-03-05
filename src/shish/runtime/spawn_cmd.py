@@ -255,10 +255,11 @@ class SpawnCmdCtx:
         pipe_r, pipe_w = self._pipe()
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
-            self._spawn(inner, self._sub_fds(stdin=pipe_r))
+            sub_fds = self._sub_fds(stdin=pipe_r)
         else:
             self.fdo.add_live(pipe_r.fd)
-            self._spawn(inner, self._sub_fds(stdout=pipe_w))
+            sub_fds = self._sub_fds(stdout=pipe_w)
+        self._spawn(inner, sub_fds)
         return pipe_r, pipe_w
 
     def _feed_with_pipe(self, data: str | bytes) -> Fd:
