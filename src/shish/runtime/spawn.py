@@ -22,7 +22,6 @@ import sys
 import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from shish.builders import (
@@ -47,7 +46,6 @@ from shish.streams import (
 )
 
 
-@dataclass
 class SpawnCtx:
     """Tracks fds, procs, and fn_tasks during spawn for error cleanup.
 
@@ -58,11 +56,14 @@ class SpawnCtx:
     spawn methods that dispatch IR nodes to the appropriate builder.
     """
 
-    fds: list[Fd] = field(default_factory=lambda: list[Fd]())
-    procs: list[Process] = field(default_factory=lambda: list[Process]())
-    fn_tasks: list[asyncio.Task[int]] = field(
-        default_factory=lambda: list[asyncio.Task[int]]()
-    )
+    fds: list[Fd]
+    procs: list[Process]
+    fn_tasks: list[asyncio.Task[int]]
+
+    def __init__(self) -> None:
+        self.fds = []
+        self.procs = []
+        self.fn_tasks = []
 
     async def cleanup(self) -> None:
         """Tear down everything allocated so far: kill procs, cancel
