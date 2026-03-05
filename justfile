@@ -2,9 +2,7 @@ fmt:
     ruff format .
     ruff check --fix .
 
-check: lint typecheck test
-
-fmtcheck: fmt typecheck test
+check: fmt typecheck test
 
 lint:
     ruff format --check .

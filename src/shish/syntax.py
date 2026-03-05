@@ -1,42 +1,38 @@
-"""DSL types and builders for shell command construction.
+"""Syntax types and operators for shell command construction.
 
-Cmd and Pipeline are thin wrappers around ir.Cmd/ir.Pipeline with no public
-methods.  All operations (pipe, read, write, feed, run, out, etc.) are
-module-level combinator functions that unwrap to IR, delegate, and re-wrap.
+Cmd and Pipeline are thin wrappers around builders.Cmd/builders.Pipeline with
+no public methods.  All operations (pipe, read, write, feed, run, out, etc.)
+are module-level combinator functions that unwrap, delegate, and re-wrap.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Never, cast, overload
 
-import shish.ir as ir
-from shish.aio import make_byte_wrapper
-from shish.fdops import STDIN, STDOUT
+import shish.builders as builders
+from shish.fd import STDIN, STDOUT
+from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
 if TYPE_CHECKING:
-    from shish.aio import ByteStageCtx, TextStageCtx
     from shish.runtime import StartCtx
 
-Flag = ir.PathLike | bool
-
-TextFn = Callable[["TextStageCtx"], Awaitable[int]]
-ByteFn = Callable[["ByteStageCtx"], Awaitable[int]]
+Flag = builders.PathLike | bool
 
 
 class Cmd:
     """Immutable shell command builder with chainable syntax."""
 
-    def __init__(self, _shish_ir: ir.Cmd) -> None:
+    def __init__(self, _shish_ir: builders.Cmd) -> None:
         self._shish_ir = _shish_ir
 
     def __getattr__(self, name: str) -> Cmd:
         """Chain subcommand: cmd.foo -> Cmd with "foo" appended."""
         return Cmd(self._shish_ir.arg(name))
 
-    def __call__(self, *args: ir.Arg, **kwargs: Flag) -> Cmd:
+    def __call__(self, *args: builders.Arg, **kwargs: Flag) -> Cmd:
         """Add args and flags: cmd("arg", flag=True)."""
-        call_args: list[ir.Arg] = list(args)
+        call_args: list[builders.Arg] = list(args)
         for key, value in kwargs.items():
             if value is False:
                 continue
@@ -53,7 +49,7 @@ class Cmd:
         """cmd1 | cmd2 -> Pipeline."""
         return pipe(self, other)
 
-    def __gt__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Cmd:
+    def __gt__(self, target: builders.WriteDst | tuple[int, builders.WriteDst]) -> Cmd:
         """cmd > "file", cmd > sub, or cmd > (fd, target)."""
         match target:
             case fd, dst:
@@ -61,7 +57,9 @@ class Cmd:
             case dst:
                 return write(self, dst)  # type: ignore[arg-type]
 
-    def __rshift__(self, target: ir.WriteDst | tuple[int, ir.WriteDst]) -> Cmd:
+    def __rshift__(
+        self, target: builders.WriteDst | tuple[int, builders.WriteDst]
+    ) -> Cmd:
         """cmd >> "file", cmd >> sub, or cmd >> (fd, target)."""
         match target:
             case fd, dst:
@@ -69,7 +67,7 @@ class Cmd:
             case dst:
                 return write(self, dst, append=True)
 
-    def __lt__(self, target: ir.ReadSrc | tuple[int, ir.ReadSrc]) -> Cmd:
+    def __lt__(self, target: builders.ReadSrc | tuple[int, builders.ReadSrc]) -> Cmd:
         """cmd < "file", cmd < sub, or cmd < (fd, target)."""
         match target:
             case fd, src:
@@ -77,7 +75,7 @@ class Cmd:
             case src:
                 return read(self, src)  # type: ignore[arg-type]
 
-    def __lshift__(self, data: ir.Data | tuple[int, ir.Data]) -> Cmd:
+    def __lshift__(self, data: builders.Data | tuple[int, builders.Data]) -> Cmd:
         """cmd << "data" or cmd << (fd, "data")."""
         match data:
             case fd, payload:
@@ -85,7 +83,7 @@ class Cmd:
             case _:
                 return feed(self, data)
 
-    def __matmul__(self, path: ir.PathLike) -> Cmd:
+    def __matmul__(self, path: builders.PathLike) -> Cmd:
         """cmd @ "/tmp" -> set working directory."""
         return cwd(self, path)
 
@@ -105,7 +103,7 @@ class Cmd:
 class Pipeline:
     """Immutable pipeline of commands."""
 
-    def __init__(self, _shish_ir: ir.Pipeline) -> None:
+    def __init__(self, _shish_ir: builders.Pipeline) -> None:
         self._shish_ir = _shish_ir
 
     def __or__(self, other: Runnable) -> Pipeline:
@@ -160,7 +158,7 @@ class Pipeline:
 class Fn:
     """Immutable wrapper for a Python function as a pipeline stage."""
 
-    def __init__(self, _shish_ir: ir.Fn) -> None:
+    def __init__(self, _shish_ir: builders.Fn) -> None:
         self._shish_ir = _shish_ir
 
     def __or__(self, other: Runnable) -> Pipeline:
@@ -182,40 +180,40 @@ Runnable = Cmd | Pipeline | Fn
 
 
 @overload
-def unwrap(cmd: Cmd) -> ir.Cmd: ...
+def unwrap(cmd: Cmd) -> builders.Cmd: ...
 @overload
-def unwrap(cmd: Pipeline) -> ir.Pipeline: ...
+def unwrap(cmd: Pipeline) -> builders.Pipeline: ...
 @overload
-def unwrap(cmd: Fn) -> ir.Fn: ...
+def unwrap(cmd: Fn) -> builders.Fn: ...
 
 
-def unwrap(cmd: Cmd | Pipeline | Fn) -> ir.Cmd | ir.Pipeline | ir.Fn:
-    """Extract the IR from a DSL wrapper."""
+def unwrap(cmd: Cmd | Pipeline | Fn) -> builders.Cmd | builders.Pipeline | builders.Fn:
+    """Extract the builder from a syntax wrapper."""
     return cmd._shish_ir  # pyright: ignore[reportPrivateUsage]
 
 
 @overload
-def wrap(inner: ir.Cmd) -> Cmd: ...
+def wrap(inner: builders.Cmd) -> Cmd: ...
 @overload
-def wrap(inner: ir.Pipeline) -> Pipeline: ...
+def wrap(inner: builders.Pipeline) -> Pipeline: ...
 @overload
-def wrap(inner: ir.Fn) -> Fn: ...
+def wrap(inner: builders.Fn) -> Fn: ...
 
 
-def wrap(inner: ir.Cmd | ir.Pipeline | ir.Fn) -> Cmd | Pipeline | Fn:
-    """Wrap an IR in its DSL counterpart."""
+def wrap(inner: builders.Cmd | builders.Pipeline | builders.Fn) -> Cmd | Pipeline | Fn:
+    """Wrap a builder in its syntax counterpart."""
     match inner:
-        case ir.Cmd():
+        case builders.Cmd():
             return Cmd(inner)
-        case ir.Pipeline():
+        case builders.Pipeline():
             return Pipeline(inner)
-        case ir.Fn():
+        case builders.Fn():
             return Fn(inner)
 
 
-def cmd(*args: ir.Arg, **kwargs: Flag) -> Cmd:
+def cmd(*args: builders.Arg, **kwargs: Flag) -> Cmd:
     """Create a command from arguments: cmd("echo", "hello") -> Cmd."""
-    return Cmd(ir.cmd())(*args, **kwargs)
+    return Cmd(builders.cmd())(*args, **kwargs)
 
 
 @overload
@@ -249,35 +247,35 @@ def fn(
         case None, None:  # @fn(encoding=None)
 
             def byte_decorator(inner: ByteFn) -> Fn:
-                return Fn(ir.Fn(inner))
+                return Fn(builders.Fn(inner))
 
             return byte_decorator
 
         case None, enc:  # @fn() or @fn(encoding="...")
 
             def text_decorator(inner: TextFn) -> Fn:
-                return Fn(ir.Fn(make_byte_wrapper(inner, enc)))
+                return Fn(builders.Fn(make_byte_wrapper(inner, enc)))
 
             return text_decorator
 
         case func_, None:  # fn(f, encoding=None)
             # cast: overloads guarantee ByteFn here, but pyright
             # can't narrow the func/encoding correlation
-            return Fn(ir.Fn(cast("ByteFn", func_)))
+            return Fn(builders.Fn(cast("ByteFn", func_)))
 
         case func_, enc:  # @fn or fn(f) or fn(f, encoding="...")
             # cast: same — overloads guarantee TextFn here
-            return Fn(ir.Fn(make_byte_wrapper(cast("TextFn", func_), enc)))
+            return Fn(builders.Fn(make_byte_wrapper(cast("TextFn", func_), enc)))
 
 
 def pipe(*cmds: Runnable) -> Pipeline:
     """Pipe commands together: pipe(cmd1, cmd2, ...) -> Pipeline."""
-    return Pipeline(ir.pipeline(*(unwrap(stage) for stage in cmds)))
+    return Pipeline(builders.pipeline(*(unwrap(stage) for stage in cmds)))
 
 
 def write(
     cmd: Cmd,
-    dst: ir.WriteDst,
+    dst: builders.WriteDst,
     *,
     append: bool = False,
     fd: int = STDOUT,
@@ -286,12 +284,12 @@ def write(
     return Cmd(unwrap(cmd).write(dst, append=append, fd=fd))
 
 
-def read(cmd: Cmd, src: ir.ReadSrc, *, fd: int = STDIN) -> Cmd:
+def read(cmd: Cmd, src: builders.ReadSrc, *, fd: int = STDIN) -> Cmd:
     """Read fd from file or process substitution. Defaults to STDIN."""
     return Cmd(unwrap(cmd).read(src, fd=fd))
 
 
-def feed(cmd: Cmd, data: ir.Data, *, fd: int = STDIN) -> Cmd:
+def feed(cmd: Cmd, data: builders.Data, *, fd: int = STDIN) -> Cmd:
     """Feed data into fd. Defaults to STDIN."""
     return Cmd(unwrap(cmd).feed(data, fd=fd))
 
@@ -306,19 +304,19 @@ def env(cmd: Cmd, **kwargs: str | None) -> Cmd:
     return Cmd(unwrap(cmd).env(**kwargs))
 
 
-def cwd(cmd: Cmd, path: ir.PathLike) -> Cmd:
+def cwd(cmd: Cmd, path: builders.PathLike) -> Cmd:
     """Set working directory for a command."""
     return Cmd(unwrap(cmd).cwd(path))
 
 
-def sub_in(source: Runnable) -> ir.SubIn:
+def sub_in(source: Runnable) -> builders.SubIn:
     """Input process substitution: <(source)."""
-    return ir.SubIn(unwrap(source))
+    return builders.SubIn(unwrap(source))
 
 
-def sub_out(sink: Runnable) -> ir.SubOut:
+def sub_out(sink: Runnable) -> builders.SubOut:
     """Output process substitution: >(sink)."""
-    return ir.SubOut(unwrap(sink))
+    return builders.SubOut(unwrap(sink))
 
 
 def start(cmd: Runnable) -> StartCtx[None, None]:
@@ -346,7 +344,7 @@ class Sh:
         """sh.echo -> Cmd with ("echo",)."""
         return cmd(name)
 
-    def __call__(self, *args: ir.Arg, **kwargs: Flag) -> Cmd:
+    def __call__(self, *args: builders.Arg, **kwargs: Flag) -> Cmd:
         """sh("cmd", "arg", flag=True) -> Cmd."""
         return cmd(*args, **kwargs)
 

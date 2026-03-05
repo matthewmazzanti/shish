@@ -7,8 +7,7 @@ Async shell command library for Python with operator-based DSL.
 direnv auto-activates venv via `.envrc` (runs `uv sync --frozen` + `source .venv/bin/activate`).
 
 ```bash
-just check      # lint + typecheck + test (CI-strict, fails on format)
-just fmtcheck   # format + typecheck + test (use this during development)
+just check      # format + typecheck + test
 just fmt        # format + autofix
 just lint       # ruff format --check + ruff check
 just typecheck  # pyright
@@ -19,14 +18,20 @@ just build      # uv build
 ## Project Structure
 
 ```
-src/shish/      # main package
-  __init__.py   # re-exports from dsl + runtime
-  ir.py         # frozen dataclass IR: Cmd, Pipeline, per-fd redirects
-  dsl.py        # thin wrappers (Cmd, Pipeline), operators, combinators
-  fdops.py      # fd-table simulator for computing pass_fds
-  runtime.py    # executes IR: prepare, Execution, run, out
-  aio.py        # async_read, async_write, fd utilities
-TODO.md         # planned features and known issues
+src/shish/          # main package
+  __init__.py       # re-exports from syntax + runtime
+  builders.py       # frozen dataclass builders: Cmd, Pipeline, per-fd redirects
+  syntax.py         # thin wrappers (Cmd, Pipeline), operators, combinators
+  fd.py             # fd constants (STDIN/STDOUT/STDERR/PIPE), Fd
+  fn_stage.py       # Fn stage contexts, ByteFn/TextFn aliases, decode wrapper
+  streams.py        # async byte/text streams for subprocess pipes
+  runtime/
+    __init__.py     # re-exports from api + tree
+    api.py          # Execution, StartCtx, start(), run(), out()
+    spawn.py        # SpawnCtx: fd/proc tracking, pipeline/fn spawn
+    spawn_cmd.py    # SpawnCmdCtx, FdOps: per-cmd redirect resolution
+    tree.py         # process tree nodes: CmdNode, PipelineNode, FnNode
+TODO.md             # planned features and known issues
 ```
 
 ## Key Concepts
@@ -56,33 +61,32 @@ TODO.md         # planned features and known issues
 
 ## Implementation Notes
 
-- IR layer (`ir.py`): frozen dataclasses with builder methods, type aliases (PathLike, Data, Arg, ReadSrc, WriteDst)
-- DSL layer (`dsl.py`): thin wrappers with no public methods, operators delegate to combinators
-- `unwrap()`/`wrap()` bridge DSL and IR layers
+- Builder layer (`builders.py`): frozen dataclasses with builder methods, type aliases (PathLike, Data, Arg, ReadSrc, WriteDst)
+- Syntax layer (`syntax.py`): thin wrappers with no public methods, operators delegate to combinators
+- `unwrap()`/`wrap()` bridge syntax and builder layers
 - Per-fd redirects: FdToFile, FdFromFile, FdFromData, FdToFd, FdClose, FdFromSub, FdToSub
 - `SubIn`/`SubOut` hold process substitution commands (resolved to `/dev/fd/N` at runtime)
-- `fdops.py` simulates fd table to compute `pass_fds` for subprocess
-- Runtime (`runtime.py`): `prepare()` spawns a process tree, returns `Execution` handle
-  - `PrepareCtx` tracks fds/procs during spawn for error cleanup
-  - Module-level `_spawn`/`_spawn_cmd`/`_spawn_pipeline` build the process tree
-  - Process tree: `CmdNode` (single cmd + subs) / `PipelineNode` (stages)
-  - `Execution.wait()` derives procs/fds by recursing the tree via `all_procs()`/`all_fds()`
-  - Pipefail: rightmost non-zero from `root_procs()` (subs excluded, matching bash)
+- `FdOps` (`runtime/spawn_cmd.py`) simulates fd table to compute `pass_fds` for subprocess
+- Runtime (`runtime/`): spawns process trees, returns `Execution` handle
+  - `SpawnCtx` (`spawn.py`) tracks fds/procs during spawn for error cleanup
+  - `SpawnCmdCtx` (`spawn_cmd.py`) resolves per-cmd redirects and spawns
+  - Process tree (`tree.py`): `CmdNode` (single cmd + subs) / `PipelineNode` (stages) / `FnNode` (in-process)
+  - Pipefail: rightmost non-zero (subs excluded, matching bash)
 - Uses `asyncio.subprocess.create_subprocess_exec` with `pass_fds`
 - Pipeline stages run concurrently via `os.pipe()` fds
 - Per-stage redirects override pipe connections
 - SIGKILL orphan processes on error, shield reap from cancellation
-- Async IO via event loop reader/writer callbacks (aio.py)
+- Async IO via event loop reader/writer callbacks (`streams.py`)
 - SIGPIPE propagates naturally for early termination
 
 ## Test Organization
 
-- `test_ir.py` — IR layer: `cmd()` builder methods, `ir.pipeline()` flattening. Sync only, no execution.
-- `test_dsl.py` — `sh` magic + operators produce correct IR. Sync only, no execution.
-- `test_fdops.py` — FdOps fd-table simulation. Sync only, no execution.
-- `test_aio.py` — async_read, async_write, fd utilities.
-- `test_runtime.py` — Raw IR → run. No builders or DSL. Tests runtime behavior.
-- `test_e2e.py` — Full integration from DSL or builder → run.
+- `test_builders.py` — Builder layer: `cmd()` builder methods, `builders.pipeline()` flattening. Sync only, no execution.
+- `test_syntax.py` — `sh` magic + operators produce correct builders. Sync only, no execution.
+- `test_fd_ops.py` — FdOps fd-table simulation. Sync only, no execution.
+- `test_streams.py` — async byte/text streams.
+- `test_runtime.py` — Raw builders → run. No syntax layer. Tests runtime behavior.
+- `test_e2e.py` — Full integration from syntax or builder → run.
 - `test_fd_hygiene.py` — Verifies child processes see exactly the expected fd set.
 
 Rules for `test_runtime.py` and `test_e2e.py`:

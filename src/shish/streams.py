@@ -35,29 +35,9 @@ from __future__ import annotations
 import asyncio
 import codecs
 import os
-from collections.abc import AsyncIterator, Awaitable, Buffer, Callable, Iterable
-from dataclasses import dataclass
-from functools import wraps
-from typing import overload
+from collections.abc import AsyncIterator, Buffer, Iterable
 
-
-@dataclass
-class OwnedFd:
-    """Tracked file descriptor with idempotent close."""
-
-    fd: int
-    closed: bool = False
-
-    def fileno(self) -> int:
-        """Return the raw fd number."""
-        return self.fd
-
-    def close(self) -> None:
-        """Close the fd if not already closed."""
-        if not self.closed:
-            self.closed = True
-            os.close(self.fd)
-
+from shish.fd import Fd
 
 # =============================================================================
 # Byte streams — non-blocking fd + event loop
@@ -80,7 +60,7 @@ class ByteReadStream:
     normal when data arrives in chunks.
     """
 
-    def __init__(self, owned_fd: OwnedFd, buffer_size: int = 65536) -> None:
+    def __init__(self, owned_fd: Fd, buffer_size: int = 65536) -> None:
         self._fd = owned_fd
         self._loop = asyncio.get_running_loop()
         self._buf = bytearray()
@@ -181,7 +161,7 @@ class ByteWriteStream:
     all-or-error: it returns len(data) or raises, never a short count.
     """
 
-    def __init__(self, owned_fd: OwnedFd) -> None:
+    def __init__(self, owned_fd: Fd) -> None:
         self._fd = owned_fd
         self._loop = asyncio.get_running_loop()
         os.set_blocking(owned_fd.fd, False)
@@ -356,98 +336,3 @@ class TextWriteStream:
 
     async def __aexit__(self, *_args: object) -> None:
         self.close()
-
-
-# =============================================================================
-# Stage contexts — stdin/stdout pairs for Fn pipeline stages
-# =============================================================================
-
-
-@dataclass
-class ByteStageCtx:
-    """Byte-level stdin/stdout pair for an Fn pipeline stage."""
-
-    stdin: ByteReadStream
-    stdout: ByteWriteStream
-
-
-@dataclass
-class TextStageCtx:
-    """Text-level stdin/stdout pair for an Fn pipeline stage."""
-
-    stdin: TextReadStream
-    stdout: TextWriteStream
-
-
-# =============================================================================
-# @decode decorator — wrap text Fn into byte Fn
-# =============================================================================
-
-
-@overload
-def decode(
-    func: Callable[[TextStageCtx], Awaitable[int]],
-) -> Callable[[ByteStageCtx], Awaitable[int]]: ...
-
-
-@overload
-def decode(
-    func: str,
-) -> Callable[
-    [Callable[[TextStageCtx], Awaitable[int]]],
-    Callable[[ByteStageCtx], Awaitable[int]],
-]: ...
-
-
-@overload
-def decode() -> Callable[
-    [Callable[[TextStageCtx], Awaitable[int]]],
-    Callable[[ByteStageCtx], Awaitable[int]],
-]: ...
-
-
-def decode(
-    func: Callable[[TextStageCtx], Awaitable[int]] | str | None = None,
-) -> (
-    Callable[[ByteStageCtx], Awaitable[int]]
-    | Callable[
-        [Callable[[TextStageCtx], Awaitable[int]]],
-        Callable[[ByteStageCtx], Awaitable[int]],
-    ]
-):
-    """Wrap a TextStageCtx function into a ByteStageCtx function.
-
-    Three forms:
-        @decode          — bare decorator, uses utf-8
-        @decode()        — explicit call, uses utf-8
-        @decode("latin-1") — explicit encoding
-    """
-    if callable(func):
-        # @decode without parens: func is the decorated function
-        return make_byte_wrapper(func, "utf-8")
-    # @decode() or @decode("latin-1"): func is encoding or None
-    encoding = func if isinstance(func, str) else "utf-8"
-
-    def decorator(
-        inner: Callable[[TextStageCtx], Awaitable[int]],
-    ) -> Callable[[ByteStageCtx], Awaitable[int]]:
-        return make_byte_wrapper(inner, encoding)
-
-    return decorator
-
-
-def make_byte_wrapper(
-    func: Callable[[TextStageCtx], Awaitable[int]],
-    encoding: str,
-) -> Callable[[ByteStageCtx], Awaitable[int]]:
-    """Build a ByteStageCtx wrapper that decodes/encodes around func."""
-
-    @wraps(func)
-    async def wrapper(ctx: ByteStageCtx) -> int:
-        text_ctx = TextStageCtx(
-            stdin=TextReadStream(ctx.stdin, encoding=encoding),
-            stdout=TextWriteStream(ctx.stdout, encoding=encoding),
-        )
-        return await func(text_ctx)
-
-    return wrapper

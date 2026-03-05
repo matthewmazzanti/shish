@@ -1,16 +1,15 @@
-"""IR: frozen dataclasses with chainable builder methods."""
+"""Builders: frozen dataclasses with chainable builder methods."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shish.fdops import STDIN, STDOUT
+from shish.fd import STDIN, STDOUT
 
 if TYPE_CHECKING:
-    from shish.aio import ByteStageCtx
+    from shish.fn_stage import ByteFn
     from shish.runtime import StartCtx
 
 
@@ -194,7 +193,7 @@ class Cmd:
 
 @dataclass(frozen=True)
 class Fn:
-    func: Callable[[ByteStageCtx], Awaitable[int]]
+    func: ByteFn
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
         """Pipe this Fn into another stage."""

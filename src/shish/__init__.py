@@ -1,14 +1,23 @@
-from shish.aio import (
-    ByteReadStream,
-    ByteStageCtx,
-    ByteWriteStream,
-    OwnedFd,
-    TextReadStream,
-    TextStageCtx,
-    TextWriteStream,
-    decode,
+from shish.builders import (
+    Arg,
+    Data,
+    PathLike,
+    ReadSrc,
+    Sub,
+    SubIn,
+    SubOut,
+    WriteDst,
 )
-from shish.dsl import (
+from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
+from shish.fn_stage import ByteFn, ByteStageCtx, TextFn, TextStageCtx, decode
+from shish.runtime import CloseMethod, Execution, StartCtx
+from shish.streams import (
+    ByteReadStream,
+    ByteWriteStream,
+    TextReadStream,
+    TextWriteStream,
+)
+from shish.syntax import (
     Cmd,
     Flag,
     Fn,
@@ -33,9 +42,6 @@ from shish.dsl import (
     wrap,
     write,
 )
-from shish.fdops import PIPE, STDERR, STDIN, STDOUT, Pipe
-from shish.ir import Arg, Data, PathLike, ReadSrc, Sub, SubIn, SubOut, WriteDst
-from shish.runtime import CloseMethod, Execution, StartCtx
 
 __all__ = [
     "PIPE",
@@ -43,6 +49,7 @@ __all__ = [
     "STDIN",
     "STDOUT",
     "Arg",
+    "ByteFn",
     "ByteReadStream",
     "ByteStageCtx",
     "ByteWriteStream",
@@ -50,9 +57,9 @@ __all__ = [
     "Cmd",
     "Data",
     "Execution",
+    "Fd",
     "Flag",
     "Fn",
-    "OwnedFd",
     "PathLike",
     "Pipe",
     "Pipeline",
@@ -63,6 +70,7 @@ __all__ = [
     "Sub",
     "SubIn",
     "SubOut",
+    "TextFn",
     "TextReadStream",
     "TextStageCtx",
     "TextWriteStream",

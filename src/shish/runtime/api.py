@@ -12,19 +12,18 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
-from shish.aio import (
-    ByteReadStream,
-    ByteWriteStream,
-    OwnedFd,
-    TextReadStream,
-    TextWriteStream,
-)
-from shish.fdops import PIPE, STDIN, STDOUT, Pipe
-from shish.ir import Runnable
+from shish.builders import Runnable
+from shish.fd import PIPE, STDIN, STDOUT, Fd, Pipe
 from shish.runtime.spawn import SpawnCtx
 from shish.runtime.tree import (
     ProcessNode,
     StdFds,
+)
+from shish.streams import (
+    ByteReadStream,
+    ByteWriteStream,
+    TextReadStream,
+    TextWriteStream,
 )
 
 
@@ -240,7 +239,7 @@ class StartCtx[
             _stdout_encoding=encoding,
         )
 
-    def _alloc_stdin(self, ctx: SpawnCtx) -> tuple[OwnedFd, OwnedFd | None]:
+    def _alloc_stdin(self, ctx: SpawnCtx) -> tuple[Fd, Fd | None]:
         """Resolve stdin arg into (spawn_fd, stream_fd). PIPE allocates a pipe."""
         if self._stdin_arg is PIPE:
             return ctx.pipe()
@@ -248,7 +247,7 @@ class StartCtx[
             return ctx.dup(STDIN), None
         return ctx.dup(self._stdin_arg), None
 
-    def _alloc_stdout(self, ctx: SpawnCtx) -> tuple[OwnedFd | None, OwnedFd]:
+    def _alloc_stdout(self, ctx: SpawnCtx) -> tuple[Fd | None, Fd]:
         """Resolve stdout arg into (stream_fd, spawn_fd). PIPE allocates a pipe."""
         if self._stdout_arg is PIPE:
             return ctx.pipe()
@@ -256,9 +255,7 @@ class StartCtx[
             return None, ctx.dup(STDOUT)
         return None, ctx.dup(self._stdout_arg)
 
-    def _wrap_stdin(
-        self, fd: OwnedFd | None
-    ) -> ByteWriteStream | TextWriteStream | None:
+    def _wrap_stdin(self, fd: Fd | None) -> ByteWriteStream | TextWriteStream | None:
         """Wrap an owned fd into a stdin stream, optionally text-encoded."""
         if fd is None:
             return None
@@ -267,9 +264,7 @@ class StartCtx[
             return stream
         return TextWriteStream(stream, encoding=self._stdin_encoding)
 
-    def _wrap_stdout(
-        self, fd: OwnedFd | None
-    ) -> ByteReadStream | TextReadStream | None:
+    def _wrap_stdout(self, fd: Fd | None) -> ByteReadStream | TextReadStream | None:
         """Wrap an owned fd into a stdout stream, optionally text-decoded."""
         if fd is None:
             return None

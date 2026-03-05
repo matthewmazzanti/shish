@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from shish import STDERR, STDIN, STDOUT, ir
-from shish.aio import ByteStageCtx
-from shish.ir import Fn, cmd
+from shish import STDERR, STDIN, STDOUT, builders
+from shish.builders import Fn, cmd
+from shish.fn_stage import ByteStageCtx
 
 # =============================================================================
 # Cmd construction
@@ -12,19 +12,19 @@ from shish.ir import Fn, cmd
 
 
 def test_cmd_basic() -> None:
-    assert cmd("echo", "hello") == ir.Cmd(("echo", "hello"))
+    assert cmd("echo", "hello") == builders.Cmd(("echo", "hello"))
 
 
 def test_cmd_multiple_args() -> None:
-    assert cmd("echo", "hello", "world") == ir.Cmd(("echo", "hello", "world"))
+    assert cmd("echo", "hello", "world") == builders.Cmd(("echo", "hello", "world"))
 
 
 def test_cmd_path_arg() -> None:
-    assert cmd("cat", Path("/tmp/file.txt")) == ir.Cmd(("cat", "/tmp/file.txt"))
+    assert cmd("cat", Path("/tmp/file.txt")) == builders.Cmd(("cat", "/tmp/file.txt"))
 
 
 def test_cmd_numeric_str_arg() -> None:
-    assert cmd("head", "-n", "5") == ir.Cmd(("head", "-n", "5"))
+    assert cmd("head", "-n", "5") == builders.Cmd(("head", "-n", "5"))
 
 
 # =============================================================================
@@ -34,22 +34,22 @@ def test_cmd_numeric_str_arg() -> None:
 
 def test_pipe_two() -> None:
     result = cmd("echo", "hello").pipe(cmd("cat"))
-    assert isinstance(result, ir.Pipeline)
-    assert result == ir.Pipeline(
+    assert isinstance(result, builders.Pipeline)
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(("cat",)),
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(("cat",)),
         )
     )
 
 
 def test_pipe_chain() -> None:
     result = cmd("echo", "hello").pipe(cmd("grep", "h")).pipe(cmd("wc", "-l"))
-    assert result == ir.Pipeline(
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(("grep", "h")),
-            ir.Cmd(("wc", "-l")),
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(("grep", "h")),
+            builders.Cmd(("wc", "-l")),
         )
     )
 
@@ -60,56 +60,58 @@ def test_pipe_chain() -> None:
 
 
 def test_write_stdout() -> None:
-    assert cmd("echo", "hello").write("out.txt") == ir.Cmd(
-        ("echo", "hello"), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),)
+    assert cmd("echo", "hello").write("out.txt") == builders.Cmd(
+        ("echo", "hello"), redirects=(builders.FdToFile(STDOUT, Path("out.txt")),)
     )
 
 
 def test_write_stdout_append() -> None:
-    assert cmd("echo", "hello").write("out.txt", append=True) == ir.Cmd(
+    assert cmd("echo", "hello").write("out.txt", append=True) == builders.Cmd(
         ("echo", "hello"),
-        redirects=(ir.FdToFile(STDOUT, Path("out.txt"), append=True),),
+        redirects=(builders.FdToFile(STDOUT, Path("out.txt"), append=True),),
     )
 
 
 def test_read_stdin() -> None:
-    assert cmd("cat").read("in.txt") == ir.Cmd(
-        ("cat",), redirects=(ir.FdFromFile(STDIN, Path("in.txt")),)
+    assert cmd("cat").read("in.txt") == builders.Cmd(
+        ("cat",), redirects=(builders.FdFromFile(STDIN, Path("in.txt")),)
     )
 
 
 def test_feed_stdin_string() -> None:
-    assert cmd("cat").feed("hello") == ir.Cmd(
-        ("cat",), redirects=(ir.FdFromData(STDIN, "hello"),)
+    assert cmd("cat").feed("hello") == builders.Cmd(
+        ("cat",), redirects=(builders.FdFromData(STDIN, "hello"),)
     )
 
 
 def test_feed_stdin_bytes() -> None:
-    assert cmd("cat").feed(b"binary") == ir.Cmd(
-        ("cat",), redirects=(ir.FdFromData(STDIN, b"binary"),)
+    assert cmd("cat").feed(b"binary") == builders.Cmd(
+        ("cat",), redirects=(builders.FdFromData(STDIN, b"binary"),)
     )
 
 
 def test_close_fd() -> None:
-    assert cmd("cat").close(STDIN) == ir.Cmd(("cat",), redirects=(ir.FdClose(STDIN),))
+    assert cmd("cat").close(STDIN) == builders.Cmd(
+        ("cat",), redirects=(builders.FdClose(STDIN),)
+    )
 
 
 def test_redirect_chain_read_write() -> None:
-    assert cmd("cat").read("in.txt").write("out.txt") == ir.Cmd(
+    assert cmd("cat").read("in.txt").write("out.txt") == builders.Cmd(
         ("cat",),
         redirects=(
-            ir.FdFromFile(STDIN, Path("in.txt")),
-            ir.FdToFile(STDOUT, Path("out.txt")),
+            builders.FdFromFile(STDIN, Path("in.txt")),
+            builders.FdToFile(STDOUT, Path("out.txt")),
         ),
     )
 
 
 def test_redirect_chain_write_read() -> None:
-    assert cmd("cat").write("out.txt").read("in.txt") == ir.Cmd(
+    assert cmd("cat").write("out.txt").read("in.txt") == builders.Cmd(
         ("cat",),
         redirects=(
-            ir.FdToFile(STDOUT, Path("out.txt")),
-            ir.FdFromFile(STDIN, Path("in.txt")),
+            builders.FdToFile(STDOUT, Path("out.txt")),
+            builders.FdFromFile(STDIN, Path("in.txt")),
         ),
     )
 
@@ -120,27 +122,27 @@ def test_redirect_chain_write_read() -> None:
 
 
 def test_write_explicit_fd() -> None:
-    assert cmd("foo").write("err.log", fd=STDERR) == ir.Cmd(
-        ("foo",), redirects=(ir.FdToFile(STDERR, Path("err.log")),)
+    assert cmd("foo").write("err.log", fd=STDERR) == builders.Cmd(
+        ("foo",), redirects=(builders.FdToFile(STDERR, Path("err.log")),)
     )
 
 
 def test_write_append_explicit_fd() -> None:
-    assert cmd("foo").write("err.log", append=True, fd=STDERR) == ir.Cmd(
+    assert cmd("foo").write("err.log", append=True, fd=STDERR) == builders.Cmd(
         ("foo",),
-        redirects=(ir.FdToFile(STDERR, Path("err.log"), append=True),),
+        redirects=(builders.FdToFile(STDERR, Path("err.log"), append=True),),
     )
 
 
 def test_read_explicit_fd() -> None:
-    assert cmd("foo").read("in.txt", fd=3) == ir.Cmd(
-        ("foo",), redirects=(ir.FdFromFile(3, Path("in.txt")),)
+    assert cmd("foo").read("in.txt", fd=3) == builders.Cmd(
+        ("foo",), redirects=(builders.FdFromFile(3, Path("in.txt")),)
     )
 
 
 def test_feed_explicit_fd() -> None:
-    assert cmd("foo").feed("data", fd=3) == ir.Cmd(
-        ("foo",), redirects=(ir.FdFromData(3, "data"),)
+    assert cmd("foo").feed("data", fd=3) == builders.Cmd(
+        ("foo",), redirects=(builders.FdFromData(3, "data"),)
     )
 
 
@@ -151,22 +153,24 @@ def test_feed_explicit_fd() -> None:
 
 def test_redirect_in_pipeline_first() -> None:
     result = cmd("cat").read("in.txt").pipe(cmd("grep", "x"))
-    assert result == ir.Pipeline(
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("cat",), redirects=(ir.FdFromFile(STDIN, Path("in.txt")),)),
-            ir.Cmd(("grep", "x")),
+            builders.Cmd(
+                ("cat",), redirects=(builders.FdFromFile(STDIN, Path("in.txt")),)
+            ),
+            builders.Cmd(("grep", "x")),
         )
     )
 
 
 def test_redirect_in_pipeline_last() -> None:
     result = cmd("echo", "hello").pipe(cmd("cat").write("out.txt"))
-    assert result == ir.Pipeline(
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("echo", "hello")),
-            ir.Cmd(
+            builders.Cmd(("echo", "hello")),
+            builders.Cmd(
                 ("cat",),
-                redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+                redirects=(builders.FdToFile(STDOUT, Path("out.txt")),),
             ),
         )
     )
@@ -174,14 +178,14 @@ def test_redirect_in_pipeline_last() -> None:
 
 def test_redirect_in_pipeline_middle() -> None:
     result = cmd("a").pipe(cmd("b").write("log.txt")).pipe(cmd("c"))
-    assert result == ir.Pipeline(
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(
+            builders.Cmd(("a",)),
+            builders.Cmd(
                 ("b",),
-                redirects=(ir.FdToFile(STDOUT, Path("log.txt")),),
+                redirects=(builders.FdToFile(STDOUT, Path("log.txt")),),
             ),
-            ir.Cmd(("c",)),
+            builders.Cmd(("c",)),
         )
     )
 
@@ -193,22 +197,22 @@ def test_redirect_in_pipeline_middle() -> None:
 
 def test_sub_in() -> None:
     result = cmd("sort", "a.txt").sub_in()
-    assert isinstance(result, ir.SubIn)
-    assert result == ir.SubIn(ir.Cmd(("sort", "a.txt")))
+    assert isinstance(result, builders.SubIn)
+    assert result == builders.SubIn(builders.Cmd(("sort", "a.txt")))
 
 
 def test_sub_out() -> None:
     result = cmd("gzip").sub_out()
-    assert isinstance(result, ir.SubOut)
-    assert result == ir.SubOut(ir.Cmd(("gzip",)))
+    assert isinstance(result, builders.SubOut)
+    assert result == builders.SubOut(builders.Cmd(("gzip",)))
 
 
 def test_sub_in_as_arg() -> None:
     result = cmd("cat", cmd("echo", "hello").sub_in())
-    assert result == ir.Cmd(
+    assert result == builders.Cmd(
         (
             "cat",
-            ir.SubIn(ir.Cmd(("echo", "hello"))),
+            builders.SubIn(builders.Cmd(("echo", "hello"))),
         )
     )
 
@@ -219,24 +223,24 @@ def test_sub_in_multiple_args() -> None:
         cmd("sort", "a.txt").sub_in(),
         cmd("sort", "b.txt").sub_in(),
     )
-    assert result == ir.Cmd(
+    assert result == builders.Cmd(
         (
             "diff",
-            ir.SubIn(ir.Cmd(("sort", "a.txt"))),
-            ir.SubIn(ir.Cmd(("sort", "b.txt"))),
+            builders.SubIn(builders.Cmd(("sort", "a.txt"))),
+            builders.SubIn(builders.Cmd(("sort", "b.txt"))),
         )
     )
 
 
 def test_sub_out_as_arg() -> None:
     result = cmd("tee", cmd("cat").write("out.txt").sub_out())
-    assert result == ir.Cmd(
+    assert result == builders.Cmd(
         (
             "tee",
-            ir.SubOut(
-                ir.Cmd(
+            builders.SubOut(
+                builders.Cmd(
                     ("cat",),
-                    redirects=(ir.FdToFile(STDOUT, Path("out.txt")),),
+                    redirects=(builders.FdToFile(STDOUT, Path("out.txt")),),
                 )
             ),
         )
@@ -245,10 +249,10 @@ def test_sub_out_as_arg() -> None:
 
 def test_sub_out_with_redirect() -> None:
     result = cmd("gzip").write("out.gz").sub_out()
-    assert result == ir.SubOut(
-        ir.Cmd(
+    assert result == builders.SubOut(
+        builders.Cmd(
             ("gzip",),
-            redirects=(ir.FdToFile(STDOUT, Path("out.gz")),),
+            redirects=(builders.FdToFile(STDOUT, Path("out.gz")),),
         )
     )
 
@@ -259,14 +263,14 @@ def test_sub_out_with_redirect() -> None:
 
 
 def test_cmd_arg() -> None:
-    assert cmd("echo").arg("hello", "world") == ir.Cmd(("echo", "hello", "world"))
+    assert cmd("echo").arg("hello", "world") == builders.Cmd(("echo", "hello", "world"))
 
 
 def test_cmd_arg_returns_new_instance() -> None:
     base = cmd("echo")
     extended = base.arg("hello")
-    assert base == ir.Cmd(("echo",))
-    assert extended == ir.Cmd(("echo", "hello"))
+    assert base == builders.Cmd(("echo",))
+    assert extended == builders.Cmd(("echo", "hello"))
 
 
 # =============================================================================
@@ -275,40 +279,42 @@ def test_cmd_arg_returns_new_instance() -> None:
 
 
 def test_pipeline_factory_flat() -> None:
-    result = ir.pipeline(ir.Cmd(("a",)), ir.Cmd(("b",)))
-    assert result == ir.Pipeline((ir.Cmd(("a",)), ir.Cmd(("b",))))
+    result = builders.pipeline(builders.Cmd(("a",)), builders.Cmd(("b",)))
+    assert result == builders.Pipeline((builders.Cmd(("a",)), builders.Cmd(("b",))))
 
 
 def test_pipeline_factory_flattens_nested() -> None:
-    inner = ir.Pipeline((ir.Cmd(("a",)), ir.Cmd(("b",))))
-    result = ir.pipeline(inner, ir.Cmd(("c",)))
-    assert result == ir.Pipeline(
+    inner = builders.Pipeline((builders.Cmd(("a",)), builders.Cmd(("b",))))
+    result = builders.pipeline(inner, builders.Cmd(("c",)))
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
         )
     )
 
 
 def test_pipeline_factory_flattens_both_sides() -> None:
-    left = ir.Pipeline((ir.Cmd(("a",)), ir.Cmd(("b",))))
-    right = ir.Pipeline((ir.Cmd(("c",)), ir.Cmd(("d",))))
-    result = ir.pipeline(left, right)
-    assert result == ir.Pipeline(
+    left = builders.Pipeline((builders.Cmd(("a",)), builders.Cmd(("b",))))
+    right = builders.Pipeline((builders.Cmd(("c",)), builders.Cmd(("d",))))
+    result = builders.pipeline(left, right)
+    assert result == builders.Pipeline(
         (
-            ir.Cmd(("a",)),
-            ir.Cmd(("b",)),
-            ir.Cmd(("c",)),
-            ir.Cmd(("d",)),
+            builders.Cmd(("a",)),
+            builders.Cmd(("b",)),
+            builders.Cmd(("c",)),
+            builders.Cmd(("d",)),
         )
     )
 
 
 def test_pipeline_factory_preserves_redirects() -> None:
-    cmd_b = ir.Cmd(("b",), redirects=(ir.FdToFile(STDOUT, Path("out.txt")),))
-    result = ir.pipeline(ir.Cmd(("a",)), cmd_b)
-    assert result == ir.Pipeline((ir.Cmd(("a",)), cmd_b))
+    cmd_b = builders.Cmd(
+        ("b",), redirects=(builders.FdToFile(STDOUT, Path("out.txt")),)
+    )
+    result = builders.pipeline(builders.Cmd(("a",)), cmd_b)
+    assert result == builders.Pipeline((builders.Cmd(("a",)), cmd_b))
 
 
 # =============================================================================
@@ -317,7 +323,9 @@ def test_pipeline_factory_preserves_redirects() -> None:
 
 
 def test_env_single() -> None:
-    assert cmd("echo").env(FOO="bar") == ir.Cmd(("echo",), env_vars=(("FOO", "bar"),))
+    assert cmd("echo").env(FOO="bar") == builders.Cmd(
+        ("echo",), env_vars=(("FOO", "bar"),)
+    )
 
 
 def test_env_multiple() -> None:
@@ -375,7 +383,7 @@ def test_replace_preserves_env_and_cwd() -> None:
 
 def test_replace_preserves_redirects() -> None:
     base = cmd("echo").write("out.txt").env(FOO="bar")
-    assert base.redirects == (ir.FdToFile(STDOUT, Path("out.txt")),)
+    assert base.redirects == (builders.FdToFile(STDOUT, Path("out.txt")),)
     assert base.env_vars == (("FOO", "bar"),)
 
 
@@ -401,33 +409,35 @@ def test_fn_construction() -> None:
 
 
 def test_fn_pipe_cmd() -> None:
-    assert _fn.pipe(cmd("cat")) == ir.Pipeline((_fn, ir.Cmd(("cat",))))
+    assert _fn.pipe(cmd("cat")) == builders.Pipeline((_fn, builders.Cmd(("cat",))))
 
 
 def test_fn_pipe_fn() -> None:
-    assert _fn.pipe(_fn2) == ir.Pipeline((_fn, _fn2))
+    assert _fn.pipe(_fn2) == builders.Pipeline((_fn, _fn2))
 
 
 def test_cmd_pipe_fn() -> None:
-    assert cmd("echo", "hi").pipe(_fn) == ir.Pipeline((ir.Cmd(("echo", "hi")), _fn))
+    assert cmd("echo", "hi").pipe(_fn) == builders.Pipeline(
+        (builders.Cmd(("echo", "hi")), _fn)
+    )
 
 
 def test_fn_sub_in() -> None:
-    assert _fn.sub_in() == ir.SubIn(_fn)
+    assert _fn.sub_in() == builders.SubIn(_fn)
 
 
 def test_fn_sub_out() -> None:
-    assert _fn.sub_out() == ir.SubOut(_fn)
+    assert _fn.sub_out() == builders.SubOut(_fn)
 
 
 def test_pipeline_mixed_stages() -> None:
-    assert ir.pipeline(cmd("a"), _fn, cmd("b")) == ir.Pipeline(
-        (ir.Cmd(("a",)), _fn, ir.Cmd(("b",)))
+    assert builders.pipeline(cmd("a"), _fn, cmd("b")) == builders.Pipeline(
+        (builders.Cmd(("a",)), _fn, builders.Cmd(("b",)))
     )
 
 
 def test_pipeline_flattens_with_fn() -> None:
-    inner = ir.Pipeline((cmd("a"), _fn))
-    assert ir.pipeline(inner, cmd("b")) == ir.Pipeline(
-        (ir.Cmd(("a",)), _fn, ir.Cmd(("b",)))
+    inner = builders.Pipeline((cmd("a"), _fn))
+    assert builders.pipeline(inner, cmd("b")) == builders.Pipeline(
+        (builders.Cmd(("a",)), _fn, builders.Cmd(("b",)))
     )

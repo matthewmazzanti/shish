@@ -118,11 +118,11 @@ cwd(sh.pwd(), "/tmp")                               # set working directory
 
 ## Builder Pattern
 
-`sh` and operators are convenient but rely on `__getattr__` and operator overloading. The IR layer (`shish.ir`) exposes the same functionality as frozen dataclasses with chainable builder methods - no magic, fully typed:
+`sh` and operators are convenient but rely on `__getattr__` and operator overloading. The builder layer (`shish.builders`) exposes the same functionality as frozen dataclasses with chainable builder methods - no magic, fully typed:
 
 ```python
-from shish.ir import cmd
-from shish.fdops import STDERR
+from shish.builders import cmd
+from shish import STDERR
 
 # Chainable builders on frozen dataclasses
 grep = cmd("grep", "error").read("input.txt")
@@ -140,7 +140,7 @@ stdout = await cmd("ls", "-la").out()
 
 ```python
 from shish import start, PIPE
-from shish.ir import cmd
+from shish.builders import cmd
 
 # Inherit parent stdin/stdout — no .stdin()/.stdout() needed
 async with start(cmd("ls", "-la")) as proc:
