@@ -563,7 +563,7 @@ async def test_nested_sub_in_with_transform() -> None:
 async def test_cancel_await_cmd() -> None:
     """Cancelling await sh.cmd() kills the child."""
     task = asyncio.create_task(run(sh.sleep("60")))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -572,7 +572,7 @@ async def test_cancel_await_cmd() -> None:
 async def test_cancel_pipeline() -> None:
     """Cancelling a DSL pipeline kills all stages."""
     task = asyncio.create_task(run(sh.sleep("60") | sh.sleep("60")))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -587,7 +587,7 @@ async def test_cancel_fn_pipeline() -> None:
         return 0
 
     task = asyncio.create_task(run(sh.sleep("60") | _slow | sh.sleep("60")))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -932,7 +932,7 @@ async def test_start_terminate() -> None:
     """execution.terminate() sends SIGTERM."""
 
     async with start(sh.sleep("60")) as execution:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
         execution.terminate()
         code = await execution.wait()
     assert code == 128 + signal.SIGTERM

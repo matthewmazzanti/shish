@@ -868,7 +868,7 @@ async def test_concurrent_file_writes(tmp_path: Path) -> None:
 async def test_cancel_kills_child() -> None:
     """Cancelling a running task kills the child process."""
     task = asyncio.create_task(run(ir.Cmd(("sleep", "60"))))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -879,7 +879,7 @@ async def test_cancel_pipeline_kills_all_stages() -> None:
     task = asyncio.create_task(
         run(ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Cmd(("sleep", "60")))))
     )
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1146,7 +1146,7 @@ async def test_fn_cancel() -> None:
         return 0
 
     task = asyncio.create_task(run(ir.Fn(_slow)))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1166,7 +1166,7 @@ async def test_fn_cancel_mixed_pipeline() -> None:
             )
         )
     )
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1182,7 +1182,7 @@ async def test_fn_cancel_mid_read() -> None:
     task = asyncio.create_task(
         run(ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Fn(_reader))))
     )
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1201,7 +1201,7 @@ async def test_fn_cancel_mid_write() -> None:
     task = asyncio.create_task(
         run(ir.Pipeline((ir.Fn(_writer), ir.Cmd(("sleep", "60")))))
     )
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1244,7 +1244,7 @@ async def test_start_signal_term() -> None:
     """send SIGTERM via execution.terminate(), check 128+SIGTERM exit."""
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
         execution.terminate()
         code = await execution.wait()
     assert code == 128 + signal.SIGTERM
@@ -1254,7 +1254,7 @@ async def test_start_kill() -> None:
     """execution.kill() sends SIGKILL, wait() collects exit code."""
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
         execution.kill()
         code = await execution.wait()
     assert code == 128 + signal.SIGKILL
@@ -1389,8 +1389,8 @@ async def test_close_terminate_escalates_to_kill() -> None:
         )
     )
     async with start(ignore_term) as execution:
-        await asyncio.sleep(0.1)  # let Python start and install SIG_IGN
-        used = await execution.close(method=CloseMethod.TERMINATE, timeout=0.5)
+        await asyncio.sleep(0.05)  # let Python start and install SIG_IGN
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=0.05)
     assert used == CloseMethod.KILL
     assert execution.returncode == 128 + signal.SIGKILL
 
@@ -1409,8 +1409,8 @@ async def test_close_eof_escalates_through_terminate_to_kill() -> None:
         )
     )
     async with start(ignore_term) as execution:
-        await asyncio.sleep(0.1)  # let Python start and install SIG_IGN
-        used = await execution.close(method=CloseMethod.EOF, timeout=0.3)
+        await asyncio.sleep(0.05)  # let Python start and install SIG_IGN
+        used = await execution.close(method=CloseMethod.EOF, timeout=0.05)
     assert used == CloseMethod.KILL
     assert execution.returncode == 128 + signal.SIGKILL
 
