@@ -19,9 +19,15 @@ STDERR: int = 2
 
 @dataclass
 class Fd:
-    """Tracked file descriptor with idempotent close."""
+    """Tracked file descriptor with idempotent close.
+
+    owned=True (default): close() calls os.close().
+    owned=False: close() is a no-op. Use for borrowed fds
+    (e.g. wrapping STDIN/STDOUT/STDERR or caller-owned fds).
+    """
 
     fd: int
+    owned: bool = True
     closed: bool = False
 
     def fileno(self) -> int:
@@ -29,7 +35,8 @@ class Fd:
         return self.fd
 
     def close(self) -> None:
-        """Close the fd if not already closed."""
+        """Close the fd if owned and not already closed."""
         if not self.closed:
             self.closed = True
-            os.close(self.fd)
+            if self.owned:
+                os.close(self.fd)

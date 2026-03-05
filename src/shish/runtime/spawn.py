@@ -4,10 +4,14 @@ SpawnCtx tracks all allocated resources (fds, procs, tasks) during
 spawn for error cleanup, and dispatches IR nodes to the appropriate
 spawn method (cmd, fn, pipeline).
 
-Fd ownership invariant:
-- All opened fds are closed after spawn by the opener
-  (except FnNode dups, which stay open for in-process execution).
-- All fds are tracked by SpawnCtx, allowing cleanup on errors.
+Fd ownership invariant — borrow, dup-before-use:
+- StdFds are borrowed, not owned. Callers pass fds without duping.
+- Use-sites dup only if they need their own copy: spawn_fn dups
+  for in-process FnNode execution; fork is an implicit dup for exec_.
+- Creators close what they create: __aenter__ closes PIPE fds (non-
+  owning inherit/raw-fd Fds are no-op closes), SpawnCmdCtx closes
+  pipe/redirect fds, spawn_pipeline closes inter-stage pipe fds.
+- All created fds are tracked by SpawnCtx for error cleanup.
 """
 
 from __future__ import annotations
@@ -18,7 +22,6 @@ import sys
 import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from shish.builders import (
@@ -43,7 +46,6 @@ from shish.streams import (
 )
 
 
-@dataclass
 class SpawnCtx:
     """Tracks fds, procs, and fn_tasks during spawn for error cleanup.
 
@@ -54,11 +56,14 @@ class SpawnCtx:
     spawn methods that dispatch IR nodes to the appropriate builder.
     """
 
-    fds: list[Fd] = field(default_factory=lambda: list[Fd]())
-    procs: list[Process] = field(default_factory=lambda: list[Process]())
-    fn_tasks: list[asyncio.Task[int]] = field(
-        default_factory=lambda: list[asyncio.Task[int]]()
-    )
+    fds: list[Fd]
+    procs: list[Process]
+    fn_tasks: list[asyncio.Task[int]]
+
+    def __init__(self) -> None:
+        self.fds = []
+        self.procs = []
+        self.fn_tasks = []
 
     async def cleanup(self) -> None:
         """Tear down everything allocated so far: kill procs, cancel
@@ -85,6 +90,7 @@ class SpawnCtx:
         *args: str,
         stdin: int | None = None,
         stdout: int | None = None,
+        stderr: int | None = None,
         pass_fds: tuple[int, ...] = (),
         preexec_fn: Callable[[], None] | None = None,
         cwd: Path | None = None,
@@ -92,8 +98,8 @@ class SpawnCtx:
     ) -> Process:
         """Spawn a subprocess via create_subprocess_exec and register it.
 
-        stdin/stdout are raw fds (or None for inherit); Popen does
-        dup2 to wire them to fds 0/1 in the child. pass_fds keeps
+        stdin/stdout/stderr are raw fds (or None for inherit); Popen does
+        dup2 to wire them to fds 0/1/2 in the child. pass_fds keeps
         additional fds open across exec (fds > 2 used by redirects
         and process substitutions). preexec_fn runs between fork and
         exec to apply user redirect ops (open, dup2, close).
@@ -102,6 +108,7 @@ class SpawnCtx:
             *args,
             stdin=stdin,
             stdout=stdout,
+            stderr=stderr,
             pass_fds=pass_fds,
             preexec_fn=preexec_fn,
             cwd=cwd,
@@ -159,13 +166,15 @@ class SpawnCtx:
     ) -> FnNode:
         """Create an FnNode for an in-process Python function.
 
-        Dups the received fds so the pipeline's close-after-spawn
-        logic (which closes the originals) doesn't affect the Fn.
-        The task is started eagerly so the function begins executing
-        immediately, matching the behavior of spawn_cmd.
+        Dups stdin/stdout/stderr from std_fds — the only spawn path
+        that needs explicit dups (dup-before-use). FnNode runs in-
+        process, so it needs owned copies that survive the caller's
+        close-after-spawn. The task is started eagerly so the function
+        begins executing immediately, matching the behavior of spawn_cmd.
         """
         dup_stdin = self.dup(std_fds.stdin.fd)
         dup_stdout = self.dup(std_fds.stdout.fd)
+        dup_stderr = self.dup(std_fds.stderr.fd)
         func = fn_ir.func
 
         async def execute() -> int:
@@ -183,7 +192,12 @@ class SpawnCtx:
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)
-        return FnNode(task=task, _stdin_fd=dup_stdin, _stdout_fd=dup_stdout)
+        return FnNode(
+            task=task,
+            _stdin_fd=dup_stdin,
+            _stdout_fd=dup_stdout,
+            _stderr_fd=dup_stderr,
+        )
 
     async def spawn_pipeline(
         self,
@@ -209,11 +223,12 @@ class SpawnCtx:
         # Allocate inter-stage pipes
         inter_pipes = [self.pipe() for _ in range(len(stages) - 1)]
 
-        # Per-stage StdFds: outer fds at the edges, pipes in between
+        # Per-stage StdFds: outer fds at the edges, pipes in between.
+        # All stages share the same stderr fd.
         stage_stdins = [std_fds.stdin] + [pipe_r for pipe_r, _ in inter_pipes]
         stage_stdouts = [pipe_w for _, pipe_w in inter_pipes] + [std_fds.stdout]
         stage_fds = [
-            StdFds(stdin=sin, stdout=sout)
+            StdFds(stdin=sin, stdout=sout, stderr=std_fds.stderr)
             for sin, sout in zip(stage_stdins, stage_stdouts, strict=True)
         ]
 
@@ -223,7 +238,7 @@ class SpawnCtx:
             if isinstance(stage, Fn):
                 spawn_tasks.append(self.spawn_fn(stage, fds))
             else:
-                spawn_tasks.append(SpawnCmdCtx(self, stage, fds).spawn())
+                spawn_tasks.append(self.spawn_cmd(stage, fds))
         stage_nodes = list(await asyncio.gather(*spawn_tasks))
 
         # Close inter-stage pipe fds (children have inherited them)

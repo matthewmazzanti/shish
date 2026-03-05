@@ -21,14 +21,17 @@ from shish.fd import Fd
 
 @dataclass
 class StdFds:
-    """Owned stdin/stdout fds for a spawn subtree.
+    """Stdin/stdout/stderr fds for a spawn subtree.
 
-    Each field is an Fd — dup'd at start() entry from caller fds
-    or parent STDIN/STDOUT, or allocated by pipeline pipe wiring.
+    Not owned — the creator is responsible for closing any fds it
+    allocated. Use-sites that need their own copy (e.g. spawn_fn
+    for in-process execution) dup internally; fork is an implicit
+    dup for exec_.
     """
 
     stdin: Fd
     stdout: Fd
+    stderr: Fd
 
 
 class ProcessNodeBase(abc.ABC):
@@ -156,13 +159,14 @@ class FnNode(ProcessNodeBase):
     """Process tree node for an in-process Python function.
 
     No OS process is spawned — the function runs as an asyncio task,
-    started eagerly by spawn_fn. Owns dup'd copies of stdin/stdout fds
-    so pipeline close-after-spawn logic doesn't affect it.
+    started eagerly by spawn_fn. Owns dup'd copies of stdin/stdout/stderr
+    fds so pipeline close-after-spawn logic doesn't affect it.
     """
 
     task: asyncio.Task[int]
     _stdin_fd: Fd = field(repr=False)
     _stdout_fd: Fd = field(repr=False)
+    _stderr_fd: Fd = field(repr=False)
 
     def returncode(self) -> int | None:
         """Task return code, None if running."""
@@ -181,9 +185,10 @@ class FnNode(ProcessNodeBase):
         self.task.cancel()
 
     def close_fds(self) -> None:
-        """Close owned stdin/stdout fds."""
+        """Close owned stdin/stdout/stderr fds."""
         self._stdin_fd.close()
         self._stdout_fd.close()
+        self._stderr_fd.close()
 
     def awaitables(self) -> Iterator[Awaitable[int]]:
         """Yield awaitable for this task."""

@@ -33,7 +33,7 @@ from shish.builders import (
     SubIn,
     SubOut,
 )
-from shish.fd import STDIN, STDOUT, Fd
+from shish.fd import STDERR, STDIN, STDOUT, Fd
 from shish.fn_stage import (
     ByteStageCtx,
     TextStageCtx,
@@ -48,7 +48,7 @@ from shish.runtime.tree import (
 if ty.TYPE_CHECKING:
     from shish.runtime.spawn import SpawnCtx
 
-SUBPROCESS_DEFAULT_FDS = frozenset({STDIN, STDOUT, 2})
+SUBPROCESS_DEFAULT_FDS = frozenset({STDIN, STDOUT, STDERR})
 FD_DIR = Path("/dev/fd")
 
 
@@ -145,11 +145,10 @@ class SpawnCmdCtx:
     Accumulates fds, sub-process spawns, and fd ops while resolving a single Cmd,
     then builds the preexec_fn and pass_fds for the main process spawn.
 
-    All fds are closed in the parent immediately after spawn — children
-    inherit via fork, so parent copies must close for EOF propagation.
-    Child spawns must dup fds to survive this close; subprocess handles
-    this automatically, but in-process Fn stages must dup manually
-    (see SpawnCtx.spawn_fn).
+    std_fds are borrowed — used directly in exec_() (fork is an implicit
+    dup) and passed through to sub StdFds without duping. Only fds
+    created here (pipes, redirect fds) are tracked in self.fds and
+    closed after spawn for EOF propagation.
     """
 
     ctx: SpawnCtx
@@ -168,6 +167,30 @@ class SpawnCmdCtx:
         self.fds = []
         self.pending = []
         self.subs = []
+
+    def _pipe(self) -> tuple[Fd, Fd]:
+        """Allocate a pipe, tracking both ends for post-spawn cleanup."""
+        pipe_r, pipe_w = self.ctx.pipe()
+        self.fds.extend([pipe_r, pipe_w])
+        return pipe_r, pipe_w
+
+    def _sub_fds(
+        self,
+        *,
+        stdin: Fd | None = None,
+        stdout: Fd | None = None,
+        stderr: Fd | None = None,
+    ) -> StdFds:
+        """Build StdFds from parent's std_fds with optional overrides."""
+        return StdFds(
+            stdin=stdin or self.std_fds.stdin,
+            stdout=stdout or self.std_fds.stdout,
+            stderr=stderr or self.std_fds.stderr,
+        )
+
+    def _spawn(self, cmd: Runnable, std_fds: StdFds) -> None:
+        """Schedule a sub-process spawn, tracking it for concurrent execution."""
+        self.pending.append(self.ctx.spawn(cmd, std_fds))
 
     async def spawn(self) -> CmdNode:
         """Spawn a single Cmd with all its redirects and sub-processes.
@@ -204,7 +227,8 @@ class SpawnCmdCtx:
                 *resolved_args,
                 stdin=self.std_fds.stdin.fd,
                 stdout=self.std_fds.stdout.fd,
-                # Exclude 0/1/2 — subprocess handles those via stdin=/stdout=
+                stderr=self.std_fds.stderr.fd,
+                # Exclude 0/1/2 — subprocess handles those via stdin=/stdout=/stderr=
                 pass_fds=self._build_pass_fds(ignore=SUBPROCESS_DEFAULT_FDS),
                 preexec_fn=self._build_preexec(),
                 cwd=self.cmd.working_dir,
@@ -225,32 +249,24 @@ class SpawnCmdCtx:
 
         to_stdin=True: pipe connects to sub's stdin; parent keeps write end.
         to_stdin=False: pipe connects to sub's stdout; parent keeps read end.
-        The other side dups from parent STDIN/STDOUT for inherit behavior.
+        Inherited fds (stdout/stderr or stdin/stderr) are borrowed from
+        the parent's std_fds without duping — the sub dups if needed.
         """
-        pipe_r, pipe_w = self.ctx.pipe()
-        self.fds.extend([pipe_r, pipe_w])
+        pipe_r, pipe_w = self._pipe()
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
-            inherit_stdout = self.ctx.dup(STDOUT)
-            self.fds.append(inherit_stdout)
-            self.pending.append(
-                self.ctx.spawn(inner, StdFds(stdin=pipe_r, stdout=inherit_stdout))
-            )
+            sub_fds = self._sub_fds(stdin=pipe_r)
         else:
             self.fdo.add_live(pipe_r.fd)
-            inherit_stdin = self.ctx.dup(STDIN)
-            self.fds.append(inherit_stdin)
-            self.pending.append(
-                self.ctx.spawn(inner, StdFds(stdin=inherit_stdin, stdout=pipe_w))
-            )
+            sub_fds = self._sub_fds(stdout=pipe_w)
+        self._spawn(inner, sub_fds)
         return pipe_r, pipe_w
 
     def _feed_with_pipe(self, data: str | bytes) -> Fd:
         """Allocate pipe, schedule FnNode data write, return read end."""
-        pipe_r, pipe_w = self.ctx.pipe()
         # Both ends closed after spawn: SpawnCtx.spawn_fn dups pipe_w,
         # so the FnNode's write end survives parent cleanup.
-        self.fds.extend([pipe_r, pipe_w])
+        pipe_r, pipe_w = self._pipe()
         self.fdo.add_live(pipe_r.fd)
 
         write_data: Callable[[ByteStageCtx], Awaitable[int]]
@@ -271,13 +287,7 @@ class SpawnCmdCtx:
 
             write_data = make_byte_wrapper(write_str_data, "utf-8")
 
-        inherit_stdin = self.ctx.dup(STDIN)
-        self.fds.append(inherit_stdin)
-        self.pending.append(
-            self.ctx.spawn_fn(
-                Fn(write_data), StdFds(stdin=inherit_stdin, stdout=pipe_w)
-            )
-        )
+        self._spawn(Fn(write_data), self._sub_fds(stdout=pipe_w))
         return pipe_r
 
     def _resolve_redirects(self) -> None:
@@ -314,19 +324,19 @@ class SpawnCmdCtx:
 
     def _resolve_args(self) -> list[str]:
         # Resolve Sub arguments to /dev/fd/N paths
-        resolved_args: list[str] = []
+        args: list[str] = []
         for arg in self.cmd.args:
             match arg:
-                case str() as string:
-                    resolved_args.append(string)
+                case str():
+                    args.append(arg)
                 case SubOut(cmd=inner):
                     _, pipe_w = self._spawn_with_pipe(inner, to_stdin=True)
-                    resolved_args.append(self._fd_path_arg(pipe_w.fd))
+                    args.append(self._fd_path_arg(pipe_w.fd))
                 case SubIn(cmd=inner):
                     pipe_r, _ = self._spawn_with_pipe(inner, to_stdin=False)
-                    resolved_args.append(self._fd_path_arg(pipe_r.fd))
+                    args.append(self._fd_path_arg(pipe_r.fd))
 
-        return resolved_args
+        return args
 
     def _resolve_env(self) -> dict[str, str] | None:
         # Build env overlay and resolve working directory
