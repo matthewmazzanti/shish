@@ -181,6 +181,10 @@ class SpawnCmdCtx:
         self.fds.append(duped)
         return duped
 
+    def _spawn(self, cmd: Runnable, std_fds: StdFds) -> None:
+        """Schedule a sub-process spawn, tracking it for concurrent execution."""
+        self.pending.append(self.ctx.spawn(cmd, std_fds))
+
     async def spawn(self) -> CmdNode:
         """Spawn a single Cmd with all its redirects and sub-processes.
 
@@ -243,27 +247,23 @@ class SpawnCmdCtx:
         pipe_r, pipe_w = self._pipe()
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
-            self.pending.append(
-                self.ctx.spawn(
-                    inner,
-                    StdFds(
-                        stdin=pipe_r,
-                        stdout=self._dup(self.std_fds.stdout.fd),
-                        stderr=self._dup(self.std_fds.stderr.fd),
-                    ),
-                )
+            self._spawn(
+                inner,
+                StdFds(
+                    stdin=pipe_r,
+                    stdout=self._dup(self.std_fds.stdout.fd),
+                    stderr=self._dup(self.std_fds.stderr.fd),
+                ),
             )
         else:
             self.fdo.add_live(pipe_r.fd)
-            self.pending.append(
-                self.ctx.spawn(
-                    inner,
-                    StdFds(
-                        stdin=self._dup(self.std_fds.stdin.fd),
-                        stdout=pipe_w,
-                        stderr=self._dup(self.std_fds.stderr.fd),
-                    ),
-                )
+            self._spawn(
+                inner,
+                StdFds(
+                    stdin=self._dup(self.std_fds.stdin.fd),
+                    stdout=pipe_w,
+                    stderr=self._dup(self.std_fds.stderr.fd),
+                ),
             )
         return pipe_r, pipe_w
 
@@ -292,15 +292,13 @@ class SpawnCmdCtx:
 
             write_data = make_byte_wrapper(write_str_data, "utf-8")
 
-        self.pending.append(
-            self.ctx.spawn_fn(
-                Fn(write_data),
-                StdFds(
-                    stdin=self._dup(self.std_fds.stdin.fd),
-                    stdout=pipe_w,
-                    stderr=self._dup(self.std_fds.stderr.fd),
-                ),
-            )
+        self._spawn(
+            Fn(write_data),
+            StdFds(
+                stdin=self._dup(self.std_fds.stdin.fd),
+                stdout=pipe_w,
+                stderr=self._dup(self.std_fds.stderr.fd),
+            ),
         )
         return pipe_r
 
