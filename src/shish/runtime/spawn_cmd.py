@@ -251,8 +251,8 @@ class SpawnCmdCtx:
                 inner,
                 StdFds(
                     stdin=pipe_r,
-                    stdout=self._dup(self.std_fds.stdout.fd),
-                    stderr=self._dup(self.std_fds.stderr.fd),
+                    stdout=self.std_fds.stdout,
+                    stderr=self.std_fds.stderr,
                 ),
             )
         else:
@@ -260,9 +260,9 @@ class SpawnCmdCtx:
             self._spawn(
                 inner,
                 StdFds(
-                    stdin=self._dup(self.std_fds.stdin.fd),
+                    stdin=self.std_fds.stdin,
                     stdout=pipe_w,
-                    stderr=self._dup(self.std_fds.stderr.fd),
+                    stderr=self.std_fds.stderr,
                 ),
             )
         return pipe_r, pipe_w
@@ -295,9 +295,9 @@ class SpawnCmdCtx:
         self._spawn(
             Fn(write_data),
             StdFds(
-                stdin=self._dup(self.std_fds.stdin.fd),
+                stdin=self.std_fds.stdin,
                 stdout=pipe_w,
-                stderr=self._dup(self.std_fds.stderr.fd),
+                stderr=self.std_fds.stderr,
             ),
         )
         return pipe_r
