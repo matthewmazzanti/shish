@@ -21,10 +21,12 @@ from shish.fd import Fd
 
 @dataclass
 class StdFds:
-    """Owned stdin/stdout/stderr fds for a spawn subtree.
+    """Stdin/stdout/stderr fds for a spawn subtree.
 
-    Each field is an Fd — dup'd at start() entry from caller fds
-    or parent STDIN/STDOUT/STDERR, or allocated by pipeline pipe wiring.
+    Not owned — the creator is responsible for closing any fds it
+    allocated. Use-sites that need their own copy (e.g. spawn_fn
+    for in-process execution) dup internally; fork is an implicit
+    dup for exec_.
     """
 
     stdin: Fd

@@ -288,16 +288,16 @@ class StartCtx[
         if self._stdin_arg is PIPE:
             return ctx.pipe()
         if self._stdin_arg is None:
-            return ctx.dup(STDIN), None
-        return ctx.dup(self._stdin_arg), None
+            return Fd(STDIN, owning=False), None
+        return Fd(self._stdin_arg, owning=False), None
 
     def _alloc_stdout(self, ctx: SpawnCtx) -> tuple[Fd | None, Fd]:
         """Resolve stdout arg into (stream_fd, spawn_fd). PIPE allocates a pipe."""
         if self._stdout_arg is PIPE:
             return ctx.pipe()
         if self._stdout_arg is None:
-            return None, ctx.dup(STDOUT)
-        return None, ctx.dup(self._stdout_arg)
+            return None, Fd(STDOUT, owning=False)
+        return None, Fd(self._stdout_arg, owning=False)
 
     def _wrap_stdin(self, fd: Fd | None) -> ByteWriteStream | TextWriteStream | None:
         """Wrap an owned fd into a stdin stream, optionally text-encoded."""
@@ -322,8 +322,8 @@ class StartCtx[
         if self._stderr_arg is PIPE:
             return ctx.pipe()
         if self._stderr_arg is None:
-            return None, ctx.dup(STDERR)
-        return None, ctx.dup(self._stderr_arg)
+            return None, Fd(STDERR, owning=False)
+        return None, Fd(self._stderr_arg, owning=False)
 
     def _wrap_stderr(self, fd: Fd | None) -> ByteReadStream | TextReadStream | None:
         """Wrap an owned fd into a stderr stream, optionally text-decoded."""
