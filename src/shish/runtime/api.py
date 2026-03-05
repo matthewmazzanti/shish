@@ -288,16 +288,16 @@ class StartCtx[
         if self._stdin_arg is PIPE:
             return ctx.pipe()
         if self._stdin_arg is None:
-            return Fd(STDIN, owning=False), None
-        return Fd(self._stdin_arg, owning=False), None
+            return Fd(STDIN, owned=False), None
+        return Fd(self._stdin_arg, owned=False), None
 
     def _alloc_stdout(self, ctx: SpawnCtx) -> tuple[Fd | None, Fd]:
         """Resolve stdout arg into (stream_fd, spawn_fd). PIPE allocates a pipe."""
         if self._stdout_arg is PIPE:
             return ctx.pipe()
         if self._stdout_arg is None:
-            return None, Fd(STDOUT, owning=False)
-        return None, Fd(self._stdout_arg, owning=False)
+            return None, Fd(STDOUT, owned=False)
+        return None, Fd(self._stdout_arg, owned=False)
 
     def _wrap_stdin(self, fd: Fd | None) -> ByteWriteStream | TextWriteStream | None:
         """Wrap an owned fd into a stdin stream, optionally text-encoded."""
@@ -322,8 +322,8 @@ class StartCtx[
         if self._stderr_arg is PIPE:
             return ctx.pipe()
         if self._stderr_arg is None:
-            return None, Fd(STDERR, owning=False)
-        return None, Fd(self._stderr_arg, owning=False)
+            return None, Fd(STDERR, owned=False)
+        return None, Fd(self._stderr_arg, owned=False)
 
     def _wrap_stderr(self, fd: Fd | None) -> ByteReadStream | TextReadStream | None:
         """Wrap an owned fd into a stderr stream, optionally text-decoded."""
@@ -348,8 +348,8 @@ class StartCtx[
             )
             root = await ctx.spawn(self._cmd, std_fds)
 
-            # Children inherited via fork; close spawn-side fds so EOF propagates.
-            # (FnNode dups from SpawnCtx.spawn_fn are separate — closed by __aexit__.)
+            # Close spawn-side fds. PIPE fds (owning) are closed so EOF
+            # propagates; inherit/raw-fd fds (non-owning) are no-op closes.
             spawn_stdin.close()
             spawn_stdout.close()
             spawn_stderr.close()

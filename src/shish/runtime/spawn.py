@@ -4,10 +4,14 @@ SpawnCtx tracks all allocated resources (fds, procs, tasks) during
 spawn for error cleanup, and dispatches IR nodes to the appropriate
 spawn method (cmd, fn, pipeline).
 
-Fd ownership invariant:
-- All opened fds are closed after spawn by the opener
-  (except FnNode dups, which stay open for in-process execution).
-- All fds are tracked by SpawnCtx, allowing cleanup on errors.
+Fd ownership invariant — borrow, dup-before-use:
+- StdFds are borrowed, not owned. Callers pass fds without duping.
+- Use-sites dup only if they need their own copy: spawn_fn dups
+  for in-process FnNode execution; fork is an implicit dup for exec_.
+- Creators close what they create: __aenter__ closes PIPE fds (non-
+  owning inherit/raw-fd Fds are no-op closes), SpawnCmdCtx closes
+  pipe/redirect fds, spawn_pipeline closes inter-stage pipe fds.
+- All created fds are tracked by SpawnCtx for error cleanup.
 """
 
 from __future__ import annotations
@@ -161,10 +165,11 @@ class SpawnCtx:
     ) -> FnNode:
         """Create an FnNode for an in-process Python function.
 
-        Dups the received fds so the pipeline's close-after-spawn
-        logic (which closes the originals) doesn't affect the Fn.
-        The task is started eagerly so the function begins executing
-        immediately, matching the behavior of spawn_cmd.
+        Dups stdin/stdout/stderr from std_fds — the only spawn path
+        that needs explicit dups (dup-before-use). FnNode runs in-
+        process, so it needs owned copies that survive the caller's
+        close-after-spawn. The task is started eagerly so the function
+        begins executing immediately, matching the behavior of spawn_cmd.
         """
         dup_stdin = self.dup(std_fds.stdin.fd)
         dup_stdout = self.dup(std_fds.stdout.fd)

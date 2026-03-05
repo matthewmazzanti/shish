@@ -145,11 +145,10 @@ class SpawnCmdCtx:
     Accumulates fds, sub-process spawns, and fd ops while resolving a single Cmd,
     then builds the preexec_fn and pass_fds for the main process spawn.
 
-    All fds are closed in the parent immediately after spawn — children
-    inherit via fork, so parent copies must close for EOF propagation.
-    Child spawns must dup fds to survive this close; subprocess handles
-    this automatically, but in-process Fn stages must dup manually
-    (see SpawnCtx.spawn_fn).
+    std_fds are borrowed — used directly in exec_() (fork is an implicit
+    dup) and passed through to sub StdFds without duping. Only fds
+    created here (pipes, redirect fds) are tracked in self.fds and
+    closed after spawn for EOF propagation.
     """
 
     ctx: SpawnCtx
@@ -242,7 +241,8 @@ class SpawnCmdCtx:
 
         to_stdin=True: pipe connects to sub's stdin; parent keeps write end.
         to_stdin=False: pipe connects to sub's stdout; parent keeps read end.
-        The other side inherits from the parent command's std_fds.
+        Inherited fds (stdout/stderr or stdin/stderr) are borrowed from
+        the parent's std_fds without duping — the sub dups if needed.
         """
         pipe_r, pipe_w = self._pipe()
         if to_stdin:
@@ -336,19 +336,19 @@ class SpawnCmdCtx:
 
     def _resolve_args(self) -> list[str]:
         # Resolve Sub arguments to /dev/fd/N paths
-        resolved_args: list[str] = []
+        args: list[str] = []
         for arg in self.cmd.args:
             match arg:
-                case str() as string:
-                    resolved_args.append(string)
+                case str():
+                    args.append(arg)
                 case SubOut(cmd=inner):
                     _, pipe_w = self._spawn_with_pipe(inner, to_stdin=True)
-                    resolved_args.append(self._fd_path_arg(pipe_w.fd))
+                    args.append(self._fd_path_arg(pipe_w.fd))
                 case SubIn(cmd=inner):
                     pipe_r, _ = self._spawn_with_pipe(inner, to_stdin=False)
-                    resolved_args.append(self._fd_path_arg(pipe_r.fd))
+                    args.append(self._fd_path_arg(pipe_r.fd))
 
-        return resolved_args
+        return args
 
     def _resolve_env(self) -> dict[str, str] | None:
         # Build env overlay and resolve working directory
