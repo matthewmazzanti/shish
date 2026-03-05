@@ -157,13 +157,14 @@ class FnNode(ProcessNodeBase):
     """Process tree node for an in-process Python function.
 
     No OS process is spawned — the function runs as an asyncio task,
-    started eagerly by spawn_fn. Owns dup'd copies of stdin/stdout fds
-    so pipeline close-after-spawn logic doesn't affect it.
+    started eagerly by spawn_fn. Owns dup'd copies of stdin/stdout/stderr
+    fds so pipeline close-after-spawn logic doesn't affect it.
     """
 
     task: asyncio.Task[int]
     _stdin_fd: Fd = field(repr=False)
     _stdout_fd: Fd = field(repr=False)
+    _stderr_fd: Fd = field(repr=False)
 
     def returncode(self) -> int | None:
         """Task return code, None if running."""
@@ -182,9 +183,10 @@ class FnNode(ProcessNodeBase):
         self.task.cancel()
 
     def close_fds(self) -> None:
-        """Close owned stdin/stdout fds."""
+        """Close owned stdin/stdout/stderr fds."""
         self._stdin_fd.close()
         self._stdout_fd.close()
+        self._stderr_fd.close()
 
     def awaitables(self) -> Iterator[Awaitable[int]]:
         """Yield awaitable for this task."""

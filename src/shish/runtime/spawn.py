@@ -168,6 +168,7 @@ class SpawnCtx:
         """
         dup_stdin = self.dup(std_fds.stdin.fd)
         dup_stdout = self.dup(std_fds.stdout.fd)
+        dup_stderr = self.dup(std_fds.stderr.fd)
         func = fn_ir.func
 
         async def execute() -> int:
@@ -185,7 +186,12 @@ class SpawnCtx:
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)
-        return FnNode(task=task, _stdin_fd=dup_stdin, _stdout_fd=dup_stdout)
+        return FnNode(
+            task=task,
+            _stdin_fd=dup_stdin,
+            _stdout_fd=dup_stdout,
+            _stderr_fd=dup_stderr,
+        )
 
     async def spawn_pipeline(
         self,
