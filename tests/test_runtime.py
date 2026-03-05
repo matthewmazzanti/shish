@@ -1343,7 +1343,8 @@ async def test_start_feed_stdout_read_before_wait() -> None:
 async def test_close_eof_with_stdin_pipe() -> None:
     """EOF close: cat sees EOF from closed stdin pipe and exits naturally."""
     async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
-        await execution.close(method=CloseMethod.EOF, timeout=2.0)
+        used = await execution.close(method=CloseMethod.EOF, timeout=2.0)
+    assert used == CloseMethod.EOF
     assert execution.returncode == 0
 
 
@@ -1351,7 +1352,8 @@ async def test_close_eof_without_stdin_escalates() -> None:
     """EOF close without stdin pipe auto-escalates to TERMINATE."""
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
-        await execution.close(method=CloseMethod.EOF, timeout=0.5)
+        used = await execution.close(method=CloseMethod.EOF, timeout=0.5)
+    assert used == CloseMethod.TERMINATE
     assert execution.returncode == 128 + signal.SIGTERM
 
 
@@ -1359,7 +1361,8 @@ async def test_close_terminate() -> None:
     """TERMINATE close sends SIGTERM, process exits."""
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
-        await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
     assert execution.returncode == 128 + signal.SIGTERM
 
 
@@ -1367,7 +1370,8 @@ async def test_close_kill() -> None:
     """KILL close sends SIGKILL immediately."""
 
     async with start(ir.Cmd(("sleep", "60"))) as execution:
-        await execution.close(method=CloseMethod.KILL, timeout=2.0)
+        used = await execution.close(method=CloseMethod.KILL, timeout=2.0)
+    assert used == CloseMethod.KILL
     assert execution.returncode == 128 + signal.SIGKILL
 
 
@@ -1386,7 +1390,8 @@ async def test_close_terminate_escalates_to_kill() -> None:
     )
     async with start(ignore_term) as execution:
         await asyncio.sleep(0.1)  # let Python start and install SIG_IGN
-        await execution.close(method=CloseMethod.TERMINATE, timeout=0.5)
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=0.5)
+    assert used == CloseMethod.KILL
     assert execution.returncode == 128 + signal.SIGKILL
 
 
@@ -1405,7 +1410,8 @@ async def test_close_eof_escalates_through_terminate_to_kill() -> None:
     )
     async with start(ignore_term) as execution:
         await asyncio.sleep(0.1)  # let Python start and install SIG_IGN
-        await execution.close(method=CloseMethod.EOF, timeout=0.3)
+        used = await execution.close(method=CloseMethod.EOF, timeout=0.3)
+    assert used == CloseMethod.KILL
     assert execution.returncode == 128 + signal.SIGKILL
 
 
@@ -1414,14 +1420,16 @@ async def test_close_pipeline_terminate() -> None:
 
     pipeline = ir.Pipeline((ir.Cmd(("sleep", "60")), ir.Cmd(("sleep", "60"))))
     async with start(pipeline) as execution:
-        await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
     assert execution.returncode == 128 + signal.SIGTERM
 
 
 async def test_close_default_is_eof() -> None:
     """Default close method is EOF — cat exits on EOF from closed stdin pipe."""
     async with start(ir.Cmd(("cat",))).stdin(PIPE) as execution:
-        await execution.close(timeout=2.0)
+        used = await execution.close(timeout=2.0)
+    assert used == CloseMethod.EOF
     assert execution.returncode == 0
 
 
@@ -1441,7 +1449,8 @@ async def test_close_fn_terminate() -> None:
         return 0
 
     async with start(ir.Fn(_slow)) as execution:
-        await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
     assert execution.returncode == 128 + signal.SIGKILL
 
 
@@ -1453,7 +1462,8 @@ async def test_close_fn_kill() -> None:
         return 0
 
     async with start(ir.Fn(_slow)) as execution:
-        await execution.close(method=CloseMethod.KILL, timeout=2.0)
+        used = await execution.close(method=CloseMethod.KILL, timeout=2.0)
+    assert used == CloseMethod.KILL
     assert execution.returncode == 128 + signal.SIGKILL
 
 
@@ -1468,5 +1478,6 @@ async def test_close_fn_pipeline() -> None:
         (ir.Cmd(("sleep", "60")), ir.Fn(_slow), ir.Cmd(("sleep", "60")))
     )
     async with start(pipeline) as execution:
-        await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+        used = await execution.close(method=CloseMethod.TERMINATE, timeout=2.0)
+    assert used == CloseMethod.TERMINATE
     assert execution.returncode != 0

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import enum
 import subprocess
-import warnings
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
@@ -108,25 +107,9 @@ class Execution[
         return True
 
     async def _kill_wait(self, timeout: float) -> bool:
-        """SIGKILL + wait. Procs always die; warns if fn() tasks leak."""
+        """SIGKILL + wait. Always succeeds — kernel guarantees SIGKILL."""
         self.kill()
-        procs = asyncio.gather(*self.root.awaitables("procs"), return_exceptions=True)
-        tasks = asyncio.gather(*self.root.awaitables("tasks"), return_exceptions=True)
-        try:
-            await asyncio.shield(
-                asyncio.gather(
-                    procs,
-                    asyncio.wait_for(tasks, timeout=timeout),
-                )
-            )
-        except (TimeoutError, asyncio.CancelledError):
-            warnings.warn(
-                "close() timed out waiting for fn() tasks after "
-                "SIGKILL — a task is likely stuck in synchronous code. "
-                "The leaked task will keep running in the background.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        await self.wait()
         return True
 
     async def close(
@@ -134,7 +117,7 @@ class Execution[
         *,
         method: CloseMethod = CloseMethod.EOF,
         timeout: float = 3,
-    ) -> None:
+    ) -> CloseMethod:
         """Close streams and fds, then wait for processes to exit.
 
         Starts at the given method and escalates on timeout:
@@ -146,6 +129,12 @@ class Execution[
                 TERMINATE — SIGTERM, escalate to KILL on timeout.
                 KILL — SIGKILL immediately.
             timeout: Seconds to wait at each escalation step.
+
+        Returns:
+            The CloseMethod that successfully stopped the processes.
+
+        Raises:
+            RuntimeError: If processes don't exit after SIGKILL + timeout.
         """
         if self.stdin is not None:
             self.stdin.close()
@@ -159,7 +148,10 @@ class Execution[
         steps = [self._eof_wait, self._terminate_wait, self._kill_wait]
         for step in steps[method:]:
             if await step(timeout):
-                return
+                return method
+            method = CloseMethod(method + 1)
+
+        raise AssertionError("unreachable")
 
 
 class StartCtx[
