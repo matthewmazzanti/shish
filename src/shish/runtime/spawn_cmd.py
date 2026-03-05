@@ -169,6 +169,18 @@ class SpawnCmdCtx:
         self.pending = []
         self.subs = []
 
+    def _pipe(self) -> tuple[Fd, Fd]:
+        """Allocate a pipe, tracking both ends for post-spawn cleanup."""
+        pipe_r, pipe_w = self.ctx.pipe()
+        self.fds.extend([pipe_r, pipe_w])
+        return pipe_r, pipe_w
+
+    def _dup(self, fd: int) -> Fd:
+        """Dup a raw fd, tracking the result for post-spawn cleanup."""
+        duped = self.ctx.dup(fd)
+        self.fds.append(duped)
+        return duped
+
     async def spawn(self) -> CmdNode:
         """Spawn a single Cmd with all its redirects and sub-processes.
 
@@ -228,35 +240,28 @@ class SpawnCmdCtx:
         to_stdin=False: pipe connects to sub's stdout; parent keeps read end.
         The other side dups from parent STDIN/STDOUT for inherit behavior.
         """
-        pipe_r, pipe_w = self.ctx.pipe()
-        self.fds.extend([pipe_r, pipe_w])
+        pipe_r, pipe_w = self._pipe()
         if to_stdin:
             self.fdo.add_live(pipe_w.fd)
-            inherit_stdout = self.ctx.dup(STDOUT)
-            inherit_stderr = self.ctx.dup(STDERR)
-            self.fds.extend([inherit_stdout, inherit_stderr])
             self.pending.append(
                 self.ctx.spawn(
                     inner,
                     StdFds(
                         stdin=pipe_r,
-                        stdout=inherit_stdout,
-                        stderr=inherit_stderr,
+                        stdout=self._dup(STDOUT),
+                        stderr=self._dup(STDERR),
                     ),
                 )
             )
         else:
             self.fdo.add_live(pipe_r.fd)
-            inherit_stdin = self.ctx.dup(STDIN)
-            inherit_stderr = self.ctx.dup(STDERR)
-            self.fds.extend([inherit_stdin, inherit_stderr])
             self.pending.append(
                 self.ctx.spawn(
                     inner,
                     StdFds(
-                        stdin=inherit_stdin,
+                        stdin=self._dup(STDIN),
                         stdout=pipe_w,
-                        stderr=inherit_stderr,
+                        stderr=self._dup(STDERR),
                     ),
                 )
             )
@@ -264,10 +269,9 @@ class SpawnCmdCtx:
 
     def _feed_with_pipe(self, data: str | bytes) -> Fd:
         """Allocate pipe, schedule FnNode data write, return read end."""
-        pipe_r, pipe_w = self.ctx.pipe()
         # Both ends closed after spawn: SpawnCtx.spawn_fn dups pipe_w,
         # so the FnNode's write end survives parent cleanup.
-        self.fds.extend([pipe_r, pipe_w])
+        pipe_r, pipe_w = self._pipe()
         self.fdo.add_live(pipe_r.fd)
 
         write_data: Callable[[ByteStageCtx], Awaitable[int]]
@@ -288,16 +292,13 @@ class SpawnCmdCtx:
 
             write_data = make_byte_wrapper(write_str_data, "utf-8")
 
-        inherit_stdin = self.ctx.dup(STDIN)
-        inherit_stderr = self.ctx.dup(STDERR)
-        self.fds.extend([inherit_stdin, inherit_stderr])
         self.pending.append(
             self.ctx.spawn_fn(
                 Fn(write_data),
                 StdFds(
-                    stdin=inherit_stdin,
+                    stdin=self._dup(STDIN),
                     stdout=pipe_w,
-                    stderr=inherit_stderr,
+                    stderr=self._dup(STDERR),
                 ),
             )
         )
