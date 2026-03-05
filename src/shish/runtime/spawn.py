@@ -238,7 +238,7 @@ class SpawnCtx:
             if isinstance(stage, Fn):
                 spawn_tasks.append(self.spawn_fn(stage, fds))
             else:
-                spawn_tasks.append(SpawnCmdCtx(self, stage, fds).spawn())
+                spawn_tasks.append(self.spawn_cmd(stage, fds))
         stage_nodes = list(await asyncio.gather(*spawn_tasks))
 
         # Close inter-stage pipe fds (children have inherited them)
