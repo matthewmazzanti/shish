@@ -179,12 +179,13 @@ class SpawnCmdCtx:
         *,
         stdin: Fd | None = None,
         stdout: Fd | None = None,
+        stderr: Fd | None = None,
     ) -> StdFds:
         """Build StdFds from parent's std_fds with optional overrides."""
         return StdFds(
             stdin=stdin or self.std_fds.stdin,
             stdout=stdout or self.std_fds.stdout,
-            stderr=self.std_fds.stderr,
+            stderr=stderr or self.std_fds.stderr,
         )
 
     def _spawn(self, cmd: Runnable, std_fds: StdFds) -> None:
