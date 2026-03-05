@@ -85,6 +85,7 @@ class SpawnCtx:
         *args: str,
         stdin: int | None = None,
         stdout: int | None = None,
+        stderr: int | None = None,
         pass_fds: tuple[int, ...] = (),
         preexec_fn: Callable[[], None] | None = None,
         cwd: Path | None = None,
@@ -92,8 +93,8 @@ class SpawnCtx:
     ) -> Process:
         """Spawn a subprocess via create_subprocess_exec and register it.
 
-        stdin/stdout are raw fds (or None for inherit); Popen does
-        dup2 to wire them to fds 0/1 in the child. pass_fds keeps
+        stdin/stdout/stderr are raw fds (or None for inherit); Popen does
+        dup2 to wire them to fds 0/1/2 in the child. pass_fds keeps
         additional fds open across exec (fds > 2 used by redirects
         and process substitutions). preexec_fn runs between fork and
         exec to apply user redirect ops (open, dup2, close).
@@ -102,6 +103,7 @@ class SpawnCtx:
             *args,
             stdin=stdin,
             stdout=stdout,
+            stderr=stderr,
             pass_fds=pass_fds,
             preexec_fn=preexec_fn,
             cwd=cwd,
@@ -209,11 +211,12 @@ class SpawnCtx:
         # Allocate inter-stage pipes
         inter_pipes = [self.pipe() for _ in range(len(stages) - 1)]
 
-        # Per-stage StdFds: outer fds at the edges, pipes in between
+        # Per-stage StdFds: outer fds at the edges, pipes in between.
+        # All stages share the same stderr fd.
         stage_stdins = [std_fds.stdin] + [pipe_r for pipe_r, _ in inter_pipes]
         stage_stdouts = [pipe_w for _, pipe_w in inter_pipes] + [std_fds.stdout]
         stage_fds = [
-            StdFds(stdin=sin, stdout=sout)
+            StdFds(stdin=sin, stdout=sout, stderr=std_fds.stderr)
             for sin, sout in zip(stage_stdins, stage_stdouts, strict=True)
         ]
 

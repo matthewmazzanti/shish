@@ -21,14 +21,15 @@ from shish.fd import Fd
 
 @dataclass
 class StdFds:
-    """Owned stdin/stdout fds for a spawn subtree.
+    """Owned stdin/stdout/stderr fds for a spawn subtree.
 
     Each field is an Fd — dup'd at start() entry from caller fds
-    or parent STDIN/STDOUT, or allocated by pipeline pipe wiring.
+    or parent STDIN/STDOUT/STDERR, or allocated by pipeline pipe wiring.
     """
 
     stdin: Fd
     stdout: Fd
+    stderr: Fd
 
 
 class ProcessNodeBase(abc.ABC):

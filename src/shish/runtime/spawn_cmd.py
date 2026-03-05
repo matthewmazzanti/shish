@@ -33,7 +33,7 @@ from shish.builders import (
     SubIn,
     SubOut,
 )
-from shish.fd import STDIN, STDOUT, Fd
+from shish.fd import STDERR, STDIN, STDOUT, Fd
 from shish.fn_stage import (
     ByteStageCtx,
     TextStageCtx,
@@ -48,7 +48,7 @@ from shish.runtime.tree import (
 if ty.TYPE_CHECKING:
     from shish.runtime.spawn import SpawnCtx
 
-SUBPROCESS_DEFAULT_FDS = frozenset({STDIN, STDOUT, 2})
+SUBPROCESS_DEFAULT_FDS = frozenset({STDIN, STDOUT, STDERR})
 FD_DIR = Path("/dev/fd")
 
 
@@ -204,7 +204,8 @@ class SpawnCmdCtx:
                 *resolved_args,
                 stdin=self.std_fds.stdin.fd,
                 stdout=self.std_fds.stdout.fd,
-                # Exclude 0/1/2 — subprocess handles those via stdin=/stdout=
+                stderr=self.std_fds.stderr.fd,
+                # Exclude 0/1/2 — subprocess handles those via stdin=/stdout=/stderr=
                 pass_fds=self._build_pass_fds(ignore=SUBPROCESS_DEFAULT_FDS),
                 preexec_fn=self._build_preexec(),
                 cwd=self.cmd.working_dir,
@@ -234,14 +235,28 @@ class SpawnCmdCtx:
             inherit_stdout = self.ctx.dup(STDOUT)
             self.fds.append(inherit_stdout)
             self.pending.append(
-                self.ctx.spawn(inner, StdFds(stdin=pipe_r, stdout=inherit_stdout))
+                self.ctx.spawn(
+                    inner,
+                    StdFds(
+                        stdin=pipe_r,
+                        stdout=inherit_stdout,
+                        stderr=self.std_fds.stderr,
+                    ),
+                )
             )
         else:
             self.fdo.add_live(pipe_r.fd)
             inherit_stdin = self.ctx.dup(STDIN)
             self.fds.append(inherit_stdin)
             self.pending.append(
-                self.ctx.spawn(inner, StdFds(stdin=inherit_stdin, stdout=pipe_w))
+                self.ctx.spawn(
+                    inner,
+                    StdFds(
+                        stdin=inherit_stdin,
+                        stdout=pipe_w,
+                        stderr=self.std_fds.stderr,
+                    ),
+                )
             )
         return pipe_r, pipe_w
 
@@ -275,7 +290,12 @@ class SpawnCmdCtx:
         self.fds.append(inherit_stdin)
         self.pending.append(
             self.ctx.spawn_fn(
-                Fn(write_data), StdFds(stdin=inherit_stdin, stdout=pipe_w)
+                Fn(write_data),
+                StdFds(
+                    stdin=inherit_stdin,
+                    stdout=pipe_w,
+                    stderr=self.std_fds.stderr,
+                ),
             )
         )
         return pipe_r

@@ -1519,6 +1519,97 @@ async def test_close_fn_kill() -> None:
     assert execution.returncode == 128 + signal.SIGKILL
 
 
+# =============================================================================
+# start() with stderr PIPE
+# =============================================================================
+
+
+async def test_start_stderr_pipe() -> None:
+    """start().stderr(PIPE) captures stderr from a single command."""
+    async with start(
+        builders.Cmd(("sh", "-c", "echo err >&2")),
+    ).stderr(PIPE) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stderr.read(),
+        )
+    assert code == 0
+    assert captured == "err\n"
+
+
+async def test_start_stdout_stderr_pipe() -> None:
+    """start().stdout(PIPE).stderr(PIPE) captures both simultaneously."""
+    async with (
+        start(
+            builders.Cmd(("sh", "-c", "echo out; echo err >&2")),
+        )
+        .stdout(PIPE)
+        .stderr(PIPE) as execution
+    ):
+        code, captured_out, captured_err = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+            execution.stderr.read(),
+        )
+    assert code == 0
+    assert captured_out == "out\n"
+    assert captured_err == "err\n"
+
+
+async def test_start_stderr_pipe_bytes() -> None:
+    """start().stderr(PIPE, encoding=None) gives ByteReadStream."""
+    async with start(
+        builders.Cmd(("sh", "-c", "echo err >&2")),
+    ).stderr(PIPE, encoding=None) as execution:
+        code, captured = await asyncio.gather(
+            execution.wait(),
+            execution.stderr.read(),
+        )
+    assert code == 0
+    assert captured == b"err\n"
+
+
+async def test_start_stderr_pipe_pipeline() -> None:
+    """Pipeline stderr: all stages' stderr captured in one stream."""
+    pipeline = builders.Pipeline(
+        (
+            builders.Cmd(("sh", "-c", "echo e1 >&2; echo out")),
+            builders.Cmd(("sh", "-c", "echo e2 >&2; cat")),
+        )
+    )
+    async with start(pipeline).stdout(PIPE).stderr(PIPE) as execution:
+        code, captured_out, captured_err = await asyncio.gather(
+            execution.wait(),
+            execution.stdout.read(),
+            execution.stderr.read(),
+        )
+    assert code == 0
+    assert captured_out == "out\n"
+    assert "e1\n" in captured_err
+    assert "e2\n" in captured_err
+
+
+async def test_start_stderr_fd() -> None:
+    """start().stderr(fd) for raw fd passthrough."""
+    read_fd, write_fd = os.pipe()
+    async with start(
+        builders.Cmd(("sh", "-c", "echo err >&2")),
+    ).stderr(write_fd) as execution:
+        os.close(write_fd)  # start() dup'd it; close our copy
+        code = await execution.wait()
+    data = os.read(read_fd, 4096)
+    os.close(read_fd)
+    assert code == 0
+    assert data == b"err\n"
+
+
+async def test_start_no_stderr_pipe_stream_none() -> None:
+    """Without stderr PIPE, stderr stream is None."""
+    async with start(builders.Cmd(("true",))) as execution:
+        assert execution.stderr is None
+        await execution.wait()
+
+
 async def test_close_fn_pipeline() -> None:
     """TERMINATE close kills cmd and fn stages in a mixed pipeline."""
 
