@@ -44,7 +44,14 @@ asyncio_mode = "auto"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PLC0415"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PLC0415", "ICN"]
+
+[tool.ruff.lint.flake8-import-conventions.aliases]
+typing = "ty"
+dataclasses = "dc"
+
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = ["typing", "dataclasses"]
 
 [tool.pyright]
 pythonVersion = "3.13"

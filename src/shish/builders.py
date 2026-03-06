@@ -2,65 +2,67 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import dataclasses as dc
+import typing as ty
+from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.fd import STDIN, STDOUT
 
-if TYPE_CHECKING:
+if ty.TYPE_CHECKING:
     from shish.fn_stage import ByteFn
-    from shish.runtime import StartCtx
+    from shish.runtime import JobCtx
 
 
-class _Unset:
+class _Unset(Enum):
     """Sentinel for unset fields in _replace."""
 
+    UNSET = auto()
 
-UNSET = _Unset()
 
 PathLike = Path | str
 Data = str | bytes
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdToFile:
     fd: int
     path: Path
     append: bool = False
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdFromFile:
     fd: int
     path: Path
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdFromData:
     fd: int
     data: Data
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdToFd:
     src: int
     dst: int
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdClose:
     fd: int
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class SubIn:
     """Input process substitution: <(cmd)."""
 
     cmd: Runnable
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class SubOut:
     """Output process substitution: >(cmd)."""
 
@@ -73,13 +75,13 @@ ReadSrc = PathLike | SubIn
 WriteDst = PathLike | SubOut
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdFromSub:
     fd: int
     sub: SubIn
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdToSub:
     fd: int
     sub: SubOut
@@ -88,7 +90,7 @@ class FdToSub:
 Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | FdToSub
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class Cmd:
     args: tuple[str | Sub, ...]
     redirects: tuple[Redirect, ...] = ()
@@ -98,18 +100,18 @@ class Cmd:
     def _replace(
         self,
         *,
-        args: tuple[str | Sub, ...] | _Unset = UNSET,
-        redirects: tuple[Redirect, ...] | _Unset = UNSET,
-        env_vars: tuple[tuple[str, str | None], ...] | _Unset = UNSET,
-        working_dir: Path | None | _Unset = UNSET,
+        args: tuple[str | Sub, ...] | _Unset = _Unset.UNSET,
+        redirects: tuple[Redirect, ...] | _Unset = _Unset.UNSET,
+        env_vars: tuple[tuple[str, str | None], ...] | _Unset = _Unset.UNSET,
+        working_dir: Path | None | _Unset = _Unset.UNSET,
     ) -> Cmd:
         """Return a copy with specified fields replaced."""
         return Cmd(
-            args=self.args if isinstance(args, _Unset) else args,
-            redirects=self.redirects if isinstance(redirects, _Unset) else redirects,
-            env_vars=self.env_vars if isinstance(env_vars, _Unset) else env_vars,
+            args=self.args if args is _Unset.UNSET else args,
+            redirects=self.redirects if redirects is _Unset.UNSET else redirects,
+            env_vars=self.env_vars if env_vars is _Unset.UNSET else env_vars,
             working_dir=(
-                self.working_dir if isinstance(working_dir, _Unset) else working_dir
+                self.working_dir if working_dir is _Unset.UNSET else working_dir
             ),
         )
 
@@ -117,10 +119,12 @@ class Cmd:
         """Append positional arguments."""
         resolved: list[str | Sub] = []
         for item in args:
-            if isinstance(item, (SubIn, SubOut)):
-                resolved.append(item)
-            else:
-                resolved.append(str(item))
+            match item:
+                case SubIn() | SubOut():
+                    resolved.append(item)
+                case _:
+                    resolved.append(str(item))
+
         return self._replace(args=(*self.args, *resolved))
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
@@ -172,8 +176,8 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    def start(self) -> StartCtx[None, None]:
-        """Spawn and yield an Execution via async context manager."""
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield an Job via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
@@ -184,14 +188,14 @@ class Cmd:
 
         return await runtime.run(self)
 
-    async def out(self, encoding: str | None = "utf-8") -> str | bytes:
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
         from shish import runtime  # noqa: PLC0415
 
         return await runtime.out(self, encoding)
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class Fn:
     func: ByteFn
 
@@ -207,8 +211,8 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    def start(self) -> StartCtx[None, None]:
-        """Spawn and yield an Execution via async context manager."""
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield an Job via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
@@ -219,14 +223,14 @@ class Fn:
 
         return await runtime.run(self)
 
-    async def out(self, encoding: str | None = "utf-8") -> str | bytes:
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
         from shish import runtime  # noqa: PLC0415
 
         return await runtime.out(self, encoding)
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class Pipeline:
     stages: tuple[Cmd | Fn, ...]
 
@@ -234,8 +238,8 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def start(self) -> StartCtx[None, None]:
-        """Spawn and yield an Execution via async context manager."""
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield an Job via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
@@ -246,7 +250,7 @@ class Pipeline:
 
         return await runtime.run(self)
 
-    async def out(self, encoding: str | None = "utf-8") -> str | bytes:
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
         from shish import runtime  # noqa: PLC0415
 

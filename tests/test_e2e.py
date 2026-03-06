@@ -1,6 +1,5 @@
 import asyncio
 import signal
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,9 +9,10 @@ from shish import (
     STDERR,
     STDIN,
     STDOUT,
-    ByteStageCtx,
-    Execution,
-    TextStageCtx,
+    ByteStage,
+    Job,
+    ShishError,
+    TextStage,
     close,
     cwd,
     env,
@@ -28,7 +28,7 @@ from shish import (
 from shish.builders import cmd
 
 # =============================================================================
-# Basic Execution
+# Basic Job
 # =============================================================================
 
 
@@ -317,7 +317,7 @@ async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# Concurrent Execution
+# Concurrent Job
 # =============================================================================
 
 
@@ -394,15 +394,15 @@ async def test_out_with_sub_in() -> None:
 
 
 async def test_out_raises_on_failure() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await out(sh.false())
     assert exc_info.value.returncode == 1
 
 
 async def test_out_raises_preserves_output() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await out(sh.sh("-c", "echo partial; exit 1"))
-    assert exc_info.value.output == "partial\n"
+    assert exc_info.value.stdout == "partial\n"
 
 
 async def test_out_empty() -> None:
@@ -479,7 +479,7 @@ async def test_builder_out() -> None:
 
 
 async def test_builder_out_raises_on_failure() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await cmd("false").out()
     assert exc_info.value.returncode == 1
 
@@ -582,7 +582,7 @@ async def test_cancel_fn_pipeline() -> None:
     """Cancelling a cmd | fn | cmd pipeline cancels all stages."""
 
     @fn
-    async def _slow(ctx: TextStageCtx) -> int:
+    async def _slow(ctx: TextStage) -> int:
         await asyncio.sleep(60)
         return 0
 
@@ -668,9 +668,9 @@ async def test_rmod_matmul_bash_style(tmp_path: Path) -> None:
 
 
 async def test_start_dsl_cmd() -> None:
-    """DSL start() yields Execution, wait() returns exit code."""
+    """DSL start() yields Job, wait() returns exit code."""
     async with start(sh.true()) as execution:
-        assert isinstance(execution, Execution)
+        assert isinstance(execution, Job)
         assert await execution.wait() == 0
 
 
@@ -692,7 +692,7 @@ async def test_start_ir_builder() -> None:
 
 
 @fn
-async def _upper(ctx: TextStageCtx) -> int:
+async def _upper(ctx: TextStage) -> int:
     """Read stdin, uppercase, write to stdout."""
     data = await ctx.stdin.read()
     await ctx.stdout.write(data.upper())
@@ -700,14 +700,14 @@ async def _upper(ctx: TextStageCtx) -> int:
 
 
 @fn
-async def _generate(ctx: TextStageCtx) -> int:
+async def _generate(ctx: TextStage) -> int:
     """Write fixed data to stdout."""
     await ctx.stdout.write("generated\n")
     return 0
 
 
 @fn
-async def _text_upper(ctx: TextStageCtx) -> int:
+async def _text_upper(ctx: TextStage) -> int:
     """Text-mode upper: read text, uppercase, write text."""
     data = await ctx.stdin.read()
     await ctx.stdout.write(data.upper())
@@ -715,13 +715,13 @@ async def _text_upper(ctx: TextStageCtx) -> int:
 
 
 @fn
-async def _exit_code(ctx: TextStageCtx) -> int:
+async def _exit_code(ctx: TextStage) -> int:
     """Return non-zero."""
     return 42
 
 
 @fn
-async def _line_counter(ctx: TextStageCtx) -> int:
+async def _line_counter(ctx: TextStage) -> int:
     """Count lines from stdin, write count to stdout."""
     count = 0
     async for _line in ctx.stdin:
@@ -800,7 +800,7 @@ async def test_fn_exception() -> None:
     """fn that raises returns exit code 1."""
 
     @fn
-    async def _raises(ctx: TextStageCtx) -> int:
+    async def _raises(ctx: TextStage) -> int:
         raise ValueError("boom")
 
     assert await run(_raises) == 1
@@ -839,7 +839,7 @@ async def test_fn_call_no_args() -> None:
     """@fn() behaves the same as @fn — text mode, utf-8."""
 
     @fn()
-    async def upper(ctx: TextStageCtx) -> int:
+    async def upper(ctx: TextStage) -> int:
         data = await ctx.stdin.read()
         await ctx.stdout.write(data.upper())
         return 0
@@ -852,7 +852,7 @@ async def test_fn_encoding_none_decorator() -> None:
     """@fn(encoding=None) — byte mode, no decoding."""
 
     @fn(encoding=None)
-    async def upper(ctx: ByteStageCtx) -> int:
+    async def upper(ctx: ByteStage) -> int:
         data = await ctx.stdin.read()
         await ctx.stdout.write(data.upper())
         return 0
@@ -864,7 +864,7 @@ async def test_fn_encoding_none_decorator() -> None:
 async def test_fn_encoding_none_direct() -> None:
     """fn(f, encoding=None) — byte mode via direct call."""
 
-    async def upper(ctx: ByteStageCtx) -> int:
+    async def upper(ctx: ByteStage) -> int:
         data = await ctx.stdin.read()
         await ctx.stdout.write(data.upper())
         return 0
@@ -877,7 +877,7 @@ async def test_fn_encoding_latin1_decorator() -> None:
     """@fn(encoding="latin-1") — text mode, custom encoding."""
 
     @fn(encoding="latin-1")
-    async def echo_latin(ctx: TextStageCtx) -> int:
+    async def echo_latin(ctx: TextStage) -> int:
         await ctx.stdout.write("caf\xe9\n")
         return 0
 
@@ -888,7 +888,7 @@ async def test_fn_encoding_latin1_decorator() -> None:
 async def test_fn_encoding_latin1_direct() -> None:
     """fn(f, encoding="latin-1") — text mode, custom encoding via direct call."""
 
-    async def echo_latin(ctx: TextStageCtx) -> int:
+    async def echo_latin(ctx: TextStage) -> int:
         await ctx.stdout.write("caf\xe9\n")
         return 0
 
@@ -904,7 +904,7 @@ async def test_fn_encoding_latin1_direct() -> None:
 async def test_start_echo() -> None:
     """start() + wait() on a simple command."""
     async with start(sh.echo("hello")) as execution:
-        assert isinstance(execution, Execution)
+        assert isinstance(execution, Job)
         code = await execution.wait()
     assert code == 0
     assert execution.returncode == 0
@@ -913,7 +913,7 @@ async def test_start_echo() -> None:
 async def test_start_auto_kill() -> None:
     """Exception exit SIGTERM→SIGKILL long-running process."""
 
-    execution: Execution[None, None] | None = None
+    execution: Job[None, None] | None = None
     with pytest.raises(RuntimeError, match="bail"):
         async with start(sh.sleep("60")) as execution:
             raise RuntimeError("bail")

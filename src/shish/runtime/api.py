@@ -1,4 +1,4 @@
-"""Public lifecycle API: Execution, StartCtx, start(), run(), out().
+"""Public lifecycle API: Job, JobCtx, start(), run(), out().
 
 Provides the user-facing entry points for spawning and managing
 process trees built from IR commands.
@@ -7,14 +7,14 @@ process trees built from IR commands.
 from __future__ import annotations
 
 import asyncio
+import dataclasses as dc
 import enum
-import subprocess
-from dataclasses import dataclass, field
-from typing import Any, cast, overload
+import typing as ty
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.builders import Runnable
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
-from shish.runtime.spawn import SpawnCtx
+from shish.runtime.spawn import SpawnScope
 from shish.runtime.tree import (
     ProcessNode,
     StdFds,
@@ -27,8 +27,25 @@ from shish.streams import (
 )
 
 
+class ShishError(Exception):
+    """Non-zero exit from out()."""
+
+    def __init__(
+        self,
+        returncode: int,
+        cmd: Runnable,
+        stdout: str | bytes,
+        stderr: str | bytes,
+    ) -> None:
+        self.returncode = returncode
+        self.cmd = cmd
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(f"exit code {returncode}")
+
+
 class CloseMethod(enum.IntEnum):
-    """Shutdown escalation level for Execution.close().
+    """Shutdown escalation level for Job.close().
 
     Each level escalates to the next on timeout:
     EOF → TERMINATE → KILL.
@@ -39,15 +56,15 @@ class CloseMethod(enum.IntEnum):
     KILL = 2
 
 
-@dataclass
-class Execution[
+@dc.dataclass
+class Job[
     StdinT: (ByteWriteStream, TextWriteStream, None) = None,
     StdoutT: (ByteReadStream, TextReadStream, None) = None,
     StderrT: (ByteReadStream, TextReadStream, None) = None,
 ]:
     """Handle for a spawned process tree.
 
-    Created by StartCtx.__aenter__. Provides signal/terminate/kill for
+    Created by JobCtx.__aenter__. Provides signal/terminate/kill for
     explicit control and wait() for exit code retrieval. wait() is
     idempotent — second call returns cached returncode.
 
@@ -62,7 +79,7 @@ class Execution[
     stdin: StdinT
     stdout: StdoutT
     stderr: StderrT
-    returncode: int | None = field(default=None, init=False)
+    returncode: int | None = dc.field(default=None, init=False)
 
     async def wait(self) -> int:
         """Wait for all processes and return the exit code.
@@ -158,18 +175,18 @@ class Execution[
         raise AssertionError("unreachable")
 
 
-class StartCtx[
+class JobCtx[
     StdinT: (ByteWriteStream, TextWriteStream, None) = None,
     StdoutT: (ByteReadStream, TextReadStream, None) = None,
     StderrT: (ByteReadStream, TextReadStream, None) = None,
 ]:
-    """Async context manager that spawns and owns an Execution.
+    """Async context manager that spawns and owns an Job.
 
     Returned by start(). Use chained builder methods to configure streams::
 
         async with start(cmd).stdin(PIPE).stdout(PIPE).stderr(PIPE) as execution: ...
 
-    __aenter__ spawns the process tree and creates an Execution handle.
+    __aenter__ spawns the process tree and creates an Job handle.
     __aexit__ calls close() which escalates EOF → TERMINATE → KILL.
     """
 
@@ -181,7 +198,7 @@ class StartCtx[
     _stdout_encoding: str | None
     _stderr_encoding: str | None
     _cleanup_timeout: float
-    _execution: Execution[Any, Any, Any] | None
+    _execution: Job[ty.Any, ty.Any, ty.Any] | None
 
     def __init__(
         self,
@@ -190,9 +207,9 @@ class StartCtx[
         _stdin: int | Pipe | None = None,
         _stdout: int | Pipe | None = None,
         _stderr: int | Pipe | None = None,
-        _stdin_encoding: str | None = "utf-8",
-        _stdout_encoding: str | None = "utf-8",
-        _stderr_encoding: str | None = "utf-8",
+        _stdin_encoding: str | None = DEFAULT_ENCODING,
+        _stdout_encoding: str | None = DEFAULT_ENCODING,
+        _stderr_encoding: str | None = DEFAULT_ENCODING,
         _cleanup_timeout: float = 3,
     ) -> None:
         self._cmd = cmd
@@ -205,22 +222,22 @@ class StartCtx[
         self._cleanup_timeout = _cleanup_timeout
         self._execution = None
 
-    @overload
+    @ty.overload
     def stdin(
         self, arg: Pipe, encoding: None
-    ) -> StartCtx[ByteWriteStream, StdoutT, StderrT]: ...
-    @overload
+    ) -> JobCtx[ByteWriteStream, StdoutT, StderrT]: ...
+    @ty.overload
     def stdin(
         self, arg: Pipe, encoding: str = ...
-    ) -> StartCtx[TextWriteStream, StdoutT, StderrT]: ...
-    @overload
-    def stdin(self, arg: int | None) -> StartCtx[None, StdoutT, StderrT]: ...
+    ) -> JobCtx[TextWriteStream, StdoutT, StderrT]: ...
+    @ty.overload
+    def stdin(self, arg: int | None) -> JobCtx[None, StdoutT, StderrT]: ...
 
     def stdin(
-        self, arg: int | Pipe | None, encoding: str | None = "utf-8"
-    ) -> StartCtx[Any, Any, Any]:
+        self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
+    ) -> JobCtx[ty.Any, ty.Any, ty.Any]:
         """Set stdin fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
-        return StartCtx(
+        return JobCtx(
             self._cmd,
             _stdin=arg,
             _stdout=self._stdout_arg,
@@ -231,22 +248,22 @@ class StartCtx[
             _cleanup_timeout=self._cleanup_timeout,
         )
 
-    @overload
+    @ty.overload
     def stdout(
         self, arg: Pipe, encoding: None
-    ) -> StartCtx[StdinT, ByteReadStream, StderrT]: ...
-    @overload
+    ) -> JobCtx[StdinT, ByteReadStream, StderrT]: ...
+    @ty.overload
     def stdout(
         self, arg: Pipe, encoding: str = ...
-    ) -> StartCtx[StdinT, TextReadStream, StderrT]: ...
-    @overload
-    def stdout(self, arg: int | None) -> StartCtx[StdinT, None, StderrT]: ...
+    ) -> JobCtx[StdinT, TextReadStream, StderrT]: ...
+    @ty.overload
+    def stdout(self, arg: int | None) -> JobCtx[StdinT, None, StderrT]: ...
 
     def stdout(
-        self, arg: int | Pipe | None, encoding: str | None = "utf-8"
-    ) -> StartCtx[Any, Any, Any]:
+        self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
+    ) -> JobCtx[ty.Any, ty.Any, ty.Any]:
         """Set stdout fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
-        return StartCtx(
+        return JobCtx(
             self._cmd,
             _stdin=self._stdin_arg,
             _stdout=arg,
@@ -257,22 +274,22 @@ class StartCtx[
             _stderr_encoding=self._stderr_encoding,
         )
 
-    @overload
+    @ty.overload
     def stderr(
         self, arg: Pipe, encoding: None
-    ) -> StartCtx[StdinT, StdoutT, ByteReadStream]: ...
-    @overload
+    ) -> JobCtx[StdinT, StdoutT, ByteReadStream]: ...
+    @ty.overload
     def stderr(
         self, arg: Pipe, encoding: str = ...
-    ) -> StartCtx[StdinT, StdoutT, TextReadStream]: ...
-    @overload
-    def stderr(self, arg: int | None) -> StartCtx[StdinT, StdoutT, None]: ...
+    ) -> JobCtx[StdinT, StdoutT, TextReadStream]: ...
+    @ty.overload
+    def stderr(self, arg: int | None) -> JobCtx[StdinT, StdoutT, None]: ...
 
     def stderr(
-        self, arg: int | Pipe | None, encoding: str | None = "utf-8"
-    ) -> StartCtx[Any, Any, Any]:
+        self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
+    ) -> JobCtx[ty.Any, ty.Any, ty.Any]:
         """Set stderr fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
-        return StartCtx(
+        return JobCtx(
             self._cmd,
             _stdin=self._stdin_arg,
             _stdout=self._stdout_arg,
@@ -283,7 +300,7 @@ class StartCtx[
             _stderr_encoding=encoding,
         )
 
-    def _alloc_stdin(self, ctx: SpawnCtx) -> tuple[Fd, Fd | None]:
+    def _alloc_stdin(self, ctx: SpawnScope) -> tuple[Fd, Fd | None]:
         """Resolve stdin arg into (spawn_fd, stream_fd). PIPE allocates a pipe."""
         if self._stdin_arg is PIPE:
             return ctx.pipe()
@@ -291,7 +308,7 @@ class StartCtx[
             return Fd(STDIN, owned=False), None
         return Fd(self._stdin_arg, owned=False), None
 
-    def _alloc_stdout(self, ctx: SpawnCtx) -> tuple[Fd | None, Fd]:
+    def _alloc_stdout(self, ctx: SpawnScope) -> tuple[Fd | None, Fd]:
         """Resolve stdout arg into (stream_fd, spawn_fd). PIPE allocates a pipe."""
         if self._stdout_arg is PIPE:
             return ctx.pipe()
@@ -317,7 +334,7 @@ class StartCtx[
             return stream
         return TextReadStream(stream, encoding=self._stdout_encoding)
 
-    def _alloc_stderr(self, ctx: SpawnCtx) -> tuple[Fd | None, Fd]:
+    def _alloc_stderr(self, ctx: SpawnScope) -> tuple[Fd | None, Fd]:
         """Resolve stderr arg into (stream_fd, spawn_fd). PIPE allocates a pipe."""
         if self._stderr_arg is PIPE:
             return ctx.pipe()
@@ -334,9 +351,9 @@ class StartCtx[
             return stream
         return TextReadStream(stream, encoding=self._stderr_encoding)
 
-    async def __aenter__(self) -> Execution[StdinT, StdoutT, StderrT]:
+    async def __aenter__(self) -> Job[StdinT, StdoutT, StderrT]:
         """Spawn the process tree, allocating PIPE fds if requested."""
-        ctx = SpawnCtx()
+        ctx = SpawnScope()
         try:
             spawn_stdin, stream_stdin = self._alloc_stdin(ctx)
             stream_stdout, spawn_stdout = self._alloc_stdout(ctx)
@@ -357,11 +374,11 @@ class StartCtx[
             await ctx.cleanup()
             raise
 
-        self._execution = Execution(
+        self._execution = Job(
             root=root,
-            stdin=cast("StdinT", self._wrap_stdin(stream_stdin)),
-            stdout=cast("StdoutT", self._wrap_stdout(stream_stdout)),
-            stderr=cast("StderrT", self._wrap_stderr(stream_stderr)),
+            stdin=ty.cast("StdinT", self._wrap_stdin(stream_stdin)),
+            stdout=ty.cast("StdoutT", self._wrap_stdout(stream_stdout)),
+            stderr=ty.cast("StderrT", self._wrap_stderr(stream_stderr)),
         )
         return self._execution
 
@@ -376,8 +393,8 @@ class StartCtx[
         await self._execution.close(timeout=self._cleanup_timeout)
 
 
-def start(cmd: Runnable, *, cleanup_timeout: float = 3) -> StartCtx[None, None, None]:
-    """Create an async context manager that spawns and manages an Execution.
+def start(cmd: Runnable, *, cleanup_timeout: float = 3) -> JobCtx[None, None, None]:
+    """Create an async context manager that spawns and manages an Job.
 
     Use chained builder methods to configure streams::
 
@@ -393,7 +410,7 @@ def start(cmd: Runnable, *, cleanup_timeout: float = 3) -> StartCtx[None, None, 
         cleanup_timeout: Seconds to wait at each escalation step
             (SIGTERM → SIGKILL) during exception close. Default 3s.
     """
-    return StartCtx(cmd, _cleanup_timeout=cleanup_timeout)
+    return JobCtx(cmd, _cleanup_timeout=cleanup_timeout)
 
 
 async def run(cmd: Runnable) -> int:
@@ -402,13 +419,13 @@ async def run(cmd: Runnable) -> int:
         return await execution.wait()
 
 
-@overload
+@ty.overload
 async def out(cmd: Runnable, encoding: None) -> bytes: ...
-@overload
-async def out(cmd: Runnable, encoding: str = "utf-8") -> str: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = DEFAULT_ENCODING) -> str: ...
 
 
-async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
+async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
     """Execute a command and return its captured stdout.
 
     Spawns with stdout=PIPE, then reads stdout concurrently with
@@ -421,16 +438,19 @@ async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
         encoding: Decode stdout with this encoding. None for raw bytes.
 
     Raises:
-        subprocess.CalledProcessError: On non-zero exit code, with
-            the captured stdout attached for diagnostic use.
+        ShishError: On non-zero exit code, with
+            the captured stdout/stderr attached for diagnostic use.
     """
-    async with start(cmd).stdout(PIPE, encoding=encoding) as execution:
-        code, captured = await asyncio.gather(
+    async with (
+        start(cmd).stdout(PIPE, encoding=encoding).stderr(PIPE, encoding=encoding)
+    ) as execution:
+        code, stdout, stderr = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
+            execution.stderr.read(),
         )
 
     if code != 0:
-        raise subprocess.CalledProcessError(code, [], captured)
+        raise ShishError(code, cmd, stdout, stderr)
 
-    return captured
+    return stdout

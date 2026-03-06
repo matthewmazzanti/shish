@@ -1,6 +1,6 @@
 """Spawn orchestration: fd/proc tracking and process tree construction.
 
-SpawnCtx tracks all allocated resources (fds, procs, tasks) during
+SpawnScope tracks all allocated resources (fds, procs, tasks) during
 spawn for error cleanup, and dispatches IR nodes to the appropriate
 spawn method (cmd, fn, pipeline).
 
@@ -9,9 +9,9 @@ Fd ownership invariant — borrow, dup-before-use:
 - Use-sites dup only if they need their own copy: spawn_fn dups
   for in-process FnNode execution; fork is an implicit dup for exec_.
 - Creators close what they create: __aenter__ closes PIPE fds (non-
-  owning inherit/raw-fd Fds are no-op closes), SpawnCmdCtx closes
+  owning inherit/raw-fd Fds are no-op closes), SpawnCmdScope closes
   pipe/redirect fds, spawn_pipeline closes inter-stage pipe fds.
-- All created fds are tracked by SpawnCtx for error cleanup.
+- All created fds are tracked by SpawnScope for error cleanup.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from shish.builders import (
     Runnable,
 )
 from shish.fd import Fd
-from shish.fn_stage import ByteStageCtx
-from shish.runtime.spawn_cmd import SpawnCmdCtx
+from shish.fn_stage import ByteStage
+from shish.runtime.spawn_cmd import SpawnCmdScope
 from shish.runtime.tree import (
     CmdNode,
     FnNode,
@@ -46,11 +46,11 @@ from shish.streams import (
 )
 
 
-class SpawnCtx:
+class SpawnScope:
     """Tracks fds, procs, and fn_tasks during spawn for error cleanup.
 
     Spawn can fail partway — some processes already forked, some fds
-    already allocated — before a full process tree exists. SpawnCtx
+    already allocated — before a full process tree exists. SpawnScope
     records everything allocated so that cleanup() can tear it all
     down. Also provides low-level primitives (exec_, pipe, dup) and
     spawn methods that dispatch IR nodes to the appropriate builder.
@@ -157,7 +157,7 @@ class SpawnCtx:
         std_fds: StdFds,
     ) -> CmdNode:
         """Spawn a single Cmd with redirects and sub-processes."""
-        return await SpawnCmdCtx(self, cmd, std_fds).spawn()
+        return await SpawnCmdScope(self, cmd, std_fds).spawn()
 
     async def spawn_fn(
         self,
@@ -180,8 +180,11 @@ class SpawnCtx:
         async def execute() -> int:
             stdin_stream = ByteReadStream(dup_stdin)
             stdout_stream = ByteWriteStream(dup_stdout)
+            stderr_stream = ByteWriteStream(dup_stderr)
             try:
-                ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
+                ctx = ByteStage(
+                    stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream
+                )
                 return await func(ctx)
             except Exception:
                 traceback.print_exc(file=sys.stderr)
@@ -189,6 +192,7 @@ class SpawnCtx:
             finally:
                 stdout_stream.close()
                 stdin_stream.close()
+                stderr_stream.close()
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)

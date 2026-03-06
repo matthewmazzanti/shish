@@ -37,6 +37,7 @@ import codecs
 import os
 from collections.abc import AsyncIterator, Buffer, Iterable
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.fd import Fd
 
 # =============================================================================
@@ -184,6 +185,12 @@ class ByteWriteStream:
         for chunk in data:
             await self.write(chunk)
 
+    async def write_eof(self, data: Buffer = b"") -> None:
+        """Write final data and close. Signals EOF to the reader."""
+        if data:
+            await self.write(data)
+        self.close()
+
     def close(self) -> None:
         """Close the fd."""
         self._fd.close()
@@ -222,7 +229,10 @@ class TextReadStream:
     """
 
     def __init__(
-        self, stream: ByteReadStream, encoding: str = "utf-8", buffer_size: int = 65536
+        self,
+        stream: ByteReadStream,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = 65536,
     ) -> None:
         self._stream = stream
         self._decoder = codecs.getincrementaldecoder(encoding)()
@@ -309,7 +319,10 @@ class TextWriteStream:
     """
 
     def __init__(
-        self, stream: ByteWriteStream, encoding: str = "utf-8", buffer_size: int = 65536
+        self,
+        stream: ByteWriteStream,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = 65536,
     ) -> None:
         self._stream = stream
         self._encoding = encoding
@@ -326,6 +339,12 @@ class TextWriteStream:
         """Write an iterable of strings."""
         for line in lines:
             await self.write(line)
+
+    async def write_eof(self, data: str = "") -> None:
+        """Write final data and close. Signals EOF to the reader."""
+        if data:
+            await self.write(data)
+        self.close()
 
     def close(self) -> None:
         """Close the underlying byte stream."""

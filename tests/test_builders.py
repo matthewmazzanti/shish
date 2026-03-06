@@ -4,7 +4,7 @@ from pathlib import Path
 
 from shish import STDERR, STDIN, STDOUT, builders
 from shish.builders import Fn, cmd
-from shish.fn_stage import ByteStageCtx
+from shish.fn_stage import ByteStage
 
 # =============================================================================
 # Cmd construction
@@ -392,11 +392,11 @@ def test_replace_preserves_redirects() -> None:
 # =============================================================================
 
 
-async def _noop(ctx: ByteStageCtx) -> int:
+async def _noop(ctx: ByteStage) -> int:
     return 0
 
 
-async def _noop2(ctx: ByteStageCtx) -> int:
+async def _noop2(ctx: ByteStage) -> int:
     return 1
 
 

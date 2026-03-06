@@ -3,7 +3,7 @@
 A ProcessNode tree is only constructed once all processes have been
 forked and all fds allocated. It tracks every open resource (procs,
 tasks, fds) and owns their lifecycle: wait, terminate, kill, close_fds.
-SpawnCtx handles the error path when spawn fails partway.
+SpawnScope handles the error path when spawn fails partway.
 """
 
 from __future__ import annotations
@@ -11,15 +11,15 @@ from __future__ import annotations
 import abc
 import asyncio
 import contextlib
+import dataclasses as dc
 import signal as signal_mod
 from asyncio.subprocess import Process
 from collections.abc import Awaitable, Iterator
-from dataclasses import dataclass, field
 
 from shish.fd import Fd
 
 
-@dataclass
+@dc.dataclass
 class StdFds:
     """Stdin/stdout/stderr fds for a spawn subtree.
 
@@ -65,7 +65,7 @@ class ProcessNodeBase(abc.ABC):
         return code
 
 
-@dataclass
+@dc.dataclass
 class CmdNode(ProcessNodeBase):
     """Process tree node for a single spawned command.
 
@@ -77,7 +77,7 @@ class CmdNode(ProcessNodeBase):
     """
 
     proc: Process
-    subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
+    subs: list[ProcessNode] = dc.field(default_factory=lambda: list[ProcessNode]())
 
     def returncode(self) -> int | None:
         """Normalized returncode: 128 + signal for killed processes, None if running."""
@@ -111,7 +111,7 @@ class CmdNode(ProcessNodeBase):
             yield from sub.awaitables()
 
 
-@dataclass
+@dc.dataclass
 class PipelineNode(ProcessNodeBase):
     """Process tree node for a pipeline (cmd1 | cmd2 | ...).
 
@@ -154,7 +154,7 @@ class PipelineNode(ProcessNodeBase):
             yield from stage.awaitables()
 
 
-@dataclass
+@dc.dataclass
 class FnNode(ProcessNodeBase):
     """Process tree node for an in-process Python function.
 
@@ -164,9 +164,9 @@ class FnNode(ProcessNodeBase):
     """
 
     task: asyncio.Task[int]
-    _stdin_fd: Fd = field(repr=False)
-    _stdout_fd: Fd = field(repr=False)
-    _stderr_fd: Fd = field(repr=False)
+    _stdin_fd: Fd = dc.field(repr=False)
+    _stdout_fd: Fd = dc.field(repr=False)
+    _stderr_fd: Fd = dc.field(repr=False)
 
     def returncode(self) -> int | None:
         """Task return code, None if running."""
