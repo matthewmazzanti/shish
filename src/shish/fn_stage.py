@@ -28,18 +28,20 @@ from shish.streams import (
 
 @dataclass
 class ByteStageCtx:
-    """Byte-level stdin/stdout pair for an Fn pipeline stage."""
+    """Byte-level stdin/stdout/stderr for an Fn pipeline stage."""
 
     stdin: ByteReadStream
     stdout: ByteWriteStream
+    stderr: ByteWriteStream
 
 
 @dataclass
 class TextStageCtx:
-    """Text-level stdin/stdout pair for an Fn pipeline stage."""
+    """Text-level stdin/stdout/stderr for an Fn pipeline stage."""
 
     stdin: TextReadStream
     stdout: TextWriteStream
+    stderr: TextWriteStream
 
 
 # =============================================================================
@@ -94,6 +96,7 @@ def make_byte_wrapper(func: TextFn, encoding: str) -> ByteFn:
         text_ctx = TextStageCtx(
             stdin=TextReadStream(ctx.stdin, encoding=encoding),
             stdout=TextWriteStream(ctx.stdout, encoding=encoding),
+            stderr=TextWriteStream(ctx.stderr, encoding=encoding),
         )
         return await func(text_ctx)
 

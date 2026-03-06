@@ -385,27 +385,36 @@ async def test_text_read_eof_empty() -> None:
 async def test_byte_stage_ctx_fields() -> None:
     """ByteStageCtx has stdin (ByteReadStream) and stdout (ByteWriteStream) fields."""
     read_fd, write_fd = os.pipe()
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
     reader = ByteReadStream(Fd(read_fd))
     writer = ByteWriteStream(Fd(write_fd))
-    ctx = ByteStageCtx(stdin=reader, stdout=writer)
+    errwriter = ByteWriteStream(Fd(stderr_fd))
+    ctx = ByteStageCtx(stdin=reader, stdout=writer, stderr=errwriter)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
+    assert ctx.stderr is errwriter
     reader.close()
     writer.close()
+    errwriter.close()
 
 
 async def test_text_stage_ctx_fields() -> None:
     """TextStageCtx has stdin (TextReadStream) and stdout (TextWriteStream) fields."""
     read_fd, write_fd = os.pipe()
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
     byte_reader = ByteReadStream(Fd(read_fd))
     byte_writer = ByteWriteStream(Fd(write_fd))
+    byte_errwriter = ByteWriteStream(Fd(stderr_fd))
     reader = TextReadStream(byte_reader)
     writer = TextWriteStream(byte_writer)
-    ctx = TextStageCtx(stdin=reader, stdout=writer)
+    errwriter = TextWriteStream(byte_errwriter)
+    ctx = TextStageCtx(stdin=reader, stdout=writer, stderr=errwriter)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
+    assert ctx.stderr is errwriter
     reader.close()
     writer.close()
+    errwriter.close()
 
 
 async def test_decode_bare_decorator() -> None:
@@ -425,13 +434,16 @@ async def test_decode_bare_decorator() -> None:
     # stdout pipe: read the result from the read end
     stdout_read_fd, stdout_write_fd = os.pipe()
 
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
     byte_ctx = ByteStageCtx(
         stdin=ByteReadStream(Fd(stdin_read_fd)),
         stdout=ByteWriteStream(Fd(stdout_write_fd)),
+        stderr=ByteWriteStream(Fd(stderr_fd)),
     )
     result = await upper(byte_ctx)
     byte_ctx.stdin.close()
     byte_ctx.stdout.close()
+    byte_ctx.stderr.close()
 
     output = os.read(stdout_read_fd, 1024)
     os.close(stdout_read_fd)
@@ -455,13 +467,16 @@ async def test_decode_with_parens() -> None:
 
     stdout_read_fd, stdout_write_fd = os.pipe()
 
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
     byte_ctx = ByteStageCtx(
         stdin=ByteReadStream(Fd(stdin_read_fd)),
         stdout=ByteWriteStream(Fd(stdout_write_fd)),
+        stderr=ByteWriteStream(Fd(stderr_fd)),
     )
     result = await upper(byte_ctx)
     byte_ctx.stdin.close()
     byte_ctx.stdout.close()
+    byte_ctx.stderr.close()
 
     output = os.read(stdout_read_fd, 1024)
     os.close(stdout_read_fd)
@@ -486,13 +501,16 @@ async def test_decode_with_encoding() -> None:
 
     stdout_read_fd, stdout_write_fd = os.pipe()
 
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
     byte_ctx = ByteStageCtx(
         stdin=ByteReadStream(Fd(stdin_read_fd)),
         stdout=ByteWriteStream(Fd(stdout_write_fd)),
+        stderr=ByteWriteStream(Fd(stderr_fd)),
     )
     result = await passthrough(byte_ctx)
     byte_ctx.stdin.close()
     byte_ctx.stdout.close()
+    byte_ctx.stderr.close()
 
     output = os.read(stdout_read_fd, 1024)
     os.close(stdout_read_fd)
@@ -519,17 +537,23 @@ async def test_decode_does_not_close_byte_streams() -> None:
 
     stdout_read_fd, stdout_write_fd = os.pipe()
 
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
     stdin_stream = ByteReadStream(Fd(stdin_read_fd))
     stdout_stream = ByteWriteStream(Fd(stdout_write_fd))
-    byte_ctx = ByteStageCtx(stdin=stdin_stream, stdout=stdout_stream)
+    stderr_stream = ByteWriteStream(Fd(stderr_fd))
+    byte_ctx = ByteStageCtx(
+        stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream
+    )
 
     await noop(byte_ctx)
 
     # Byte streams should NOT be closed by the decorator
     assert not stdin_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
     assert not stdout_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
+    assert not stderr_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
 
     # Clean up
     stdin_stream.close()
     stdout_stream.close()
+    stderr_stream.close()
     os.close(stdout_read_fd)

@@ -274,6 +274,8 @@ class SpawnCmdCtx:
         if isinstance(data, bytes):
 
             async def write_byte_data(stage: ByteStageCtx) -> int:
+                stage.stdin.close()
+                stage.stderr.close()
                 with contextlib.suppress(OSError):
                     await stage.stdout.write(data)
                 return 0
@@ -282,6 +284,8 @@ class SpawnCmdCtx:
         else:
 
             async def write_str_data(stage: TextStageCtx) -> int:
+                stage.stdin.close()
+                stage.stderr.close()
                 with contextlib.suppress(OSError):
                     await stage.stdout.write(data)
                 return 0

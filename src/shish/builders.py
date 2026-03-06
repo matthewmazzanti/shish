@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,11 +15,11 @@ if TYPE_CHECKING:
     from shish.runtime import StartCtx
 
 
-class _Unset:
+class _Unset(Enum):
     """Sentinel for unset fields in _replace."""
 
+    UNSET = auto()
 
-UNSET = _Unset()
 
 PathLike = Path | str
 Data = str | bytes
@@ -99,18 +100,18 @@ class Cmd:
     def _replace(
         self,
         *,
-        args: tuple[str | Sub, ...] | _Unset = UNSET,
-        redirects: tuple[Redirect, ...] | _Unset = UNSET,
-        env_vars: tuple[tuple[str, str | None], ...] | _Unset = UNSET,
-        working_dir: Path | None | _Unset = UNSET,
+        args: tuple[str | Sub, ...] | _Unset = _Unset.UNSET,
+        redirects: tuple[Redirect, ...] | _Unset = _Unset.UNSET,
+        env_vars: tuple[tuple[str, str | None], ...] | _Unset = _Unset.UNSET,
+        working_dir: Path | None | _Unset = _Unset.UNSET,
     ) -> Cmd:
         """Return a copy with specified fields replaced."""
         return Cmd(
-            args=self.args if isinstance(args, _Unset) else args,
-            redirects=self.redirects if isinstance(redirects, _Unset) else redirects,
-            env_vars=self.env_vars if isinstance(env_vars, _Unset) else env_vars,
+            args=self.args if args is _Unset.UNSET else args,
+            redirects=self.redirects if redirects is _Unset.UNSET else redirects,
+            env_vars=self.env_vars if env_vars is _Unset.UNSET else env_vars,
             working_dir=(
-                self.working_dir if isinstance(working_dir, _Unset) else working_dir
+                self.working_dir if working_dir is _Unset.UNSET else working_dir
             ),
         )
 
@@ -118,10 +119,12 @@ class Cmd:
         """Append positional arguments."""
         resolved: list[str | Sub] = []
         for item in args:
-            if isinstance(item, (SubIn, SubOut)):
-                resolved.append(item)
-            else:
-                resolved.append(str(item))
+            match item:
+                case SubIn() | SubOut():
+                    resolved.append(item)
+                case _:
+                    resolved.append(str(item))
+
         return self._replace(args=(*self.args, *resolved))
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
