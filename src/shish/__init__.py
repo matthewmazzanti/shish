@@ -11,7 +11,7 @@ from shish.builders import (
 )
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
 from shish.fn_stage import ByteFn, ByteStageCtx, TextFn, TextStageCtx, decode
-from shish.runtime import CloseMethod, Execution, StartCtx
+from shish.runtime import CloseMethod, Execution, ShishError, StartCtx
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,
@@ -68,6 +68,7 @@ __all__ = [
     "ReadSrc",
     "Runnable",
     "Sh",
+    "ShishError",
     "StartCtx",
     "Sub",
     "SubIn",

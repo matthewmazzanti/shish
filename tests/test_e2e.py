@@ -1,6 +1,5 @@
 import asyncio
 import signal
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +11,7 @@ from shish import (
     STDOUT,
     ByteStageCtx,
     Execution,
+    ShishError,
     TextStageCtx,
     close,
     cwd,
@@ -394,15 +394,15 @@ async def test_out_with_sub_in() -> None:
 
 
 async def test_out_raises_on_failure() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await out(sh.false())
     assert exc_info.value.returncode == 1
 
 
 async def test_out_raises_preserves_output() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await out(sh.sh("-c", "echo partial; exit 1"))
-    assert exc_info.value.output == "partial\n"
+    assert exc_info.value.stdout == "partial\n"
 
 
 async def test_out_empty() -> None:
@@ -479,7 +479,7 @@ async def test_builder_out() -> None:
 
 
 async def test_builder_out_raises_on_failure() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await cmd("false").out()
     assert exc_info.value.returncode == 1
 

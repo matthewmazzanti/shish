@@ -3,7 +3,6 @@
 import asyncio
 import os
 import signal
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,7 @@ import pytest
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
 from shish.fd import Fd
 from shish.fn_stage import ByteStageCtx
-from shish.runtime import CloseMethod, Execution, out, run, start
+from shish.runtime import CloseMethod, Execution, ShishError, out, run, start
 from shish.streams import ByteReadStream, ByteWriteStream
 
 # =============================================================================
@@ -739,15 +738,15 @@ async def test_start_stdin_fd_with_stdout_fd() -> None:
 
 
 async def test_out_raises_on_failure() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await out(builders.Cmd(("false",)))
     assert exc_info.value.returncode == 1
 
 
 async def test_out_raises_preserves_output() -> None:
-    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+    with pytest.raises(ShishError) as exc_info:
         await out(builders.Cmd(("sh", "-c", "echo partial; exit 1")))
-    assert exc_info.value.output == "partial\n"
+    assert exc_info.value.stdout == "partial\n"
 
 
 # =============================================================================

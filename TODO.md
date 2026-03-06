@@ -2,7 +2,6 @@
 
 ## Bugs
 
-- Custom error type for `out` — avoids `CalledProcessError`'s cmd arg mismatch, can hold the original builder tree
 - Sporadic "cat: write error: Resource temporarily unavailable" in tests (not yet reproducible)
 
 ## Features

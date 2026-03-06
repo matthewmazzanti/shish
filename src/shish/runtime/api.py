@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses as dc
 import enum
-import subprocess
 import typing as ty
 
 from shish._defaults import DEFAULT_ENCODING
@@ -26,6 +25,23 @@ from shish.streams import (
     TextReadStream,
     TextWriteStream,
 )
+
+
+class ShishError(Exception):
+    """Non-zero exit from out()."""
+
+    def __init__(
+        self,
+        returncode: int,
+        cmd: Runnable,
+        stdout: str | bytes,
+        stderr: str | bytes,
+    ) -> None:
+        self.returncode = returncode
+        self.cmd = cmd
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(f"exit code {returncode}")
 
 
 class CloseMethod(enum.IntEnum):
@@ -422,8 +438,8 @@ async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | b
         encoding: Decode stdout with this encoding. None for raw bytes.
 
     Raises:
-        subprocess.CalledProcessError: On non-zero exit code, with
-            the captured stdout attached for diagnostic use.
+        ShishError: On non-zero exit code, with
+            the captured stdout/stderr attached for diagnostic use.
     """
     async with (
         start(cmd).stdout(PIPE, encoding=encoding).stderr(PIPE, encoding=encoding)
@@ -435,6 +451,6 @@ async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | b
         )
 
     if code != 0:
-        raise subprocess.CalledProcessError(code, [], stdout, stderr)
+        raise ShishError(code, cmd, stdout, stderr)
 
     return stdout
