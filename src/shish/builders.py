@@ -176,7 +176,7 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    def start(self) -> StartCtx[None, None]:
+    def start(self) -> StartCtx[None, None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
@@ -211,7 +211,7 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    def start(self) -> StartCtx[None, None]:
+    def start(self) -> StartCtx[None, None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
@@ -238,7 +238,7 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def start(self) -> StartCtx[None, None]:
+    def start(self) -> StartCtx[None, None, None]:
         """Spawn and yield an Execution via async context manager."""
         from shish import runtime  # noqa: PLC0415
 

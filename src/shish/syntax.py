@@ -320,7 +320,7 @@ def sub_out(sink: Runnable) -> builders.SubOut:
     return builders.SubOut(unwrap(sink))
 
 
-def start(cmd: Runnable) -> StartCtx[None, None]:
+def start(cmd: Runnable) -> StartCtx[None, None, None]:
     """Spawn a command or pipeline and yield an Execution via async context manager."""
     return unwrap(cmd).start()
 
