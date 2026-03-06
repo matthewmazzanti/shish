@@ -2,7 +2,7 @@
 
 ## Bugs
 
-- CalledProcessError in `out` passes empty list for cmd arg
+- Custom error type for `out` — avoids `CalledProcessError`'s cmd arg mismatch, can hold the original builder tree
 - Sporadic "cat: write error: Resource temporarily unavailable" in tests (not yet reproducible)
 
 ## Features
@@ -24,7 +24,6 @@
 
 - Rename `ByteStageCtx`/`TextStageCtx`/`SpawnCtx`/`SpawnCmdCtx`/`StartCtx` to
   something more descriptive
-- Lint rules: enforce `import typing as ty`, `dataclass as dc`, `collections.abc as ...` style
 - Examples (cookbook-style usage patterns)
 - User docs — GitHub Pages? Read the Docs? Loose markdown?
 - Defaults vs explicit configuration — where's the line?
