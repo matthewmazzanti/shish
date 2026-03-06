@@ -149,20 +149,20 @@ async with start(cmd("ls", "-la")) as proc:
 # Write to stdin, read from stdout
 async with start(cmd("cat")).stdin(PIPE).stdout(PIPE) as proc:
     await proc.stdin.write("hello\n")
-    await proc.stdin.close()
+    proc.stdin.close()
     output = await proc.stdout.read()   # "hello\n"
     code = await proc.wait()
 
 # Custom encoding
 async with start(cmd("cat")).stdin(PIPE, "latin-1").stdout(PIPE, "latin-1") as proc:
     await proc.stdin.write("café\n")
-    await proc.stdin.close()
+    proc.stdin.close()
     output = await proc.stdout.read()
 
 # Raw bytes
 async with start(cmd("cat")).stdin(PIPE, encoding=None).stdout(PIPE, encoding=None) as proc:
     await proc.stdin.write(b"\x00\x01\x02")
-    await proc.stdin.close()
+    proc.stdin.close()
     output = await proc.stdout.read()   # b"\x00\x01\x02"
 ```
 

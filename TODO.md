@@ -3,7 +3,6 @@
 ## Fixes
 
 - CalledProcessError in `out` passes empty list for cmd arg
-- README shows `await proc.stdin.close()` but `close()` is synchronous
 - Sporadic "cat: write error: Resource temporarily unavailable" in tests (not yet reproducible)
 - KeyboardInterrupt testing — verify fn() tasks that raise KeyboardInterrupt
   propagate it through wait() and kill the event loop (not swallowed by
