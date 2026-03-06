@@ -12,6 +12,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.builders import Runnable
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
 from shish.runtime.spawn import SpawnCtx
@@ -190,9 +191,9 @@ class StartCtx[
         _stdin: int | Pipe | None = None,
         _stdout: int | Pipe | None = None,
         _stderr: int | Pipe | None = None,
-        _stdin_encoding: str | None = "utf-8",
-        _stdout_encoding: str | None = "utf-8",
-        _stderr_encoding: str | None = "utf-8",
+        _stdin_encoding: str | None = DEFAULT_ENCODING,
+        _stdout_encoding: str | None = DEFAULT_ENCODING,
+        _stderr_encoding: str | None = DEFAULT_ENCODING,
         _cleanup_timeout: float = 3,
     ) -> None:
         self._cmd = cmd
@@ -217,7 +218,7 @@ class StartCtx[
     def stdin(self, arg: int | None) -> StartCtx[None, StdoutT, StderrT]: ...
 
     def stdin(
-        self, arg: int | Pipe | None, encoding: str | None = "utf-8"
+        self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
     ) -> StartCtx[Any, Any, Any]:
         """Set stdin fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
         return StartCtx(
@@ -243,7 +244,7 @@ class StartCtx[
     def stdout(self, arg: int | None) -> StartCtx[StdinT, None, StderrT]: ...
 
     def stdout(
-        self, arg: int | Pipe | None, encoding: str | None = "utf-8"
+        self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
     ) -> StartCtx[Any, Any, Any]:
         """Set stdout fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
         return StartCtx(
@@ -269,7 +270,7 @@ class StartCtx[
     def stderr(self, arg: int | None) -> StartCtx[StdinT, StdoutT, None]: ...
 
     def stderr(
-        self, arg: int | Pipe | None, encoding: str | None = "utf-8"
+        self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
     ) -> StartCtx[Any, Any, Any]:
         """Set stderr fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
         return StartCtx(
@@ -405,10 +406,10 @@ async def run(cmd: Runnable) -> int:
 @overload
 async def out(cmd: Runnable, encoding: None) -> bytes: ...
 @overload
-async def out(cmd: Runnable, encoding: str = "utf-8") -> str: ...
+async def out(cmd: Runnable, encoding: str = DEFAULT_ENCODING) -> str: ...
 
 
-async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
+async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
     """Execute a command and return its captured stdout.
 
     Spawns with stdout=PIPE, then reads stdout concurrently with

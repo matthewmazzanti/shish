@@ -17,8 +17,6 @@
 
 ## Design
 
-- Default encoding: library hardcodes `"utf-8"` everywhere (`out`, `fn`, `feed`/`<<`, text streams).
-  Bash uses `LC_CTYPE` for heredocs and output — should default to `locale.getpreferredencoding(False)`?
 - Bad return codes: map to something? raise exceptions? configurable?
 - Defaults vs explicit configuration — where's the line?
 - Configurable command builder: `sh = CommandBuilder(env={...}, cwd="...", raise_on_error=True)`

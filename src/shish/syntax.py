@@ -11,6 +11,7 @@ from collections.abc import Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Never, cast, overload
 
 import shish.builders as builders
+from shish._defaults import DEFAULT_ENCODING
 from shish.fd import STDIN, STDOUT
 from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
@@ -231,7 +232,7 @@ def fn(*, encoding: str = ...) -> Callable[[TextFn], Fn]: ...
 def fn(
     func: TextFn | ByteFn | None = None,
     *,
-    encoding: str | None = "utf-8",
+    encoding: str | None = DEFAULT_ENCODING,
 ) -> Fn | Callable[[ByteFn], Fn] | Callable[[TextFn], Fn]:
     """Create an Fn from an async callable.
 
@@ -329,7 +330,7 @@ async def run(cmd: Runnable) -> int:
     return await unwrap(cmd).run()
 
 
-async def out(cmd: Runnable, encoding: str | None = "utf-8") -> str | bytes:
+async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
     """Execute command and return stdout."""
     return await unwrap(cmd).out(encoding)
 

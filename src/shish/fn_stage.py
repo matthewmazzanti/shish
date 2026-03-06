@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import overload
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,
@@ -74,10 +75,10 @@ def decode(
     """
     if callable(func):
         # @decode without parens: func is the decorated function
-        return make_byte_wrapper(func, "utf-8")
+        return make_byte_wrapper(func, DEFAULT_ENCODING)
 
     # @decode() or @decode("latin-1"): func is encoding or None
-    encoding = func if isinstance(func, str) else "utf-8"
+    encoding = func if isinstance(func, str) else DEFAULT_ENCODING
 
     def decorator(inner: TextFn) -> ByteFn:
         return make_byte_wrapper(inner, encoding)

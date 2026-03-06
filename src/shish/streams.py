@@ -37,6 +37,7 @@ import codecs
 import os
 from collections.abc import AsyncIterator, Buffer, Iterable
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.fd import Fd
 
 # =============================================================================
@@ -222,7 +223,10 @@ class TextReadStream:
     """
 
     def __init__(
-        self, stream: ByteReadStream, encoding: str = "utf-8", buffer_size: int = 65536
+        self,
+        stream: ByteReadStream,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = 65536,
     ) -> None:
         self._stream = stream
         self._decoder = codecs.getincrementaldecoder(encoding)()
@@ -309,7 +313,10 @@ class TextWriteStream:
     """
 
     def __init__(
-        self, stream: ByteWriteStream, encoding: str = "utf-8", buffer_size: int = 65536
+        self,
+        stream: ByteWriteStream,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = 65536,
     ) -> None:
         self._stream = stream
         self._encoding = encoding

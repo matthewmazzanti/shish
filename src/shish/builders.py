@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.fd import STDIN, STDOUT
 
 if TYPE_CHECKING:
@@ -184,7 +185,7 @@ class Cmd:
 
         return await runtime.run(self)
 
-    async def out(self, encoding: str | None = "utf-8") -> str | bytes:
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
         from shish import runtime  # noqa: PLC0415
 
@@ -219,7 +220,7 @@ class Fn:
 
         return await runtime.run(self)
 
-    async def out(self, encoding: str | None = "utf-8") -> str | bytes:
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
         from shish import runtime  # noqa: PLC0415
 
@@ -246,7 +247,7 @@ class Pipeline:
 
         return await runtime.run(self)
 
-    async def out(self, encoding: str | None = "utf-8") -> str | bytes:
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
         from shish import runtime  # noqa: PLC0415
 

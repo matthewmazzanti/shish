@@ -1,3 +1,4 @@
+from shish._defaults import DEFAULT_ENCODING
 from shish.builders import (
     Arg,
     Data,
@@ -44,6 +45,7 @@ from shish.syntax import (
 )
 
 __all__ = [
+    "DEFAULT_ENCODING",
     "PIPE",
     "STDERR",
     "STDIN",

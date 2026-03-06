@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from shish._defaults import DEFAULT_ENCODING
 from shish.builders import (
     Cmd,
     FdClose,
@@ -285,7 +286,7 @@ class SpawnCmdCtx:
                     await stage.stdout.write(data)
                 return 0
 
-            write_data = make_byte_wrapper(write_str_data, "utf-8")
+            write_data = make_byte_wrapper(write_str_data, DEFAULT_ENCODING)
 
         self._spawn(Fn(write_data), self._sub_fds(stdout=pipe_w))
         return pipe_r
