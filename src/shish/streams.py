@@ -185,6 +185,12 @@ class ByteWriteStream:
         for chunk in data:
             await self.write(chunk)
 
+    async def write_eof(self, data: Buffer = b"") -> None:
+        """Write final data and close. Signals EOF to the reader."""
+        if data:
+            await self.write(data)
+        self.close()
+
     def close(self) -> None:
         """Close the fd."""
         self._fd.close()
@@ -333,6 +339,12 @@ class TextWriteStream:
         """Write an iterable of strings."""
         for line in lines:
             await self.write(line)
+
+    async def write_eof(self, data: str = "") -> None:
+        """Write final data and close. Signals EOF to the reader."""
+        if data:
+            await self.write(data)
+        self.close()
 
     def close(self) -> None:
         """Close the underlying byte stream."""

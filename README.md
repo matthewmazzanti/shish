@@ -146,24 +146,29 @@ from shish.builders import cmd
 async with start(cmd("ls", "-la")) as proc:
     code = await proc.wait()
 
-# Write to stdin, read from stdout
+# Write to stdin, read from stdout (gather avoids pipe-buffer deadlocks)
 async with start(cmd("cat")).stdin(PIPE).stdout(PIPE) as proc:
-    await proc.stdin.write("hello\n")
-    proc.stdin.close()
-    output = await proc.stdout.read()   # "hello\n"
-    code = await proc.wait()
+    code, _, output = await asyncio.gather(
+        proc.wait(),
+        proc.stdin.write_eof("hello\n"),
+        proc.stdout.read(),
+    )  # output == "hello\n"
 
 # Custom encoding
 async with start(cmd("cat")).stdin(PIPE, "latin-1").stdout(PIPE, "latin-1") as proc:
-    await proc.stdin.write("café\n")
-    proc.stdin.close()
-    output = await proc.stdout.read()
+    code, _, output = await asyncio.gather(
+        proc.wait(),
+        proc.stdin.write_eof("café\n"),
+        proc.stdout.read(),
+    )
 
 # Raw bytes
 async with start(cmd("cat")).stdin(PIPE, encoding=None).stdout(PIPE, encoding=None) as proc:
-    await proc.stdin.write(b"\x00\x01\x02")
-    proc.stdin.close()
-    output = await proc.stdout.read()   # b"\x00\x01\x02"
+    code, _, output = await asyncio.gather(
+        proc.wait(),
+        proc.stdin.write_eof(b"\x00\x01\x02"),
+        proc.stdout.read(),
+    )  # output == b"\x00\x01\x02"
 ```
 
 The context manager handles cleanup: closes streams, kills orphans, and reaps processes on exit.

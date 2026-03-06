@@ -277,7 +277,7 @@ class SpawnCmdCtx:
                 stage.stdin.close()
                 stage.stderr.close()
                 with contextlib.suppress(OSError):
-                    await stage.stdout.write(data)
+                    await stage.stdout.write_eof(data)
                 return 0
 
             write_data = write_byte_data
@@ -287,7 +287,7 @@ class SpawnCmdCtx:
                 stage.stdin.close()
                 stage.stderr.close()
                 with contextlib.suppress(OSError):
-                    await stage.stdout.write(data)
+                    await stage.stdout.write_eof(data)
                 return 0
 
             write_data = make_byte_wrapper(write_str_data, DEFAULT_ENCODING)

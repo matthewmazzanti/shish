@@ -80,6 +80,28 @@ async def test_write_broken_pipe() -> None:
     writer.close()
 
 
+async def test_write_eof_with_data() -> None:
+    """write_eof() writes data and closes the stream."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd))
+    await writer.write_eof(b"goodbye")
+    assert writer._fd.closed  # pyright: ignore[reportPrivateUsage]
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b"goodbye"
+
+
+async def test_write_eof_empty() -> None:
+    """write_eof() with no data just closes the stream."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd))
+    await writer.write_eof()
+    assert writer._fd.closed  # pyright: ignore[reportPrivateUsage]
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b""
+
+
 async def test_write_backpressure() -> None:
     """write() suspends when pipe buffer is full, resumes when drained."""
     read_fd, write_fd = os.pipe()
@@ -241,6 +263,26 @@ async def test_text_writelines() -> None:
     result = os.read(read_fd, 1024)
     os.close(read_fd)
     assert result == b"aaa\nbbb\nccc\n"
+
+
+async def test_text_write_eof_with_data() -> None:
+    """write_eof() encodes, writes, and closes."""
+    read_fd, write_fd = os.pipe()
+    writer = TextWriteStream(ByteWriteStream(Fd(write_fd)))
+    await writer.write_eof("goodbye")
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b"goodbye"
+
+
+async def test_text_write_eof_empty() -> None:
+    """write_eof() with no data just closes."""
+    read_fd, write_fd = os.pipe()
+    writer = TextWriteStream(ByteWriteStream(Fd(write_fd)))
+    await writer.write_eof()
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b""
 
 
 async def test_text_write_close_closes_fd() -> None:
