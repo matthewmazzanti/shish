@@ -56,7 +56,7 @@ await sh.git.commit(message="fix bug", amend=True)     # git commit --message 'f
 
 ## Python function stages
 
-`fn` wraps an async function as a pipeline stage. Text mode (utf-8) by default — the function receives `TextStageCtx` with async `stdin`/`stdout` streams:
+`fn` wraps an async function as a pipeline stage. Text mode (utf-8) by default — the function receives `TextStage` with async `stdin`/`stdout` streams:
 
 ```python
 from shish import fn
@@ -75,7 +75,7 @@ await (sh.echo("hello world") | upper | sh.cat())
 async def process(ctx):
     ...
 
-# Raw bytes — receives ByteStageCtx
+# Raw bytes — receives ByteStage
 @fn(encoding=None)
 async def compress(ctx):
     encoder = zlib.compressobj()

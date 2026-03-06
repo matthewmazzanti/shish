@@ -19,19 +19,19 @@ Runnable = Cmd | Pipeline | Fn  # Fn joins the union
 # IR: Fn wraps an async callable
 @dataclass(frozen=True)
 class Fn:
-    func: Callable[[ByteStageCtx], Awaitable[int]]
+    func: Callable[[ByteStage], Awaitable[int]]
 
 # DSL: fn() constructor, mirrors cmd()
 fn(upper)
 ```
 
-### ByteStageCtx
+### ByteStage
 
-The runtime always passes byte streams via `ByteStageCtx`:
+The runtime always passes byte streams via `ByteStage`:
 
 ```python
 @dataclass
-class ByteStageCtx:
+class ByteStage:
     stdin: ByteReadStream
     stdout: ByteWriteStream
 ```
@@ -81,7 +81,7 @@ in `SubIn(Fn(...))`, `>` wraps in `SubOut(Fn(...))`. `sub_in()`/
 `sub_out()` combinators also accept bare callables.
 
 `Fn` participates in all the same fd wiring as `Cmd` — the runtime
-allocates pipes, wraps fds in byte streams, constructs `ByteStageCtx`,
+allocates pipes, wraps fds in byte streams, constructs `ByteStage`,
 calls the function, closes streams after return.
 
 ### Text mode via `@decode`
@@ -92,24 +92,24 @@ runtime always sees the byte-level callable.
 
 ```python
 @dataclass
-class TextStageCtx:
+class TextStage:
     stdin: TextReadStream
     stdout: TextWriteStream
 
 @decode
-async def upper(ctx: TextStageCtx) -> int:
+async def upper(ctx: TextStage) -> int:
     async for line in ctx.stdin:        # str
         await ctx.stdout.write(line.upper())
     return 0
 
 @decode("latin-1")
-async def upper_latin(ctx: TextStageCtx) -> int: ...
+async def upper_latin(ctx: TextStage) -> int: ...
 ```
 
 Under the hood, `@decode` produces a wrapper that:
-1. Receives `ByteStageCtx` (byte streams) from the runtime
+1. Receives `ByteStage` (byte streams) from the runtime
 2. Wraps in `TextReadStream`/`TextWriteStream`
-3. Constructs `TextStageCtx` and calls the inner function
+3. Constructs `TextStage` and calls the inner function
 
 ### `<<` desugars to `Fn`
 
@@ -140,10 +140,10 @@ like subprocess exit codes.
 - DSL: `fn()` constructor. `|`, `<`, `>` auto-wrap bare callables.
   `sub_in()`/`sub_out()` combinators accept bare callables.
 - Runtime: `_spawn` dispatches `Fn` → run in-process with pipe-backed
-  `ByteStageCtx`. `_spawn_cmd` stays subprocess-only. New `_spawn_fn`
+  `ByteStage`. `_spawn_cmd` stays subprocess-only. New `_spawn_fn`
   handles the in-process case. Remove `WriteNode` — `Fn` subsumes it.
 - Fd wiring: same pipe allocation as subprocess — inter-stage pipes
-  wrapped in `ByteReadStream`/`ByteWriteStream` via `ByteStageCtx`.
+  wrapped in `ByteReadStream`/`ByteWriteStream` via `ByteStage`.
 - Process tree: new `FnNode` replaces `WriteNode`. Has a return code.
 
 ## Process handle: `start()`

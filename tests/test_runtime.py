@@ -9,12 +9,12 @@ import pytest
 
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
 from shish.fd import Fd
-from shish.fn_stage import ByteStageCtx
-from shish.runtime import CloseMethod, Execution, ShishError, out, run, start
+from shish.fn_stage import ByteStage
+from shish.runtime import CloseMethod, Job, ShishError, out, run, start
 from shish.streams import ByteReadStream, ByteWriteStream
 
 # =============================================================================
-# Basic Execution
+# Basic Job
 # =============================================================================
 
 
@@ -861,7 +861,7 @@ async def test_start_no_pipe_streams_none() -> None:
 
 
 # =============================================================================
-# Concurrent Execution
+# Concurrent Job
 # =============================================================================
 
 
@@ -1021,9 +1021,9 @@ async def test_working_dir_pwd_synced(tmp_path: Path) -> None:
 
 
 async def test_start_returns_execution() -> None:
-    """start() yields an Execution with a root ProcessNode."""
+    """start() yields an Job with a root ProcessNode."""
     async with start(builders.Cmd(("true",))) as execution:
-        assert isinstance(execution, Execution)
+        assert isinstance(execution, Job)
         assert execution.root is not None
         code = await execution.wait()
     assert code == 0
@@ -1065,25 +1065,25 @@ async def test_start_pipefail() -> None:
 # =============================================================================
 
 
-async def _upper(ctx: ByteStageCtx) -> int:
+async def _upper(ctx: ByteStage) -> int:
     """Read stdin, uppercase, write to stdout."""
     data = await ctx.stdin.read()
     await ctx.stdout.write(data.upper())
     return 0
 
 
-async def _generate(ctx: ByteStageCtx) -> int:
+async def _generate(ctx: ByteStage) -> int:
     """Write fixed data to stdout (ignores stdin)."""
     await ctx.stdout.write(b"generated\n")
     return 0
 
 
-async def _exit_42(ctx: ByteStageCtx) -> int:
+async def _exit_42(ctx: ByteStage) -> int:
     """Return non-zero exit code."""
     return 42
 
 
-async def _raises(ctx: ByteStageCtx) -> int:
+async def _raises(ctx: ByteStage) -> int:
     """Raise an exception."""
     raise ValueError("test error")
 
@@ -1171,7 +1171,7 @@ async def test_fn_as_sub_in() -> None:
 async def test_fn_as_sub_out() -> None:
     """Fn used as output process substitution via FdToSub."""
 
-    async def _collector(ctx: ByteStageCtx) -> int:
+    async def _collector(ctx: ByteStage) -> int:
         """Read all stdin and discard."""
         await ctx.stdin.read()
         return 0
@@ -1186,7 +1186,7 @@ async def test_fn_as_sub_out() -> None:
 async def test_fn_cancel() -> None:
     """Cancelling a running Fn task raises CancelledError."""
 
-    async def _slow(ctx: ByteStageCtx) -> int:
+    async def _slow(ctx: ByteStage) -> int:
         await asyncio.sleep(60)
         return 0
 
@@ -1200,7 +1200,7 @@ async def test_fn_cancel() -> None:
 async def test_fn_cancel_mixed_pipeline() -> None:
     """Cancelling a cmd | fn | cmd pipeline cancels all stages."""
 
-    async def _slow(ctx: ByteStageCtx) -> int:
+    async def _slow(ctx: ByteStage) -> int:
         await asyncio.sleep(60)
         return 0
 
@@ -1224,7 +1224,7 @@ async def test_fn_cancel_mixed_pipeline() -> None:
 async def test_fn_cancel_mid_read() -> None:
     """Cancelling while Fn is blocked on stdin.read() cleans up."""
 
-    async def _reader(ctx: ByteStageCtx) -> int:
+    async def _reader(ctx: ByteStage) -> int:
         await ctx.stdin.read()  # blocks until EOF or cancel
         return 0
 
@@ -1240,7 +1240,7 @@ async def test_fn_cancel_mid_read() -> None:
 async def test_fn_cancel_mid_write() -> None:
     """Cancelling while Fn is blocked on stdout.write() cleans up."""
 
-    async def _writer(ctx: ByteStageCtx) -> int:
+    async def _writer(ctx: ByteStage) -> int:
         # Write enough to fill the pipe buffer and block
         chunk = b"x" * 65536
         while True:
@@ -1264,7 +1264,7 @@ async def test_fn_cancel_mid_write() -> None:
 async def test_start_wait_returns_exit_code() -> None:
     """start() + wait() returns exit code."""
     async with start(builders.Cmd(("true",))) as execution:
-        assert isinstance(execution, Execution)
+        assert isinstance(execution, Job)
         code = await execution.wait()
     assert code == 0
     assert execution.returncode == 0
@@ -1281,7 +1281,7 @@ async def test_start_wait_failure() -> None:
 async def test_start_auto_kill_on_exit() -> None:
     """Exception exit SIGTERM→SIGKILL long-running process."""
 
-    execution: Execution[None, None] | None = None
+    execution: Job[None, None] | None = None
     with pytest.raises(RuntimeError, match="bail"):
         async with start(builders.Cmd(("sleep", "60"))) as execution:
             raise RuntimeError("bail")
@@ -1342,7 +1342,7 @@ async def test_start_pipeline_auto_kill() -> None:
             builders.Cmd(("sleep", "60")),
         )
     )
-    execution: Execution[None, None] | None = None
+    execution: Job[None, None] | None = None
     with pytest.raises(RuntimeError, match="bail"):
         async with start(pipeline) as execution:
             raise RuntimeError("bail")
@@ -1385,7 +1385,7 @@ async def test_start_feed_stdout_read_before_wait() -> None:
 
 
 # =============================================================================
-# Execution.close()
+# Job.close()
 # =============================================================================
 
 
@@ -1495,7 +1495,7 @@ async def test_close_idempotent() -> None:
 async def test_close_fn_terminate() -> None:
     """TERMINATE cancels a long-running fn() task."""
 
-    async def _slow(ctx: ByteStageCtx) -> int:
+    async def _slow(ctx: ByteStage) -> int:
         await asyncio.sleep(60)
         return 0
 
@@ -1508,7 +1508,7 @@ async def test_close_fn_terminate() -> None:
 async def test_close_fn_kill() -> None:
     """KILL cancels a long-running fn() task."""
 
-    async def _slow(ctx: ByteStageCtx) -> int:
+    async def _slow(ctx: ByteStage) -> int:
         await asyncio.sleep(60)
         return 0
 
@@ -1612,7 +1612,7 @@ async def test_start_no_stderr_pipe_stream_none() -> None:
 async def test_close_fn_pipeline() -> None:
     """TERMINATE close kills cmd and fn stages in a mixed pipeline."""
 
-    async def _slow(ctx: ByteStageCtx) -> int:
+    async def _slow(ctx: ByteStage) -> int:
         await asyncio.sleep(60)
         return 0
 

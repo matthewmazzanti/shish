@@ -27,9 +27,9 @@ src/shish/          # main package
   streams.py        # async byte/text streams for subprocess pipes
   runtime/
     __init__.py     # re-exports from api + tree
-    api.py          # Execution, StartCtx, start(), run(), out()
-    spawn.py        # SpawnCtx: fd/proc tracking, pipeline/fn spawn
-    spawn_cmd.py    # SpawnCmdCtx, FdOps: per-cmd redirect resolution
+    api.py          # Job, JobCtx, start(), run(), out()
+    spawn.py        # SpawnScope: fd/proc tracking, pipeline/fn spawn
+    spawn_cmd.py    # SpawnCmdScope, FdOps: per-cmd redirect resolution
     tree.py         # process tree nodes: CmdNode, PipelineNode, FnNode
 TODO.md             # planned features and known issues
 ```
@@ -68,9 +68,9 @@ TODO.md             # planned features and known issues
 - Per-fd redirects: FdToFile, FdFromFile, FdFromData, FdToFd, FdClose, FdFromSub, FdToSub
 - `SubIn`/`SubOut` hold process substitution commands (resolved to `/dev/fd/N` at runtime)
 - `FdOps` (`runtime/spawn_cmd.py`) simulates fd table to compute `pass_fds` for subprocess
-- Runtime (`runtime/`): spawns process trees, returns `Execution` handle
-  - `SpawnCtx` (`spawn.py`) tracks fds/procs during spawn for error cleanup
-  - `SpawnCmdCtx` (`spawn_cmd.py`) resolves per-cmd redirects and spawns
+- Runtime (`runtime/`): spawns process trees, returns `Job` handle
+  - `SpawnScope` (`spawn.py`) tracks fds/procs during spawn for error cleanup
+  - `SpawnCmdScope` (`spawn_cmd.py`) resolves per-cmd redirects and spawns
   - Process tree (`tree.py`): `CmdNode` (single cmd + subs) / `PipelineNode` (stages) / `FnNode` (in-process)
   - Pipefail: rightmost non-zero (subs excluded, matching bash)
 - Uses `asyncio.subprocess.create_subprocess_exec` with `pass_fds`

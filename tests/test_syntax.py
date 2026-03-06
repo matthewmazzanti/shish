@@ -24,7 +24,7 @@ from shish import (
     unwrap,
     write,
 )
-from shish.fn_stage import ByteStageCtx, TextStageCtx
+from shish.fn_stage import ByteStage, TextStage
 
 # =============================================================================
 # Magic cmd() builder
@@ -645,7 +645,7 @@ def test_pipeline_rmod_raises() -> None:
 # =============================================================================
 
 
-async def _noop(ctx: TextStageCtx) -> int:
+async def _noop(ctx: TextStage) -> int:
     return 0
 
 
@@ -711,7 +711,7 @@ def test_fn_call_no_args() -> None:
     """@fn() produces an Fn wrapping the function."""
 
     @fn()
-    async def noop(ctx: TextStageCtx) -> int:
+    async def noop(ctx: TextStage) -> int:
         return 0
 
     assert isinstance(noop, Fn)
@@ -720,7 +720,7 @@ def test_fn_call_no_args() -> None:
 def test_fn_encoding_none_decorator() -> None:
     """@fn(encoding=None) stores the raw byte function."""
 
-    async def raw(ctx: ByteStageCtx) -> int:
+    async def raw(ctx: ByteStage) -> int:
         return 0
 
     result = fn(raw, encoding=None)
@@ -730,7 +730,7 @@ def test_fn_encoding_none_decorator() -> None:
 def test_fn_encoding_none_direct() -> None:
     """fn(f, encoding=None) stores the raw byte function."""
 
-    async def raw(ctx: ByteStageCtx) -> int:
+    async def raw(ctx: ByteStage) -> int:
         return 0
 
     result = fn(raw, encoding=None)
@@ -740,7 +740,7 @@ def test_fn_encoding_none_direct() -> None:
 def test_fn_encoding_str_wraps() -> None:
     """@fn(encoding="latin-1") wraps — stored func differs from original."""
 
-    async def noop(ctx: TextStageCtx) -> int:
+    async def noop(ctx: TextStage) -> int:
         return 0
 
     result = fn(noop, encoding="latin-1")

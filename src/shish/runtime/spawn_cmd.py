@@ -1,6 +1,6 @@
 """Per-command redirect resolution, fd-table simulation, and spawn.
 
-SpawnCmdCtx resolves a single Cmd's redirects and arguments into
+SpawnCmdScope resolves a single Cmd's redirects and arguments into
 fd operations and sub-process spawns, then builds the preexec_fn
 and pass_fds for the main process spawn.
 
@@ -36,8 +36,8 @@ from shish.builders import (
 )
 from shish.fd import STDERR, STDIN, STDOUT, Fd
 from shish.fn_stage import (
-    ByteStageCtx,
-    TextStageCtx,
+    ByteStage,
+    TextStage,
     make_byte_wrapper,
 )
 from shish.runtime.tree import (
@@ -47,7 +47,7 @@ from shish.runtime.tree import (
 )
 
 if ty.TYPE_CHECKING:
-    from shish.runtime.spawn import SpawnCtx
+    from shish.runtime.spawn import SpawnScope
 
 SUBPROCESS_DEFAULT_FDS = frozenset({STDIN, STDOUT, STDERR})
 FD_DIR = Path("/dev/fd")
@@ -137,10 +137,10 @@ class FdOps:
         return tuple(sorted(self._live))
 
 
-# ── SpawnCmdCtx ──────────────────────────────────────────────────────
+# ── SpawnCmdScope ──────────────────────────────────────────────────────
 
 
-class SpawnCmdCtx:
+class SpawnCmdScope:
     """Resolves redirects/args and spawns a single Cmd.
 
     Accumulates fds, sub-process spawns, and fd ops while resolving a single Cmd,
@@ -152,7 +152,7 @@ class SpawnCmdCtx:
     closed after spawn for EOF propagation.
     """
 
-    ctx: SpawnCtx
+    ctx: SpawnScope
     cmd: Cmd
     std_fds: StdFds
     fdo: FdOps
@@ -160,7 +160,7 @@ class SpawnCmdCtx:
     pending: list[Awaitable[ProcessNode]]
     subs: list[ProcessNode]
 
-    def __init__(self, ctx: SpawnCtx, cmd: Cmd, std_fds: StdFds) -> None:
+    def __init__(self, ctx: SpawnScope, cmd: Cmd, std_fds: StdFds) -> None:
         self.ctx = ctx
         self.cmd = cmd
         self.std_fds = std_fds
@@ -265,15 +265,15 @@ class SpawnCmdCtx:
 
     def _feed_with_pipe(self, data: str | bytes) -> Fd:
         """Allocate pipe, schedule FnNode data write, return read end."""
-        # Both ends closed after spawn: SpawnCtx.spawn_fn dups pipe_w,
+        # Both ends closed after spawn: SpawnScope.spawn_fn dups pipe_w,
         # so the FnNode's write end survives parent cleanup.
         pipe_r, pipe_w = self._pipe()
         self.fdo.add_live(pipe_r.fd)
 
-        write_data: Callable[[ByteStageCtx], Awaitable[int]]
+        write_data: Callable[[ByteStage], Awaitable[int]]
         if isinstance(data, bytes):
 
-            async def write_byte_data(stage: ByteStageCtx) -> int:
+            async def write_byte_data(stage: ByteStage) -> int:
                 stage.stdin.close()
                 stage.stderr.close()
                 with contextlib.suppress(OSError):
@@ -283,7 +283,7 @@ class SpawnCmdCtx:
             write_data = write_byte_data
         else:
 
-            async def write_str_data(stage: TextStageCtx) -> int:
+            async def write_str_data(stage: TextStage) -> int:
                 stage.stdin.close()
                 stage.stderr.close()
                 with contextlib.suppress(OSError):

@@ -1,6 +1,6 @@
 """Pipeline stage contexts and text/byte wrapping.
 
-ByteStageCtx and TextStageCtx are the stdin/stdout pairs that Fn
+ByteStage and TextStage are the stdin/stdout pairs that Fn
 pipeline stages receive. decode() and make_byte_wrapper() handle the
 text-to-byte bridging so users can write text-mode functions that run
 in the byte-level pipeline.
@@ -27,7 +27,7 @@ from shish.streams import (
 
 
 @dc.dataclass
-class ByteStageCtx:
+class ByteStage:
     """Byte-level stdin/stdout/stderr for an Fn pipeline stage."""
 
     stdin: ByteReadStream
@@ -36,7 +36,7 @@ class ByteStageCtx:
 
 
 @dc.dataclass
-class TextStageCtx:
+class TextStage:
     """Text-level stdin/stdout/stderr for an Fn pipeline stage."""
 
     stdin: TextReadStream
@@ -48,8 +48,8 @@ class TextStageCtx:
 # Stage function type aliases
 # =============================================================================
 
-ByteFn = Callable[[ByteStageCtx], Awaitable[int]]
-TextFn = Callable[[TextStageCtx], Awaitable[int]]
+ByteFn = Callable[[ByteStage], Awaitable[int]]
+TextFn = Callable[[TextStage], Awaitable[int]]
 
 
 # =============================================================================
@@ -68,7 +68,7 @@ def decode() -> Callable[[TextFn], ByteFn]: ...
 def decode(
     func: TextFn | str | None = None,
 ) -> ByteFn | Callable[[TextFn], ByteFn]:
-    """Wrap a TextStageCtx function into a ByteStageCtx function.
+    """Wrap a TextStage function into a ByteStage function.
 
     Three forms:
         @decode          — bare decorator, uses utf-8
@@ -89,11 +89,11 @@ def decode(
 
 
 def make_byte_wrapper(func: TextFn, encoding: str) -> ByteFn:
-    """Build a ByteStageCtx wrapper that decodes/encodes around func."""
+    """Build a ByteStage wrapper that decodes/encodes around func."""
 
     @wraps(func)
-    async def wrapper(ctx: ByteStageCtx) -> int:
-        text_ctx = TextStageCtx(
+    async def wrapper(ctx: ByteStage) -> int:
+        text_ctx = TextStage(
             stdin=TextReadStream(ctx.stdin, encoding=encoding),
             stdout=TextWriteStream(ctx.stdout, encoding=encoding),
             stderr=TextWriteStream(ctx.stderr, encoding=encoding),

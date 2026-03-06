@@ -12,7 +12,7 @@ from shish.fd import STDIN, STDOUT
 
 if ty.TYPE_CHECKING:
     from shish.fn_stage import ByteFn
-    from shish.runtime import StartCtx
+    from shish.runtime import JobCtx
 
 
 class _Unset(Enum):
@@ -176,8 +176,8 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    def start(self) -> StartCtx[None, None, None]:
-        """Spawn and yield an Execution via async context manager."""
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield an Job via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
@@ -211,8 +211,8 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    def start(self) -> StartCtx[None, None, None]:
-        """Spawn and yield an Execution via async context manager."""
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield an Job via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)
@@ -238,8 +238,8 @@ class Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def start(self) -> StartCtx[None, None, None]:
-        """Spawn and yield an Execution via async context manager."""
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield an Job via async context manager."""
         from shish import runtime  # noqa: PLC0415
 
         return runtime.start(self)

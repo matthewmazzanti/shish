@@ -2,9 +2,9 @@
 
 from shish.runtime.api import (
     CloseMethod,
-    Execution,
+    Job,
+    JobCtx,
     ShishError,
-    StartCtx,
     out,
     run,
     start,
@@ -14,12 +14,12 @@ from shish.runtime.tree import CmdNode, FnNode, PipelineNode, ProcessNode
 __all__ = [
     "CloseMethod",
     "CmdNode",
-    "Execution",
     "FnNode",
+    "Job",
+    "JobCtx",
     "PipelineNode",
     "ProcessNode",
     "ShishError",
-    "StartCtx",
     "out",
     "run",
     "start",

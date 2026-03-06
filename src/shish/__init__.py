@@ -10,8 +10,8 @@ from shish.builders import (
     WriteDst,
 )
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
-from shish.fn_stage import ByteFn, ByteStageCtx, TextFn, TextStageCtx, decode
-from shish.runtime import CloseMethod, Execution, ShishError, StartCtx
+from shish.fn_stage import ByteFn, ByteStage, TextFn, TextStage, decode
+from shish.runtime import CloseMethod, Job, JobCtx, ShishError
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,
@@ -53,15 +53,16 @@ __all__ = [
     "Arg",
     "ByteFn",
     "ByteReadStream",
-    "ByteStageCtx",
+    "ByteStage",
     "ByteWriteStream",
     "CloseMethod",
     "Cmd",
     "Data",
-    "Execution",
     "Fd",
     "Flag",
     "Fn",
+    "Job",
+    "JobCtx",
     "PathLike",
     "Pipe",
     "Pipeline",
@@ -69,13 +70,12 @@ __all__ = [
     "Runnable",
     "Sh",
     "ShishError",
-    "StartCtx",
     "Sub",
     "SubIn",
     "SubOut",
     "TextFn",
     "TextReadStream",
-    "TextStageCtx",
+    "TextStage",
     "TextWriteStream",
     "WriteDst",
     "close",

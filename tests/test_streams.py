@@ -5,7 +5,7 @@ import os
 import pytest
 
 from shish.fd import Fd
-from shish.fn_stage import ByteStageCtx, TextStageCtx, decode
+from shish.fn_stage import ByteStage, TextStage, decode
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,
@@ -420,18 +420,18 @@ async def test_text_read_eof_empty() -> None:
 
 
 # =============================================================================
-# ByteStageCtx and TextStageCtx
+# ByteStage and TextStage
 # =============================================================================
 
 
 async def test_byte_stage_ctx_fields() -> None:
-    """ByteStageCtx has stdin (ByteReadStream) and stdout (ByteWriteStream) fields."""
+    """ByteStage has stdin (ByteReadStream) and stdout (ByteWriteStream) fields."""
     read_fd, write_fd = os.pipe()
     stderr_fd = os.open(os.devnull, os.O_WRONLY)
     reader = ByteReadStream(Fd(read_fd))
     writer = ByteWriteStream(Fd(write_fd))
     errwriter = ByteWriteStream(Fd(stderr_fd))
-    ctx = ByteStageCtx(stdin=reader, stdout=writer, stderr=errwriter)
+    ctx = ByteStage(stdin=reader, stdout=writer, stderr=errwriter)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
     assert ctx.stderr is errwriter
@@ -441,7 +441,7 @@ async def test_byte_stage_ctx_fields() -> None:
 
 
 async def test_text_stage_ctx_fields() -> None:
-    """TextStageCtx has stdin (TextReadStream) and stdout (TextWriteStream) fields."""
+    """TextStage has stdin (TextReadStream) and stdout (TextWriteStream) fields."""
     read_fd, write_fd = os.pipe()
     stderr_fd = os.open(os.devnull, os.O_WRONLY)
     byte_reader = ByteReadStream(Fd(read_fd))
@@ -450,7 +450,7 @@ async def test_text_stage_ctx_fields() -> None:
     reader = TextReadStream(byte_reader)
     writer = TextWriteStream(byte_writer)
     errwriter = TextWriteStream(byte_errwriter)
-    ctx = TextStageCtx(stdin=reader, stdout=writer, stderr=errwriter)
+    ctx = TextStage(stdin=reader, stdout=writer, stderr=errwriter)
     assert ctx.stdin is reader
     assert ctx.stdout is writer
     assert ctx.stderr is errwriter
@@ -463,7 +463,7 @@ async def test_decode_bare_decorator() -> None:
     """@decode (no parens) wraps a text function into a byte function."""
 
     @decode
-    async def upper(ctx: TextStageCtx) -> int:
+    async def upper(ctx: TextStage) -> int:
         data = await ctx.stdin.read()
         await ctx.stdout.write(data.upper())
         return 0
@@ -477,7 +477,7 @@ async def test_decode_bare_decorator() -> None:
     stdout_read_fd, stdout_write_fd = os.pipe()
 
     stderr_fd = os.open(os.devnull, os.O_WRONLY)
-    byte_ctx = ByteStageCtx(
+    byte_ctx = ByteStage(
         stdin=ByteReadStream(Fd(stdin_read_fd)),
         stdout=ByteWriteStream(Fd(stdout_write_fd)),
         stderr=ByteWriteStream(Fd(stderr_fd)),
@@ -498,7 +498,7 @@ async def test_decode_with_parens() -> None:
     """@decode() with no args works same as bare @decode."""
 
     @decode()
-    async def upper(ctx: TextStageCtx) -> int:
+    async def upper(ctx: TextStage) -> int:
         data = await ctx.stdin.read()
         await ctx.stdout.write(data.upper())
         return 0
@@ -510,7 +510,7 @@ async def test_decode_with_parens() -> None:
     stdout_read_fd, stdout_write_fd = os.pipe()
 
     stderr_fd = os.open(os.devnull, os.O_WRONLY)
-    byte_ctx = ByteStageCtx(
+    byte_ctx = ByteStage(
         stdin=ByteReadStream(Fd(stdin_read_fd)),
         stdout=ByteWriteStream(Fd(stdout_write_fd)),
         stderr=ByteWriteStream(Fd(stderr_fd)),
@@ -531,7 +531,7 @@ async def test_decode_with_encoding() -> None:
     """@decode("latin-1") uses latin-1 encoding for decode/encode."""
 
     @decode("latin-1")
-    async def passthrough(ctx: TextStageCtx) -> int:
+    async def passthrough(ctx: TextStage) -> int:
         data = await ctx.stdin.read()
         await ctx.stdout.write(data)
         return 0
@@ -544,7 +544,7 @@ async def test_decode_with_encoding() -> None:
     stdout_read_fd, stdout_write_fd = os.pipe()
 
     stderr_fd = os.open(os.devnull, os.O_WRONLY)
-    byte_ctx = ByteStageCtx(
+    byte_ctx = ByteStage(
         stdin=ByteReadStream(Fd(stdin_read_fd)),
         stdout=ByteWriteStream(Fd(stdout_write_fd)),
         stderr=ByteWriteStream(Fd(stderr_fd)),
@@ -569,7 +569,7 @@ async def test_decode_does_not_close_byte_streams() -> None:
     """
 
     @decode
-    async def noop(ctx: TextStageCtx) -> int:
+    async def noop(ctx: TextStage) -> int:
         _ = await ctx.stdin.read()
         await ctx.stdout.write("")
         return 0
@@ -583,9 +583,7 @@ async def test_decode_does_not_close_byte_streams() -> None:
     stdin_stream = ByteReadStream(Fd(stdin_read_fd))
     stdout_stream = ByteWriteStream(Fd(stdout_write_fd))
     stderr_stream = ByteWriteStream(Fd(stderr_fd))
-    byte_ctx = ByteStageCtx(
-        stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream
-    )
+    byte_ctx = ByteStage(stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream)
 
     await noop(byte_ctx)
 

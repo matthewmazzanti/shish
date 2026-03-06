@@ -8,7 +8,7 @@ import asyncio
 import sys
 
 from shish.builders import Fn, cmd, pipeline
-from shish.fn_stage import ByteStageCtx
+from shish.fn_stage import ByteStage
 from shish.runtime import start
 from tests.core import process_fds
 
@@ -90,7 +90,7 @@ async def test_fn_no_pipe() -> None:
     baseline = process_fds()
     done = asyncio.Event()
 
-    async def wait_fn(ctx: ByteStageCtx) -> int:
+    async def wait_fn(ctx: ByteStage) -> int:
         await done.wait()
         return 0
 
@@ -109,7 +109,7 @@ async def test_two_fns_no_pipe() -> None:
     baseline = process_fds()
     done = asyncio.Event()
 
-    async def wait_fn(ctx: ByteStageCtx) -> int:
+    async def wait_fn(ctx: ByteStage) -> int:
         await done.wait()
         return 0
 
@@ -131,7 +131,7 @@ async def test_fn_pipeline_no_pipe() -> None:
     baseline = process_fds()
     done = asyncio.Event()
 
-    async def wait_fn(ctx: ByteStageCtx) -> int:
+    async def wait_fn(ctx: ByteStage) -> int:
         await done.wait()
         return 0
 

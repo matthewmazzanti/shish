@@ -3,7 +3,7 @@
 A ProcessNode tree is only constructed once all processes have been
 forked and all fds allocated. It tracks every open resource (procs,
 tasks, fds) and owns their lifecycle: wait, terminate, kill, close_fds.
-SpawnCtx handles the error path when spawn fails partway.
+SpawnScope handles the error path when spawn fails partway.
 """
 
 from __future__ import annotations

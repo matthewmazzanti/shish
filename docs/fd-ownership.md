@@ -22,7 +22,7 @@ fds: wrapping STDIN/STDOUT/STDERR or caller-owned raw fds.
 
 ## Dup Sites
 
-### `StartCtx.__aenter__`
+### `JobCtx.__aenter__`
 - **PIPE**: `ctx.pipe()` → two owning Fds. Spawn-side closed after
   fork (essential for stdout/stderr EOF propagation).
 - **Inherit (None)**: `Fd(STDIN, owning=False)` — no dup, close is
@@ -32,7 +32,7 @@ fds: wrapping STDIN/STDOUT/STDERR or caller-owned raw fds.
 Close-after-spawn stays uniform: `spawn_{stdin,stdout,stderr}.close()`
 works for all cases — owning Fds close the os fd, non-owning are no-ops.
 
-### `SpawnCtx.spawn_fn`
+### `SpawnScope.spawn_fn`
 - `self.dup(std_fds.stdin.fd)` → owning Fd for FnNode
 - `self.dup(std_fds.stdout.fd)` → owning Fd for FnNode
 - `self.dup(std_fds.stderr.fd)` → owning Fd for FnNode
@@ -40,8 +40,8 @@ works for all cases — owning Fds close the os fd, non-owning are no-ops.
 Essential — FnNode runs in-process and needs copies that survive
 the parent's close-after-spawn.
 
-### `SpawnCmdCtx` (exec_ path)
+### `SpawnCmdScope` (exec_ path)
 No dups. Fork is the implicit dup.
 
-### `SpawnCmdCtx._spawn_with_pipe` / `_feed_with_pipe`
+### `SpawnCmdScope._spawn_with_pipe` / `_feed_with_pipe`
 No dups. Passes parent's `std_fds` members directly to sub StdFds.

@@ -16,7 +16,7 @@ from shish.fd import STDIN, STDOUT
 from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
 if ty.TYPE_CHECKING:
-    from shish.runtime import StartCtx
+    from shish.runtime import JobCtx
 
 Flag = builders.PathLike | bool
 
@@ -320,8 +320,8 @@ def sub_out(sink: Runnable) -> builders.SubOut:
     return builders.SubOut(unwrap(sink))
 
 
-def start(cmd: Runnable) -> StartCtx[None, None, None]:
-    """Spawn a command or pipeline and yield an Execution via async context manager."""
+def start(cmd: Runnable) -> JobCtx[None, None, None]:
+    """Spawn a command or pipeline and yield a Job via async context manager."""
     return unwrap(cmd).start()
 
 

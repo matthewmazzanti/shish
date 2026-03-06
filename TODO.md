@@ -21,8 +21,6 @@
 
 ## Quality
 
-- Rename `ByteStageCtx`/`TextStageCtx`/`SpawnCtx`/`SpawnCmdCtx`/`StartCtx` to
-  something more descriptive
 - Examples (cookbook-style usage patterns)
 - User docs — GitHub Pages? Read the Docs? Loose markdown?
 - Defaults vs explicit configuration — where's the line?
