@@ -8,10 +8,10 @@ in the byte-level pipeline.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+import dataclasses as dc
+import typing as ty
+from collections import abc
 from functools import wraps
-from typing import overload
 
 from shish._defaults import DEFAULT_ENCODING
 from shish.streams import (
@@ -26,7 +26,7 @@ from shish.streams import (
 # =============================================================================
 
 
-@dataclass
+@dc.dataclass
 class ByteStageCtx:
     """Byte-level stdin/stdout/stderr for an Fn pipeline stage."""
 
@@ -35,7 +35,7 @@ class ByteStageCtx:
     stderr: ByteWriteStream
 
 
-@dataclass
+@dc.dataclass
 class TextStageCtx:
     """Text-level stdin/stdout/stderr for an Fn pipeline stage."""
 
@@ -48,8 +48,8 @@ class TextStageCtx:
 # Stage function type aliases
 # =============================================================================
 
-ByteFn = Callable[[ByteStageCtx], Awaitable[int]]
-TextFn = Callable[[TextStageCtx], Awaitable[int]]
+ByteFn = abc.Callable[[ByteStageCtx], abc.Awaitable[int]]
+TextFn = abc.Callable[[TextStageCtx], abc.Awaitable[int]]
 
 
 # =============================================================================
@@ -57,17 +57,17 @@ TextFn = Callable[[TextStageCtx], Awaitable[int]]
 # =============================================================================
 
 
-@overload
+@ty.overload
 def decode(func: TextFn, /) -> ByteFn: ...
-@overload
-def decode(func: str, /) -> Callable[[TextFn], ByteFn]: ...
-@overload
-def decode() -> Callable[[TextFn], ByteFn]: ...
+@ty.overload
+def decode(func: str, /) -> abc.Callable[[TextFn], ByteFn]: ...
+@ty.overload
+def decode() -> abc.Callable[[TextFn], ByteFn]: ...
 
 
 def decode(
     func: TextFn | str | None = None,
-) -> ByteFn | Callable[[TextFn], ByteFn]:
+) -> ByteFn | abc.Callable[[TextFn], ByteFn]:
     """Wrap a TextStageCtx function into a ByteStageCtx function.
 
     Three forms:

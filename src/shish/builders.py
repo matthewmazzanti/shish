@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import dataclasses as dc
+import typing as ty
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from shish._defaults import DEFAULT_ENCODING
 from shish.fd import STDIN, STDOUT
 
-if TYPE_CHECKING:
+if ty.TYPE_CHECKING:
     from shish.fn_stage import ByteFn
     from shish.runtime import StartCtx
 
@@ -25,44 +25,44 @@ PathLike = Path | str
 Data = str | bytes
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdToFile:
     fd: int
     path: Path
     append: bool = False
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdFromFile:
     fd: int
     path: Path
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdFromData:
     fd: int
     data: Data
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdToFd:
     src: int
     dst: int
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdClose:
     fd: int
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class SubIn:
     """Input process substitution: <(cmd)."""
 
     cmd: Runnable
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class SubOut:
     """Output process substitution: >(cmd)."""
 
@@ -75,13 +75,13 @@ ReadSrc = PathLike | SubIn
 WriteDst = PathLike | SubOut
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdFromSub:
     fd: int
     sub: SubIn
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class FdToSub:
     fd: int
     sub: SubOut
@@ -90,7 +90,7 @@ class FdToSub:
 Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | FdToSub
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class Cmd:
     args: tuple[str | Sub, ...]
     redirects: tuple[Redirect, ...] = ()
@@ -195,7 +195,7 @@ class Cmd:
         return await runtime.out(self, encoding)
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class Fn:
     func: ByteFn
 
@@ -230,7 +230,7 @@ class Fn:
         return await runtime.out(self, encoding)
 
 
-@dataclass(frozen=True)
+@dc.dataclass(frozen=True)
 class Pipeline:
     stages: tuple[Cmd | Fn, ...]
 

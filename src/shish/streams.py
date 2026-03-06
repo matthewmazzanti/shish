@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import os
-from collections.abc import AsyncIterator, Buffer, Iterable
+from collections import abc
 
 from shish._defaults import DEFAULT_ENCODING
 from shish.fd import Fd
@@ -141,7 +141,7 @@ class ByteReadStream:
     async def __aexit__(self, *_args: object) -> None:
         self.close()
 
-    async def __aiter__(self) -> AsyncIterator[bytes]:
+    async def __aiter__(self) -> abc.AsyncIterator[bytes]:
         """Yield lines with trailing newline. Stops at EOF."""
         while True:
             line = await self.readline()
@@ -167,7 +167,7 @@ class ByteWriteStream:
         self._loop = asyncio.get_running_loop()
         os.set_blocking(owned_fd.fd, False)
 
-    async def write(self, data: Buffer) -> int:
+    async def write(self, data: abc.Buffer) -> int:
         """Write all bytes. Awaits when pipe buffer is full. Returns len(data)."""
         if not data:
             return 0
@@ -180,12 +180,12 @@ class ByteWriteStream:
                 await self._writable()
         return written
 
-    async def writelines(self, data: Iterable[Buffer]) -> None:
+    async def writelines(self, data: abc.Iterable[abc.Buffer]) -> None:
         """Write an iterable of byte chunks."""
         for chunk in data:
             await self.write(chunk)
 
-    async def write_eof(self, data: Buffer = b"") -> None:
+    async def write_eof(self, data: abc.Buffer = b"") -> None:
         """Write final data and close. Signals EOF to the reader."""
         if data:
             await self.write(data)
@@ -299,7 +299,7 @@ class TextReadStream:
     async def __aexit__(self, *_args: object) -> None:
         self.close()
 
-    async def __aiter__(self) -> AsyncIterator[str]:
+    async def __aiter__(self) -> abc.AsyncIterator[str]:
         """Yield decoded lines with trailing newline. Stops at EOF."""
         while True:
             line = await self.readline()
@@ -335,7 +335,7 @@ class TextWriteStream:
             await self._stream.write(chunk.encode(self._encoding))
         return len(data)
 
-    async def writelines(self, lines: Iterable[str]) -> None:
+    async def writelines(self, lines: abc.Iterable[str]) -> None:
         """Write an iterable of strings."""
         for line in lines:
             await self.write(line)

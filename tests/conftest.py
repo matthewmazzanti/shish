@@ -1,6 +1,6 @@
 """Shared fixtures for shish tests."""
 
-from collections.abc import Generator
+from collections import abc
 from pathlib import Path
 
 import pluggy
@@ -18,7 +18,7 @@ def list_fds_bin() -> str:
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(
     item: pytest.Item,
-) -> Generator[None, pluggy.Result[None]]:
+) -> abc.Generator[None, pluggy.Result[None]]:
     """Detect fd leaks in every test.
 
     Snapshots /dev/fd before and after the call phase. Any new fds that

@@ -21,7 +21,7 @@ import os
 import sys
 import traceback
 from asyncio.subprocess import Process, create_subprocess_exec
-from collections.abc import Awaitable, Callable
+from collections import abc
 from pathlib import Path
 
 from shish.builders import (
@@ -71,14 +71,14 @@ class SpawnCtx:
         process tree is built — the tree's own cleanup methods can't
         be used yet. Shielded from cancellation.
         """
-        reap: list[Awaitable[int]] = []
+        reap: list[abc.Awaitable[int]] = []
         for proc in self.procs:
             if proc.returncode is None:
                 proc.kill()
                 reap.append(proc.wait())
         for task in self.fn_tasks:
             task.cancel()
-        pending: list[Awaitable[object]] = list(reap)
+        pending: list[abc.Awaitable[object]] = list(reap)
         pending.extend(self.fn_tasks)
         if pending:
             await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
@@ -92,7 +92,7 @@ class SpawnCtx:
         stdout: int | None = None,
         stderr: int | None = None,
         pass_fds: tuple[int, ...] = (),
-        preexec_fn: Callable[[], None] | None = None,
+        preexec_fn: abc.Callable[[], None] | None = None,
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
     ) -> Process:
@@ -136,7 +136,7 @@ class SpawnCtx:
         self.fds.append(duped)
         return duped
 
-    def spawn(self, cmd: Runnable, std_fds: StdFds) -> Awaitable[ProcessNode]:
+    def spawn(self, cmd: Runnable, std_fds: StdFds) -> abc.Awaitable[ProcessNode]:
         """Dispatch a Runnable to the appropriate spawn method.
 
         std_fds carries the outer pipe fds from a parent pipeline.
@@ -237,7 +237,7 @@ class SpawnCtx:
         ]
 
         # Spawn all stages concurrently — both Cmd and Fn are async
-        spawn_tasks: list[Awaitable[CmdNode | FnNode]] = []
+        spawn_tasks: list[abc.Awaitable[CmdNode | FnNode]] = []
         for stage, fds in zip(stages, stage_fds, strict=True):
             if isinstance(stage, Fn):
                 spawn_tasks.append(self.spawn_fn(stage, fds))

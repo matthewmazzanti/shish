@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses as dc
 import os
-from dataclasses import dataclass
 from enum import Enum, auto
 
 
@@ -17,7 +17,7 @@ STDOUT: int = 1
 STDERR: int = 2
 
 
-@dataclass
+@dc.dataclass
 class Fd:
     """Tracked file descriptor with idempotent close.
 

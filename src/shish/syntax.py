@@ -7,15 +7,15 @@ are module-level combinator functions that unwrap, delegate, and re-wrap.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Mapping
-from typing import TYPE_CHECKING, Never, cast, overload
+import typing as ty
+from collections import abc
 
 import shish.builders as builders
 from shish._defaults import DEFAULT_ENCODING
 from shish.fd import STDIN, STDOUT
 from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
-if TYPE_CHECKING:
+if ty.TYPE_CHECKING:
     from shish.runtime import StartCtx
 
 Flag = builders.PathLike | bool
@@ -88,16 +88,16 @@ class Cmd:
         """cmd @ "/tmp" -> set working directory."""
         return cwd(self, path)
 
-    def __rmod__(self, env_vars: Mapping[str, str | None]) -> Cmd:
+    def __rmod__(self, env_vars: abc.Mapping[str, str | None]) -> Cmd:
         """{"FOO": "bar"} % cmd -> set env vars."""
         return env(self, **env_vars)
 
-    def __bool__(self) -> Never:
+    def __bool__(self) -> ty.Never:
         raise TypeError(
             "Cmd cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> abc.Generator[object, None, int]:
         return self._shish_ir.run().__await__()
 
 
@@ -115,44 +115,44 @@ class Pipeline:
         """cmd | pipeline -> Pipeline."""
         return pipe(other, self)
 
-    def __gt__(self, target: object) -> Never:
+    def __gt__(self, target: object) -> ty.Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
             "Pipeline does not support >. You probably wanted: cmd1 | (cmd2 > target)"
         )
 
-    def __rshift__(self, target: object) -> Never:
+    def __rshift__(self, target: object) -> ty.Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
             "Pipeline does not support >>. You probably wanted: cmd1 | (cmd2 >> target)"
         )
 
-    def __lt__(self, target: object) -> Never:
+    def __lt__(self, target: object) -> ty.Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
             "Pipeline does not support <. You probably wanted: (cmd1 < source) | cmd2"
         )
 
-    def __lshift__(self, data: object) -> Never:
+    def __lshift__(self, data: object) -> ty.Never:
         """Redirect operators are not supported on Pipeline."""
         raise TypeError(
             "Pipeline does not support <<. You probably wanted: (cmd1 << data) | cmd2"
         )
 
-    def __matmul__(self, path: object) -> Never:
+    def __matmul__(self, path: object) -> ty.Never:
         """@ operator is not supported on Pipeline."""
         raise TypeError("Pipeline does not support @. Apply cwd to individual cmds.")
 
-    def __rmod__(self, env_vars: object) -> Never:
+    def __rmod__(self, env_vars: object) -> ty.Never:
         """% operator is not supported on Pipeline."""
         raise TypeError("Pipeline does not support %. Apply env to individual cmds.")
 
-    def __bool__(self) -> Never:
+    def __bool__(self) -> ty.Never:
         raise TypeError(
             "Pipeline cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> abc.Generator[object, None, int]:
         return self._shish_ir.run().__await__()
 
 
@@ -166,10 +166,10 @@ class Fn:
         """fn | cmd -> Pipeline."""
         return pipe(self, other)
 
-    def __bool__(self) -> Never:
+    def __bool__(self) -> ty.Never:
         raise TypeError("Fn cannot be used as bool")
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> abc.Generator[object, None, int]:
         return self._shish_ir.run().__await__()
 
 
@@ -180,11 +180,11 @@ Runnable = Cmd | Pipeline | Fn
 # Combinators
 
 
-@overload
+@ty.overload
 def unwrap(cmd: Cmd) -> builders.Cmd: ...
-@overload
+@ty.overload
 def unwrap(cmd: Pipeline) -> builders.Pipeline: ...
-@overload
+@ty.overload
 def unwrap(cmd: Fn) -> builders.Fn: ...
 
 
@@ -193,11 +193,11 @@ def unwrap(cmd: Cmd | Pipeline | Fn) -> builders.Cmd | builders.Pipeline | build
     return cmd._shish_ir  # pyright: ignore[reportPrivateUsage]
 
 
-@overload
+@ty.overload
 def wrap(inner: builders.Cmd) -> Cmd: ...
-@overload
+@ty.overload
 def wrap(inner: builders.Pipeline) -> Pipeline: ...
-@overload
+@ty.overload
 def wrap(inner: builders.Fn) -> Fn: ...
 
 
@@ -217,23 +217,23 @@ def cmd(*args: builders.Arg, **kwargs: Flag) -> Cmd:
     return Cmd(builders.cmd())(*args, **kwargs)
 
 
-@overload
+@ty.overload
 def fn(func: TextFn, /) -> Fn: ...
-@overload
+@ty.overload
 def fn(func: TextFn, /, *, encoding: str) -> Fn: ...
-@overload
+@ty.overload
 def fn(func: ByteFn, /, *, encoding: None) -> Fn: ...
-@overload
-def fn(*, encoding: None) -> Callable[[ByteFn], Fn]: ...
-@overload
-def fn(*, encoding: str = ...) -> Callable[[TextFn], Fn]: ...
+@ty.overload
+def fn(*, encoding: None) -> abc.Callable[[ByteFn], Fn]: ...
+@ty.overload
+def fn(*, encoding: str = ...) -> abc.Callable[[TextFn], Fn]: ...
 
 
 def fn(
     func: TextFn | ByteFn | None = None,
     *,
     encoding: str | None = DEFAULT_ENCODING,
-) -> Fn | Callable[[ByteFn], Fn] | Callable[[TextFn], Fn]:
+) -> Fn | abc.Callable[[ByteFn], Fn] | abc.Callable[[TextFn], Fn]:
     """Create an Fn from an async callable.
 
     Forms:
@@ -262,11 +262,11 @@ def fn(
         case func_, None:  # fn(f, encoding=None)
             # cast: overloads guarantee ByteFn here, but pyright
             # can't narrow the func/encoding correlation
-            return Fn(builders.Fn(cast("ByteFn", func_)))
+            return Fn(builders.Fn(ty.cast("ByteFn", func_)))
 
         case func_, enc:  # @fn or fn(f) or fn(f, encoding="...")
             # cast: same — overloads guarantee TextFn here
-            return Fn(builders.Fn(make_byte_wrapper(cast("TextFn", func_), enc)))
+            return Fn(builders.Fn(make_byte_wrapper(ty.cast("TextFn", func_), enc)))
 
 
 def pipe(*cmds: Runnable) -> Pipeline:

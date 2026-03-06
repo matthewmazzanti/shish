@@ -7,10 +7,10 @@ process trees built from IR commands.
 from __future__ import annotations
 
 import asyncio
+import dataclasses as dc
 import enum
 import subprocess
-from dataclasses import dataclass, field
-from typing import Any, cast, overload
+import typing as ty
 
 from shish._defaults import DEFAULT_ENCODING
 from shish.builders import Runnable
@@ -40,7 +40,7 @@ class CloseMethod(enum.IntEnum):
     KILL = 2
 
 
-@dataclass
+@dc.dataclass
 class Execution[
     StdinT: (ByteWriteStream, TextWriteStream, None) = None,
     StdoutT: (ByteReadStream, TextReadStream, None) = None,
@@ -63,7 +63,7 @@ class Execution[
     stdin: StdinT
     stdout: StdoutT
     stderr: StderrT
-    returncode: int | None = field(default=None, init=False)
+    returncode: int | None = dc.field(default=None, init=False)
 
     async def wait(self) -> int:
         """Wait for all processes and return the exit code.
@@ -182,7 +182,7 @@ class StartCtx[
     _stdout_encoding: str | None
     _stderr_encoding: str | None
     _cleanup_timeout: float
-    _execution: Execution[Any, Any, Any] | None
+    _execution: Execution[ty.Any, ty.Any, ty.Any] | None
 
     def __init__(
         self,
@@ -206,20 +206,20 @@ class StartCtx[
         self._cleanup_timeout = _cleanup_timeout
         self._execution = None
 
-    @overload
+    @ty.overload
     def stdin(
         self, arg: Pipe, encoding: None
     ) -> StartCtx[ByteWriteStream, StdoutT, StderrT]: ...
-    @overload
+    @ty.overload
     def stdin(
         self, arg: Pipe, encoding: str = ...
     ) -> StartCtx[TextWriteStream, StdoutT, StderrT]: ...
-    @overload
+    @ty.overload
     def stdin(self, arg: int | None) -> StartCtx[None, StdoutT, StderrT]: ...
 
     def stdin(
         self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
-    ) -> StartCtx[Any, Any, Any]:
+    ) -> StartCtx[ty.Any, ty.Any, ty.Any]:
         """Set stdin fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
         return StartCtx(
             self._cmd,
@@ -232,20 +232,20 @@ class StartCtx[
             _cleanup_timeout=self._cleanup_timeout,
         )
 
-    @overload
+    @ty.overload
     def stdout(
         self, arg: Pipe, encoding: None
     ) -> StartCtx[StdinT, ByteReadStream, StderrT]: ...
-    @overload
+    @ty.overload
     def stdout(
         self, arg: Pipe, encoding: str = ...
     ) -> StartCtx[StdinT, TextReadStream, StderrT]: ...
-    @overload
+    @ty.overload
     def stdout(self, arg: int | None) -> StartCtx[StdinT, None, StderrT]: ...
 
     def stdout(
         self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
-    ) -> StartCtx[Any, Any, Any]:
+    ) -> StartCtx[ty.Any, ty.Any, ty.Any]:
         """Set stdout fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
         return StartCtx(
             self._cmd,
@@ -258,20 +258,20 @@ class StartCtx[
             _stderr_encoding=self._stderr_encoding,
         )
 
-    @overload
+    @ty.overload
     def stderr(
         self, arg: Pipe, encoding: None
     ) -> StartCtx[StdinT, StdoutT, ByteReadStream]: ...
-    @overload
+    @ty.overload
     def stderr(
         self, arg: Pipe, encoding: str = ...
     ) -> StartCtx[StdinT, StdoutT, TextReadStream]: ...
-    @overload
+    @ty.overload
     def stderr(self, arg: int | None) -> StartCtx[StdinT, StdoutT, None]: ...
 
     def stderr(
         self, arg: int | Pipe | None, encoding: str | None = DEFAULT_ENCODING
-    ) -> StartCtx[Any, Any, Any]:
+    ) -> StartCtx[ty.Any, ty.Any, ty.Any]:
         """Set stderr fd: PIPE for auto-pipe, int for raw fd, None to inherit."""
         return StartCtx(
             self._cmd,
@@ -360,9 +360,9 @@ class StartCtx[
 
         self._execution = Execution(
             root=root,
-            stdin=cast("StdinT", self._wrap_stdin(stream_stdin)),
-            stdout=cast("StdoutT", self._wrap_stdout(stream_stdout)),
-            stderr=cast("StderrT", self._wrap_stderr(stream_stderr)),
+            stdin=ty.cast("StdinT", self._wrap_stdin(stream_stdin)),
+            stdout=ty.cast("StdoutT", self._wrap_stdout(stream_stdout)),
+            stderr=ty.cast("StderrT", self._wrap_stderr(stream_stderr)),
         )
         return self._execution
 
@@ -403,9 +403,9 @@ async def run(cmd: Runnable) -> int:
         return await execution.wait()
 
 
-@overload
+@ty.overload
 async def out(cmd: Runnable, encoding: None) -> bytes: ...
-@overload
+@ty.overload
 async def out(cmd: Runnable, encoding: str = DEFAULT_ENCODING) -> str: ...
 
 

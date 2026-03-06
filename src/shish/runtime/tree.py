@@ -8,18 +8,18 @@ SpawnCtx handles the error path when spawn fails partway.
 
 from __future__ import annotations
 
-import abc
 import asyncio
 import contextlib
+import dataclasses as dc
 import signal as signal_mod
+from abc import ABC, abstractmethod
 from asyncio.subprocess import Process
-from collections.abc import Awaitable, Iterator
-from dataclasses import dataclass, field
+from collections import abc
 
 from shish.fd import Fd
 
 
-@dataclass
+@dc.dataclass
 class StdFds:
     """Stdin/stdout/stderr fds for a spawn subtree.
 
@@ -34,7 +34,7 @@ class StdFds:
     stderr: Fd
 
 
-class ProcessNodeBase(abc.ABC):
+class ProcessNodeBase(ABC):
     """Base class for process tree nodes.
 
     Provides wait() from awaitables() + returncode().
@@ -42,19 +42,19 @@ class ProcessNodeBase(abc.ABC):
     kill(), and close_fds().
     """
 
-    @abc.abstractmethod
+    @abstractmethod
     def returncode(self) -> int | None: ...
 
-    @abc.abstractmethod
-    def awaitables(self) -> Iterator[Awaitable[int]]: ...
+    @abstractmethod
+    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]: ...
 
-    @abc.abstractmethod
+    @abstractmethod
     def terminate(self) -> None: ...
 
-    @abc.abstractmethod
+    @abstractmethod
     def kill(self) -> None: ...
 
-    @abc.abstractmethod
+    @abstractmethod
     def close_fds(self) -> None: ...
 
     async def wait(self) -> int:
@@ -65,7 +65,7 @@ class ProcessNodeBase(abc.ABC):
         return code
 
 
-@dataclass
+@dc.dataclass
 class CmdNode(ProcessNodeBase):
     """Process tree node for a single spawned command.
 
@@ -77,7 +77,7 @@ class CmdNode(ProcessNodeBase):
     """
 
     proc: Process
-    subs: list[ProcessNode] = field(default_factory=lambda: list[ProcessNode]())
+    subs: list[ProcessNode] = dc.field(default_factory=lambda: list[ProcessNode]())
 
     def returncode(self) -> int | None:
         """Normalized returncode: 128 + signal for killed processes, None if running."""
@@ -104,14 +104,14 @@ class CmdNode(ProcessNodeBase):
         for sub in self.subs:
             sub.close_fds()
 
-    def awaitables(self) -> Iterator[Awaitable[int]]:
+    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]:
         """Yield awaitables for this proc and subs."""
         yield self.proc.wait()
         for sub in self.subs:
             yield from sub.awaitables()
 
 
-@dataclass
+@dc.dataclass
 class PipelineNode(ProcessNodeBase):
     """Process tree node for a pipeline (cmd1 | cmd2 | ...).
 
@@ -148,13 +148,13 @@ class PipelineNode(ProcessNodeBase):
         for stage in self.stages:
             stage.close_fds()
 
-    def awaitables(self) -> Iterator[Awaitable[int]]:
+    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]:
         """Yield awaitables across all stages."""
         for stage in self.stages:
             yield from stage.awaitables()
 
 
-@dataclass
+@dc.dataclass
 class FnNode(ProcessNodeBase):
     """Process tree node for an in-process Python function.
 
@@ -164,9 +164,9 @@ class FnNode(ProcessNodeBase):
     """
 
     task: asyncio.Task[int]
-    _stdin_fd: Fd = field(repr=False)
-    _stdout_fd: Fd = field(repr=False)
-    _stderr_fd: Fd = field(repr=False)
+    _stdin_fd: Fd = dc.field(repr=False)
+    _stdout_fd: Fd = dc.field(repr=False)
+    _stderr_fd: Fd = dc.field(repr=False)
 
     def returncode(self) -> int | None:
         """Task return code, None if running."""
@@ -190,7 +190,7 @@ class FnNode(ProcessNodeBase):
         self._stdout_fd.close()
         self._stderr_fd.close()
 
-    def awaitables(self) -> Iterator[Awaitable[int]]:
+    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]:
         """Yield awaitable for this task."""
         yield self.task
 
