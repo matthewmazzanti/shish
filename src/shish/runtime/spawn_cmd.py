@@ -16,7 +16,7 @@ import contextlib
 import dataclasses as dc
 import os
 import typing as ty
-from collections import abc
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from shish._defaults import DEFAULT_ENCODING
@@ -157,7 +157,7 @@ class SpawnCmdCtx:
     std_fds: StdFds
     fdo: FdOps
     fds: list[Fd]
-    pending: list[abc.Awaitable[ProcessNode]]
+    pending: list[Awaitable[ProcessNode]]
     subs: list[ProcessNode]
 
     def __init__(self, ctx: SpawnCtx, cmd: Cmd, std_fds: StdFds) -> None:
@@ -270,7 +270,7 @@ class SpawnCmdCtx:
         pipe_r, pipe_w = self._pipe()
         self.fdo.add_live(pipe_r.fd)
 
-        write_data: abc.Callable[[ByteStageCtx], abc.Awaitable[int]]
+        write_data: Callable[[ByteStageCtx], Awaitable[int]]
         if isinstance(data, bytes):
 
             async def write_byte_data(stage: ByteStageCtx) -> int:
@@ -361,7 +361,7 @@ class SpawnCmdCtx:
 
         return proc_env
 
-    def _build_preexec(self) -> abc.Callable[[], None] | None:
+    def _build_preexec(self) -> Callable[[], None] | None:
         """Build a preexec_fn closure that executes all fd ops in the child.
 
         All operations (open, dup2, close) run in the child between fork()

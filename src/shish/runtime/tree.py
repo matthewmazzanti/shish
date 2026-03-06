@@ -8,13 +8,13 @@ SpawnCtx handles the error path when spawn fails partway.
 
 from __future__ import annotations
 
+import abc
 import asyncio
 import contextlib
 import dataclasses as dc
 import signal as signal_mod
-from abc import ABC, abstractmethod
 from asyncio.subprocess import Process
-from collections import abc
+from collections.abc import Awaitable, Iterator
 
 from shish.fd import Fd
 
@@ -34,7 +34,7 @@ class StdFds:
     stderr: Fd
 
 
-class ProcessNodeBase(ABC):
+class ProcessNodeBase(abc.ABC):
     """Base class for process tree nodes.
 
     Provides wait() from awaitables() + returncode().
@@ -42,19 +42,19 @@ class ProcessNodeBase(ABC):
     kill(), and close_fds().
     """
 
-    @abstractmethod
+    @abc.abstractmethod
     def returncode(self) -> int | None: ...
 
-    @abstractmethod
-    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]: ...
+    @abc.abstractmethod
+    def awaitables(self) -> Iterator[Awaitable[int]]: ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def terminate(self) -> None: ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def kill(self) -> None: ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def close_fds(self) -> None: ...
 
     async def wait(self) -> int:
@@ -104,7 +104,7 @@ class CmdNode(ProcessNodeBase):
         for sub in self.subs:
             sub.close_fds()
 
-    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]:
+    def awaitables(self) -> Iterator[Awaitable[int]]:
         """Yield awaitables for this proc and subs."""
         yield self.proc.wait()
         for sub in self.subs:
@@ -148,7 +148,7 @@ class PipelineNode(ProcessNodeBase):
         for stage in self.stages:
             stage.close_fds()
 
-    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]:
+    def awaitables(self) -> Iterator[Awaitable[int]]:
         """Yield awaitables across all stages."""
         for stage in self.stages:
             yield from stage.awaitables()
@@ -190,7 +190,7 @@ class FnNode(ProcessNodeBase):
         self._stdout_fd.close()
         self._stderr_fd.close()
 
-    def awaitables(self) -> abc.Iterator[abc.Awaitable[int]]:
+    def awaitables(self) -> Iterator[Awaitable[int]]:
         """Yield awaitable for this task."""
         yield self.task
 

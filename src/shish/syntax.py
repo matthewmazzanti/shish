@@ -8,7 +8,7 @@ are module-level combinator functions that unwrap, delegate, and re-wrap.
 from __future__ import annotations
 
 import typing as ty
-from collections import abc
+from collections.abc import Callable, Generator, Mapping
 
 import shish.builders as builders
 from shish._defaults import DEFAULT_ENCODING
@@ -88,7 +88,7 @@ class Cmd:
         """cmd @ "/tmp" -> set working directory."""
         return cwd(self, path)
 
-    def __rmod__(self, env_vars: abc.Mapping[str, str | None]) -> Cmd:
+    def __rmod__(self, env_vars: Mapping[str, str | None]) -> Cmd:
         """{"FOO": "bar"} % cmd -> set env vars."""
         return env(self, **env_vars)
 
@@ -97,7 +97,7 @@ class Cmd:
             "Cmd cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> abc.Generator[object, None, int]:
+    def __await__(self) -> Generator[object, None, int]:
         return self._shish_ir.run().__await__()
 
 
@@ -152,7 +152,7 @@ class Pipeline:
             "Pipeline cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> abc.Generator[object, None, int]:
+    def __await__(self) -> Generator[object, None, int]:
         return self._shish_ir.run().__await__()
 
 
@@ -169,7 +169,7 @@ class Fn:
     def __bool__(self) -> ty.Never:
         raise TypeError("Fn cannot be used as bool")
 
-    def __await__(self) -> abc.Generator[object, None, int]:
+    def __await__(self) -> Generator[object, None, int]:
         return self._shish_ir.run().__await__()
 
 
@@ -224,16 +224,16 @@ def fn(func: TextFn, /, *, encoding: str) -> Fn: ...
 @ty.overload
 def fn(func: ByteFn, /, *, encoding: None) -> Fn: ...
 @ty.overload
-def fn(*, encoding: None) -> abc.Callable[[ByteFn], Fn]: ...
+def fn(*, encoding: None) -> Callable[[ByteFn], Fn]: ...
 @ty.overload
-def fn(*, encoding: str = ...) -> abc.Callable[[TextFn], Fn]: ...
+def fn(*, encoding: str = ...) -> Callable[[TextFn], Fn]: ...
 
 
 def fn(
     func: TextFn | ByteFn | None = None,
     *,
     encoding: str | None = DEFAULT_ENCODING,
-) -> Fn | abc.Callable[[ByteFn], Fn] | abc.Callable[[TextFn], Fn]:
+) -> Fn | Callable[[ByteFn], Fn] | Callable[[TextFn], Fn]:
     """Create an Fn from an async callable.
 
     Forms:

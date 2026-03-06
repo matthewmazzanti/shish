@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import dataclasses as dc
 import typing as ty
-from collections import abc
+from collections.abc import Awaitable, Callable
 from functools import wraps
 
 from shish._defaults import DEFAULT_ENCODING
@@ -48,8 +48,8 @@ class TextStageCtx:
 # Stage function type aliases
 # =============================================================================
 
-ByteFn = abc.Callable[[ByteStageCtx], abc.Awaitable[int]]
-TextFn = abc.Callable[[TextStageCtx], abc.Awaitable[int]]
+ByteFn = Callable[[ByteStageCtx], Awaitable[int]]
+TextFn = Callable[[TextStageCtx], Awaitable[int]]
 
 
 # =============================================================================
@@ -60,14 +60,14 @@ TextFn = abc.Callable[[TextStageCtx], abc.Awaitable[int]]
 @ty.overload
 def decode(func: TextFn, /) -> ByteFn: ...
 @ty.overload
-def decode(func: str, /) -> abc.Callable[[TextFn], ByteFn]: ...
+def decode(func: str, /) -> Callable[[TextFn], ByteFn]: ...
 @ty.overload
-def decode() -> abc.Callable[[TextFn], ByteFn]: ...
+def decode() -> Callable[[TextFn], ByteFn]: ...
 
 
 def decode(
     func: TextFn | str | None = None,
-) -> ByteFn | abc.Callable[[TextFn], ByteFn]:
+) -> ByteFn | Callable[[TextFn], ByteFn]:
     """Wrap a TextStageCtx function into a ByteStageCtx function.
 
     Three forms:

@@ -51,7 +51,7 @@ typing = "ty"
 dataclasses = "dc"
 
 [tool.ruff.lint.flake8-import-conventions]
-banned-from = ["typing", "dataclasses", "collections.abc"]
+banned-from = ["typing", "dataclasses"]
 
 [tool.pyright]
 pythonVersion = "3.13"
