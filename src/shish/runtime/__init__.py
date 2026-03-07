@@ -1,6 +1,5 @@
 """Runtime execution of shell commands and pipelines."""
 
-from shish.builders import ShishError
 from shish.runtime.api import (
     CloseMethod,
     Job,
@@ -17,6 +16,5 @@ __all__ = [
     "JobCtx",
     "PipelineNode",
     "ProcessNode",
-    "ShishError",
     "start",
 ]

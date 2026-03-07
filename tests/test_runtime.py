@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
+from shish.builders import ShishError
 from shish.fd import Fd
 from shish.fn_stage import ByteStage
-from shish.runtime import CloseMethod, Job, ShishError, start
+from shish.runtime import CloseMethod, Job, start
 from shish.streams import ByteReadStream, ByteWriteStream
 
 # =============================================================================
