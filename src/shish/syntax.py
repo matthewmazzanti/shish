@@ -336,9 +336,13 @@ async def code(cmd: Runnable) -> int:
 
 
 @ty.overload
-async def out(cmd: Runnable, encoding: None) -> bytes: ...
+async def out(
+    cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...
+) -> bytes: ...
 @ty.overload
-async def out(cmd: Runnable, encoding: str = ...) -> str: ...
+async def out(
+    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[True] = ...
+) -> str: ...
 @ty.overload
 async def out(
     cmd: Runnable, encoding: None, *, check: ty.Literal[False]
@@ -353,15 +357,17 @@ async def out(
     cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
 ) -> ty.Any:
     """Execute and return stdout. check=False prepends exit code."""
-    # broad types guarded by overloads above; cast bypasses overload matching
-    inner: ty.Any = unwrap(cmd)
-    return await inner.out(encoding, check=check)
+    return await unwrap(cmd).out(encoding, check=check)
 
 
 @ty.overload
-async def err(cmd: Runnable, encoding: None) -> bytes: ...
+async def err(
+    cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...
+) -> bytes: ...
 @ty.overload
-async def err(cmd: Runnable, encoding: str = ...) -> str: ...
+async def err(
+    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[True] = ...
+) -> str: ...
 @ty.overload
 async def err(
     cmd: Runnable, encoding: None, *, check: ty.Literal[False]
@@ -376,15 +382,17 @@ async def err(
     cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
 ) -> ty.Any:
     """Execute and return stderr. check=False prepends exit code."""
-    # broad types guarded by overloads above; cast bypasses overload matching
-    inner: ty.Any = unwrap(cmd)
-    return await inner.err(encoding, check=check)
+    return await unwrap(cmd).err(encoding, check=check)
 
 
 @ty.overload
-async def out_err(cmd: Runnable, encoding: None) -> tuple[bytes, bytes]: ...
+async def out_err(
+    cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...
+) -> tuple[bytes, bytes]: ...
 @ty.overload
-async def out_err(cmd: Runnable, encoding: str = ...) -> tuple[str, str]: ...
+async def out_err(
+    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[True] = ...
+) -> tuple[str, str]: ...
 @ty.overload
 async def out_err(
     cmd: Runnable, encoding: None, *, check: ty.Literal[False]
@@ -399,9 +407,7 @@ async def out_err(
     cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
 ) -> ty.Any:
     """Execute and return stdout + stderr. check=False prepends exit code."""
-    # broad types guarded by overloads above; cast bypasses overload matching
-    inner: ty.Any = unwrap(cmd)
-    return await inner.out_err(encoding, check=check)
+    return await unwrap(cmd).out_err(encoding, check=check)
 
 
 # Convenience
