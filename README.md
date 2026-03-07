@@ -4,7 +4,7 @@
 Async shell commands for Python with operator-based piping.
 
 ```python
-from shish import sh, fn, out, STDERR
+from shish import sh, fn, out, code, err, STDERR
 
 # Pipelines: cat input.txt | grep error | wc -l
 await (sh.cat("input.txt") | sh.grep("error") | sh.wc("-l"))
@@ -26,6 +26,8 @@ await (sh.make() > (STDERR, "err.log"))                # make 2>err.log
 
 # Capture output
 stdout = await out(sh.ls("-la"))                       # stdout=$(ls -la)
+stderr = await err(sh.make())                          # capture stderr
+exit_code = await code(sh.test("-f", "config.json"))   # just the exit code
 
 # Environment and working directory: %  @
 await ({"FOO": "bar"} % sh.echo("$FOO") @ "/tmp")      # FOO=bar echo $FOO  (in /tmp)
@@ -48,7 +50,7 @@ await sh.git.commit(message="fix bug", amend=True)     # git commit --message 'f
 
 **Process substitution** - `sub_in()` / `sub_out()` resolve to `/dev/fd/N` at runtime, matching bash `<(cmd)` / `>(cmd)`.
 
-**Pipefail by default** - Returns the rightmost non-zero exit code from any pipeline stage, matching `set -o pipefail`.
+**Pipefail by default** - Raises on the rightmost non-zero exit code from any pipeline stage, matching `set -o pipefail`.
 
 **Orphan cleanup** - On error, all spawned processes are SIGKILL'd and reaped, shielded from cancellation. No zombie processes.
 
@@ -122,16 +124,21 @@ cwd(sh.pwd(), "/tmp")                               # set working directory
 
 ```python
 from shish.builders import cmd
-from shish import STDERR
+from shish import STDERR, PIPE
 
 # Chainable builders on frozen dataclasses
 grep = cmd("grep", "error").read("input.txt")
 make = cmd("make").write("err.log", fd=STDERR)
 pipeline = cmd("cat", "input.txt").pipe(cmd("grep", "error")).pipe(cmd("wc", "-l"))
 
-await grep.run()
+await grep.run()                                       # raises on non-zero
 await pipeline.run()
-stdout = await cmd("ls", "-la").out()
+stdout = await cmd("ls", "-la").out()                  # capture stdout
+exit_code = await cmd("test", "-f", "foo").code()      # exit code without raising
+
+# result() for full control
+res = await cmd("ls").result(stdout=PIPE, stderr=PIPE)
+res.code, res.out, res.err                             # typed Result namedtuple
 ```
 
 ## Interactive processes
@@ -175,16 +182,27 @@ The context manager handles cleanup: closes streams, kills orphans, and reaps pr
 
 ## Control flow
 
-Use Python:
+`await cmd` raises `ShishError` on non-zero exit. Use `code()` for exit-code branching:
 
 ```python
-# Sequential (&&)
-if await sh.mkdir("dir") == 0:
-    await sh.touch("dir/file")
+from shish import code, run, ShishError
 
-# Fallback (||)
-if await sh.test("-f", "config.json") != 0:
+# Sequential (&&) — just await, failure raises
+await sh.mkdir("dir")
+await sh.touch("dir/file")
+
+# Fallback (||) — check exit code explicitly
+if await code(sh.test("-f", "config.json")) != 0:
     await sh.cp("config.default.json", "config.json")
+
+# Error handling
+try:
+    await run(sh.make())
+except ShishError as exc:
+    print(f"make failed with exit code {exc.returncode}")
+
+# Capture output, tolerating failure
+exit_code, stdout = await out(sh.grep("pattern", "file"), check=False)
 
 # Timeout
 await asyncio.wait_for(sh.long_running(), timeout=30)
