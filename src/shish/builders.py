@@ -9,7 +9,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from shish._defaults import DEFAULT_ENCODING
-from shish.fd import PIPE, STDIN, STDOUT
+from shish.fd import PIPE, STDIN, STDOUT, Pipe
 
 if ty.TYPE_CHECKING:
     from shish.fn_stage import ByteFn
@@ -97,9 +97,9 @@ class ShishError(Exception):
     def __init__(
         self,
         returncode: int,
-        cmd: Runnable,
-        stdout: str | bytes,
-        stderr: str | bytes,
+        cmd: BaseRunnable,
+        stdout: str | bytes | None,
+        stderr: str | bytes | None,
     ) -> None:
         self.returncode = returncode
         self.cmd = cmd
@@ -108,8 +108,124 @@ class ShishError(Exception):
         super().__init__(f"exit code {returncode}")
 
 
+class Result[OutT: (str, bytes, None), ErrT: (str, bytes, None)](ty.NamedTuple):
+    """Execution result with exit code and optional captured streams."""
+
+    code: int
+    out: OutT
+    err: ErrT
+
+
+class BaseRunnable:
+    """Shared execution methods for Cmd, Fn, Pipeline."""
+
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield a Job via async context manager."""
+        # local: runtime imports builders (circular)
+        from shish import runtime  # noqa: PLC0415
+
+        return runtime.start(ty.cast("Runnable", self))
+
+    @ty.overload
+    async def result(
+        self,
+        *,
+        check: bool = ...,
+        stdout: None = ...,
+        stderr: None = ...,
+        encoding: str | None = ...,
+    ) -> Result[None, None]: ...
+    @ty.overload
+    async def result(
+        self,
+        *,
+        check: bool = ...,
+        stdout: Pipe,
+        stderr: None = ...,
+        encoding: str = ...,
+    ) -> Result[str, None]: ...
+    @ty.overload
+    async def result(
+        self,
+        *,
+        check: bool = ...,
+        stdout: Pipe,
+        stderr: None = ...,
+        encoding: None = ...,
+    ) -> Result[bytes, None]: ...
+    @ty.overload
+    async def result(
+        self,
+        *,
+        check: bool = ...,
+        stdout: None = ...,
+        stderr: Pipe,
+        encoding: str = ...,
+    ) -> Result[None, str]: ...
+    @ty.overload
+    async def result(
+        self,
+        *,
+        check: bool = ...,
+        stdout: None = ...,
+        stderr: Pipe,
+        encoding: None = ...,
+    ) -> Result[None, bytes]: ...
+    @ty.overload
+    async def result(
+        self, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: str = ...
+    ) -> Result[str, str]: ...
+    @ty.overload
+    async def result(
+        self, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: None = ...
+    ) -> Result[bytes, bytes]: ...
+
+    async def result(
+        self,
+        *,
+        check: bool = True,
+        stdout: Pipe | None = None,
+        stderr: Pipe | None = None,
+        encoding: str | None = DEFAULT_ENCODING,
+    ) -> Result[ty.Any, ty.Any]:
+        """Execute and return Result with exit code and optional captured streams."""
+
+        ctx = self.start()
+        if stdout is PIPE:
+            ctx = ctx.stdout(PIPE, encoding=encoding)
+        if stderr is PIPE:
+            ctx = ctx.stderr(PIPE, encoding=encoding)
+
+        async def _noop() -> None:
+            """No-op coroutine for unused gather slots."""
+
+        async with ctx as job:
+            exit_code, out_data, err_data = await asyncio.gather(
+                job.wait(),
+                job.stdout.read() if job.stdout else noop(),
+                job.stderr.read() if job.stderr else noop(),
+            )
+        if check and exit_code != 0:
+            raise ShishError(exit_code, self, out_data, err_data)
+        return Result(exit_code, out_data, err_data)  # type: ignore[return-value]
+
+    async def run(self) -> int:
+        """Execute and return exit code."""
+        async with self.start() as job:
+            return await job.wait()
+
+    @ty.overload
+    async def out(self, encoding: None) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: str = ...) -> str: ...
+
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
+        """Execute and return stdout."""
+        res = await self.result(check=True, stdout=PIPE, encoding=encoding)
+        return res.out
+
 @dc.dataclass(frozen=True)
-class Cmd:
+class Cmd(BaseRunnable):
     args: tuple[str | Sub, ...]
     redirects: tuple[Redirect, ...] = ()
     env_vars: tuple[tuple[str, str | None], ...] = ()
@@ -194,26 +310,9 @@ class Cmd:
         """Process substitution: >(cmd)."""
         return SubOut(self)
 
-    def start(self) -> JobCtx[None, None, None]:
-        """Spawn and yield a Job via async context manager."""
-        return _start(self)
-
-    async def run(self) -> int:
-        """Execute and return exit code."""
-        return await _run(self)
-
-    @ty.overload
-    async def out(self, encoding: None) -> bytes: ...
-    @ty.overload
-    async def out(self, encoding: str = ...) -> str: ...
-
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        return await _out(self, encoding)
-
 
 @dc.dataclass(frozen=True)
-class Fn:
+class Fn(BaseRunnable):
     func: ByteFn
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
@@ -228,86 +327,18 @@ class Fn:
         """Process substitution: >(fn)."""
         return SubOut(self)
 
-    def start(self) -> JobCtx[None, None, None]:
-        """Spawn and yield a Job via async context manager."""
-        return _start(self)
-
-    async def run(self) -> int:
-        """Execute and return exit code."""
-        return await _run(self)
-
-    @ty.overload
-    async def out(self, encoding: None) -> bytes: ...
-    @ty.overload
-    async def out(self, encoding: str = ...) -> str: ...
-
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        return await _out(self, encoding)
-
 
 @dc.dataclass(frozen=True)
-class Pipeline:
+class Pipeline(BaseRunnable):
     stages: tuple[Cmd | Fn, ...]
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
 
-    def start(self) -> JobCtx[None, None, None]:
-        """Spawn and yield a Job via async context manager."""
-        return _start(self)
-
-    async def run(self) -> int:
-        """Execute and return exit code."""
-        return await _run(self)
-
-    @ty.overload
-    async def out(self, encoding: None) -> bytes: ...
-    @ty.overload
-    async def out(self, encoding: str = ...) -> str: ...
-
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        return await _out(self, encoding)
-
 
 Runnable = Cmd | Pipeline | Fn
 
-
-# ---------------------------------------------------------------------------
-# Private helpers — shared implementations for start/run/out
-# ---------------------------------------------------------------------------
-
-
-def _start(runnable: Runnable) -> JobCtx[None, None, None]:
-    """Spawn and yield a Job via async context manager."""
-    from shish import runtime  # local: runtime imports builders (circular)  # noqa: PLC0415
-
-    return runtime.start(runnable)
-
-
-async def _run(runnable: Runnable) -> int:
-    """Execute and return exit code."""
-    async with _start(runnable) as job:
-        return await job.wait()
-
-
-async def _out(
-    runnable: Runnable, encoding: str | None = DEFAULT_ENCODING
-) -> str | bytes:
-    """Execute and return stdout."""
-    async with (
-        _start(runnable)
-        .stdout(PIPE, encoding=encoding)
-        .stderr(PIPE, encoding=encoding) as job
-    ):
-        code, stdout, stderr = await asyncio.gather(
-            job.wait(), job.stdout.read(), job.stderr.read()
-        )
-    if code != 0:
-        raise ShishError(code, runnable, stdout, stderr)
-    return stdout
 
 
 def cmd(*args: Arg) -> Cmd:

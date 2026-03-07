@@ -56,6 +56,7 @@ TODO.md             # planned features and known issues
 - ruff ANN rules enforce annotation coverage
 - No one or two letter variable names except loop indexes
 - Local imports are allowed but must include a descriptive comment explaining why and `# noqa: PLC0415`
+- Put the descriptive comment on its own line above the import, keep `# noqa: PLC0415` inline (ruff format can reflow long lines, breaking inline comments off the import)
 - Conventional Commits: messages use `feat:`, `fix:`, `chore:`, `docs:`, etc. prefix
 - Branch names match: `feat/`, `fix/`, `chore/`, `docs/`, etc.
 - Always ask before committing to main — use a feature branch instead
