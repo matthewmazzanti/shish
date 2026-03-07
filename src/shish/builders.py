@@ -218,6 +218,10 @@ class BaseRunnable:
         res = await self.result(check=False)
         return res.code
 
+    async def ok(self) -> bool:
+        """Execute and return True if exit code is 0."""
+        return await self.code() == 0
+
     @ty.overload
     async def out(self, encoding: None, *, check: ty.Literal[True] = ...) -> bytes: ...
     @ty.overload

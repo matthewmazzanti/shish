@@ -414,6 +414,11 @@ async def code(cmd: Runnable) -> int:
     return await unwrap(cmd).code()
 
 
+async def ok(cmd: Runnable) -> bool:
+    """Execute and return True if exit code is 0."""
+    return await unwrap(cmd).ok()
+
+
 @ty.overload
 async def out(
     cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...

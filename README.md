@@ -38,11 +38,13 @@ await sh.git.commit(message="fix bug", amend=True)     # git commit --message 'f
 
 ## Features
 
+**Sensible defaults** - Strings in, strings out: system encoding, text-mode capture, exceptions on failure, pipefail. Override when you need to: raw bytes with `encoding=None`, exit codes with `check=False`.
+
 **Async-native** - Commands are lazy until awaited. Build pipelines, pass them around, execute when ready.
 
 **Concurrent pipelines** - All stages run in parallel via `os.pipe()`, just like a real shell. No buffering entire outputs in memory.
 
-**Python functions as stages** - Mix Python async functions into pipelines alongside shell commands. Text mode by default with configurable encoding, or raw bytes.
+**Python functions as stages** - Mix Python async functions into pipelines alongside shell commands.
 
 **No shell injection** - Always uses `exec`, never `shell=True`. No quoting or escaping bugs.
 
@@ -50,11 +52,6 @@ await sh.git.commit(message="fix bug", amend=True)     # git commit --message 'f
 
 **Process substitution** - `sub_in()` / `sub_out()` resolve to `/dev/fd/N` at runtime, matching bash `<(cmd)` / `>(cmd)`.
 
-**Pipefail by default** - Raises on the rightmost non-zero exit code from any pipeline stage, matching `set -o pipefail`.
-
-**Orphan cleanup** - On error, all spawned processes are SIGKILL'd and reaped, shielded from cancellation. No zombie processes.
-
-**SIGPIPE handling** - Early termination works naturally; killed processes report 128 + signal number.
 
 ## Python function stages
 
@@ -143,35 +140,34 @@ res.code, res.out, res.err                             # typed Result namedtuple
 
 ## Interactive processes
 
-`start()` spawns a process and gives you direct access to its stdin/stdout streams. Streams not configured with `.stdin()`/`.stdout()` inherit from the parent process:
+`start()` spawns a process and gives you direct access to its stdin/stdout streams. Concurrent reads and writes via `asyncio.gather` keep data flowing through pipes without deadlocks — something that's awkward with synchronous code. Streams not configured with `.stdin()`/`.stdout()` inherit from the parent process:
 
 ```python
-from shish import start, PIPE
-from shish.builders import cmd
+from shish import sh, start, PIPE
 
 # Inherit parent stdin/stdout — no .stdin()/.stdout() needed
-async with start(cmd("ls", "-la")) as proc:
-    code = await proc.wait()
+async with start(sh.ls("-la")) as proc:
+    exit_code = await proc.wait()
 
 # Write to stdin, read from stdout (gather avoids pipe-buffer deadlocks)
-async with start(cmd("cat")).stdin(PIPE).stdout(PIPE) as proc:
-    code, _, output = await asyncio.gather(
+async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as proc:
+    exit_code, _, output = await asyncio.gather(
         proc.wait(),
         proc.stdin.write_eof("hello\n"),
         proc.stdout.read(),
     )  # output == "hello\n"
 
 # Custom encoding
-async with start(cmd("cat")).stdin(PIPE, "latin-1").stdout(PIPE, "latin-1") as proc:
-    code, _, output = await asyncio.gather(
+async with start(sh.cat()).stdin(PIPE, "latin-1").stdout(PIPE, "latin-1") as proc:
+    exit_code, _, output = await asyncio.gather(
         proc.wait(),
         proc.stdin.write_eof("café\n"),
         proc.stdout.read(),
     )
 
 # Raw bytes
-async with start(cmd("cat")).stdin(PIPE, encoding=None).stdout(PIPE, encoding=None) as proc:
-    code, _, output = await asyncio.gather(
+async with start(sh.cat()).stdin(PIPE, encoding=None).stdout(PIPE, encoding=None) as proc:
+    exit_code, _, output = await asyncio.gather(
         proc.wait(),
         proc.stdin.write_eof(b"\x00\x01\x02"),
         proc.stdout.read(),
@@ -185,21 +181,21 @@ The context manager handles cleanup: closes streams, kills orphans, and reaps pr
 `await cmd` raises `ShishError` on non-zero exit. Use `code()` for exit-code branching:
 
 ```python
-from shish import code, run, ShishError
+from shish import ok, run, ShishError
 
 # Sequential (&&) — just await, failure raises
 await sh.mkdir("dir")
 await sh.touch("dir/file")
 
-# Fallback (||) — check exit code explicitly
-if await code(sh.test("-f", "config.json")) != 0:
+# Conditional (||) — ok() maps exit code to bool
+if not await ok(sh.test("-f", "config.json")):
     await sh.cp("config.default.json", "config.json")
 
 # Error handling
 try:
     await run(sh.make())
 except ShishError as exc:
-    print(f"make failed with exit code {exc.returncode}")
+    print(f"make failed with exit code {exc.code}")
 
 # Capture output, tolerating failure
 exit_code, stdout = await out(sh.grep("pattern", "file"), check=False)
