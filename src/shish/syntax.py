@@ -12,7 +12,7 @@ from collections.abc import Callable, Generator, Mapping
 
 import shish.builders as builders
 from shish._defaults import DEFAULT_ENCODING
-from shish.fd import STDIN, STDOUT
+from shish.fd import STDIN, STDOUT, Pipe
 from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
 if ty.TYPE_CHECKING:
@@ -323,6 +323,85 @@ def sub_out(sink: Runnable) -> builders.SubOut:
 def start(cmd: Runnable) -> JobCtx[None, None, None]:
     """Spawn a command or pipeline and yield a Job via async context manager."""
     return unwrap(cmd).start()
+
+
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: None = ...,
+    stderr: None = ...,
+    encoding: str | None = ...,
+) -> builders.Result[None, None]: ...
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: Pipe,
+    stderr: None = ...,
+    encoding: str = ...,
+) -> builders.Result[str, None]: ...
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: Pipe,
+    stderr: None = ...,
+    encoding: None = ...,
+) -> builders.Result[bytes, None]: ...
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: None = ...,
+    stderr: Pipe,
+    encoding: str = ...,
+) -> builders.Result[None, str]: ...
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: None = ...,
+    stderr: Pipe,
+    encoding: None = ...,
+) -> builders.Result[None, bytes]: ...
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: Pipe,
+    stderr: Pipe,
+    encoding: str = ...,
+) -> builders.Result[str, str]: ...
+@ty.overload
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = ...,
+    stdout: Pipe,
+    stderr: Pipe,
+    encoding: None = ...,
+) -> builders.Result[bytes, bytes]: ...
+
+
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = True,
+    stdout: Pipe | None = None,
+    stderr: Pipe | None = None,
+    encoding: str | None = DEFAULT_ENCODING,
+) -> builders.Result[ty.Any, ty.Any]:
+    """Execute and return Result with exit code and optional captured streams."""
+    return await unwrap(cmd).result(
+        check=check, stdout=stdout, stderr=stderr, encoding=encoding
+    )
 
 
 async def run(cmd: Runnable) -> None:
