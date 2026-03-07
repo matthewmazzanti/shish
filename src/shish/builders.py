@@ -90,8 +90,55 @@ class FdToSub:
 Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | FdToSub
 
 
+class BaseRunnable:
+    """Shared start/run/out/sub methods for Cmd, Fn, Pipeline."""
+
+    def start(self) -> JobCtx[None, None, None]:
+        """Spawn and yield a Job via async context manager."""
+        from shish import runtime  # noqa: PLC0415
+
+        return runtime.start(ty.cast("Runnable", self))
+
+    async def run(self) -> int:
+        """Execute and return exit code."""
+        async with self.start() as job:
+            return await job.wait()
+
+    @ty.overload
+    async def out(self, encoding: None) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: str = ...) -> str: ...
+
+    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
+        """Execute and return stdout."""
+        import asyncio  # local: needed only in this method  # noqa: PLC0415
+
+        from shish.fd import PIPE  # noqa: PLC0415
+        from shish.runtime import ShishError  # noqa: PLC0415
+
+        async with (
+            self.start()
+            .stdout(PIPE, encoding=encoding)
+            .stderr(PIPE, encoding=encoding) as job
+        ):
+            code, stdout, stderr = await asyncio.gather(
+                job.wait(), job.stdout.read(), job.stderr.read()
+            )
+        if code != 0:
+            raise ShishError(code, ty.cast("Runnable", self), stdout, stderr)
+        return stdout
+
+    def sub_in(self) -> SubIn:
+        """Process substitution: <(cmd)."""
+        return SubIn(ty.cast("Runnable", self))
+
+    def sub_out(self) -> SubOut:
+        """Process substitution: >(cmd)."""
+        return SubOut(ty.cast("Runnable", self))
+
+
 @dc.dataclass(frozen=True)
-class Cmd:
+class Cmd(BaseRunnable):
     args: tuple[str | Sub, ...]
     redirects: tuple[Redirect, ...] = ()
     env_vars: tuple[tuple[str, str | None], ...] = ()
@@ -168,144 +215,23 @@ class Cmd:
         """Set working directory."""
         return self._replace(working_dir=Path(path))
 
-    def sub_in(self) -> SubIn:
-        """Process substitution: <(cmd)."""
-        return SubIn(self)
-
-    def sub_out(self) -> SubOut:
-        """Process substitution: >(cmd)."""
-        return SubOut(self)
-
-    def start(self) -> JobCtx[None, None, None]:
-        """Spawn and yield an Job via async context manager."""
-        from shish import runtime  # noqa: PLC0415
-
-        return runtime.start(self)
-
-    async def run(self) -> int:
-        """Execute and return exit code."""
-        async with self.start() as job:
-            return await job.wait()
-
-    @ty.overload
-    async def out(self, encoding: None) -> bytes: ...
-    @ty.overload
-    async def out(self, encoding: str = ...) -> str: ...
-
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        import asyncio  # local: needed only in this method  # noqa: PLC0415
-
-        from shish.fd import PIPE  # noqa: PLC0415
-        from shish.runtime import ShishError  # noqa: PLC0415
-
-        async with (
-            self.start()
-            .stdout(PIPE, encoding=encoding)
-            .stderr(PIPE, encoding=encoding) as job
-        ):
-            code, stdout, stderr = await asyncio.gather(
-                job.wait(), job.stdout.read(), job.stderr.read()
-            )
-        if code != 0:
-            raise ShishError(code, self, stdout, stderr)
-        return stdout
-
 
 @dc.dataclass(frozen=True)
-class Fn:
+class Fn(BaseRunnable):
     func: ByteFn
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
         """Pipe this Fn into another stage."""
         return Pipeline((self, other))
 
-    def sub_in(self) -> SubIn:
-        """Process substitution: <(fn)."""
-        return SubIn(self)
-
-    def sub_out(self) -> SubOut:
-        """Process substitution: >(fn)."""
-        return SubOut(self)
-
-    def start(self) -> JobCtx[None, None, None]:
-        """Spawn and yield an Job via async context manager."""
-        from shish import runtime  # noqa: PLC0415
-
-        return runtime.start(self)
-
-    async def run(self) -> int:
-        """Execute and return exit code."""
-        async with self.start() as job:
-            return await job.wait()
-
-    @ty.overload
-    async def out(self, encoding: None) -> bytes: ...
-    @ty.overload
-    async def out(self, encoding: str = ...) -> str: ...
-
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        import asyncio  # local: needed only in this method  # noqa: PLC0415
-
-        from shish.fd import PIPE  # noqa: PLC0415
-        from shish.runtime import ShishError  # noqa: PLC0415
-
-        async with (
-            self.start()
-            .stdout(PIPE, encoding=encoding)
-            .stderr(PIPE, encoding=encoding) as job
-        ):
-            code, stdout, stderr = await asyncio.gather(
-                job.wait(), job.stdout.read(), job.stderr.read()
-            )
-        if code != 0:
-            raise ShishError(code, self, stdout, stderr)
-        return stdout
-
 
 @dc.dataclass(frozen=True)
-class Pipeline:
+class Pipeline(BaseRunnable):
     stages: tuple[Cmd | Fn, ...]
 
     def pipe(self, other: Cmd | Fn) -> Pipeline:
         """Append another stage."""
         return Pipeline((*self.stages, other))
-
-    def start(self) -> JobCtx[None, None, None]:
-        """Spawn and yield an Job via async context manager."""
-        from shish import runtime  # noqa: PLC0415
-
-        return runtime.start(self)
-
-    async def run(self) -> int:
-        """Execute and return exit code."""
-        async with self.start() as job:
-            return await job.wait()
-
-    @ty.overload
-    async def out(self, encoding: None) -> bytes: ...
-    @ty.overload
-    async def out(self, encoding: str = ...) -> str: ...
-
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        import asyncio  # local: needed only in this method  # noqa: PLC0415
-
-        from shish.fd import PIPE  # noqa: PLC0415
-        from shish.runtime import ShishError  # noqa: PLC0415
-
-        async with (
-            self.start()
-            .stdout(PIPE, encoding=encoding)
-            .stderr(PIPE, encoding=encoding) as job
-        ):
-            code, stdout, stderr = await asyncio.gather(
-                job.wait(), job.stdout.read(), job.stderr.read()
-            )
-        if code != 0:
-            raise ShishError(code, self, stdout, stderr)
-        return stdout
 
 
 Runnable = Cmd | Pipeline | Fn
