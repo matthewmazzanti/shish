@@ -1,10 +1,10 @@
 """Runtime execution of shell commands and pipelines."""
 
+from shish.builders import ShishError
 from shish.runtime.api import (
     CloseMethod,
     Job,
     JobCtx,
-    ShishError,
     start,
 )
 from shish.runtime.tree import CmdNode, FnNode, PipelineNode, ProcessNode

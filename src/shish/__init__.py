@@ -4,6 +4,7 @@ from shish.builders import (
     Data,
     PathLike,
     ReadSrc,
+    ShishError,
     Sub,
     SubIn,
     SubOut,
@@ -11,7 +12,7 @@ from shish.builders import (
 )
 from shish.fd import PIPE, STDERR, STDIN, STDOUT, Fd, Pipe
 from shish.fn_stage import ByteFn, ByteStage, TextFn, TextStage, decode
-from shish.runtime import CloseMethod, Job, JobCtx, ShishError
+from shish.runtime import CloseMethod, Job, JobCtx
 from shish.streams import (
     ByteReadStream,
     ByteWriteStream,

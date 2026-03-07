@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses as dc
 import typing as ty
 from enum import Enum, auto
 from pathlib import Path
 
 from shish._defaults import DEFAULT_ENCODING
-from shish.fd import STDIN, STDOUT
+from shish.fd import PIPE, STDIN, STDOUT
 
 if ty.TYPE_CHECKING:
     from shish.fn_stage import ByteFn
@@ -90,6 +91,23 @@ class FdToSub:
 Redirect = FdToFile | FdFromFile | FdFromData | FdToFd | FdClose | FdFromSub | FdToSub
 
 
+class ShishError(Exception):
+    """Non-zero exit from out()."""
+
+    def __init__(
+        self,
+        returncode: int,
+        cmd: Runnable,
+        stdout: str | bytes,
+        stderr: str | bytes,
+    ) -> None:
+        self.returncode = returncode
+        self.cmd = cmd
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(f"exit code {returncode}")
+
+
 class BaseRunnable:
     """Shared start/run/out/sub methods for Cmd, Fn, Pipeline."""
 
@@ -111,11 +129,6 @@ class BaseRunnable:
 
     async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
-        import asyncio  # local: needed only in this method  # noqa: PLC0415
-
-        from shish.fd import PIPE  # noqa: PLC0415
-        from shish.runtime import ShishError  # noqa: PLC0415
-
         async with (
             self.start()
             .stdout(PIPE, encoding=encoding)

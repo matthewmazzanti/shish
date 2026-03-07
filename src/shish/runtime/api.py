@@ -27,23 +27,6 @@ from shish.streams import (
 )
 
 
-class ShishError(Exception):
-    """Non-zero exit from out()."""
-
-    def __init__(
-        self,
-        returncode: int,
-        cmd: Runnable,
-        stdout: str | bytes,
-        stderr: str | bytes,
-    ) -> None:
-        self.returncode = returncode
-        self.cmd = cmd
-        self.stdout = stdout
-        self.stderr = stderr
-        super().__init__(f"exit code {returncode}")
-
-
 class CloseMethod(enum.IntEnum):
     """Shutdown escalation level for Job.close().
 
