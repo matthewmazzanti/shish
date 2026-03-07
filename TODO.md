@@ -19,6 +19,10 @@
 - Configurable command builder: `sh = CommandBuilder(env={...}, cwd="...", raise_on_error=True)`
 - Bad return codes: map to something? raise exceptions? configurable?
 
+## Cleanup
+
+- Job/JobCtx TypeVar constraints → union bounds (like Result), overloads lock the types anyway
+
 ## Quality
 
 - Examples (cookbook-style usage patterns)

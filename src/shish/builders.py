@@ -108,7 +108,7 @@ class ShishError(Exception):
         super().__init__(f"exit code {returncode}")
 
 
-class Result[OutT: (str, bytes, None), ErrT: (str, bytes, None)](ty.NamedTuple):
+class Result[OutT: str | bytes | None, ErrT: str | bytes | None](ty.NamedTuple):
     """Execution result with exit code and optional captured streams."""
 
     code: int
@@ -196,7 +196,7 @@ class BaseRunnable:
         if stderr is PIPE:
             ctx = ctx.stderr(PIPE, encoding=encoding)
 
-        async def _noop() -> None:
+        async def noop() -> None:
             """No-op coroutine for unused gather slots."""
 
         async with ctx as job:
@@ -207,22 +207,85 @@ class BaseRunnable:
             )
         if check and exit_code != 0:
             raise ShishError(exit_code, self, out_data, err_data)
-        return Result(exit_code, out_data, err_data)  # type: ignore[return-value]
+        return Result(exit_code, out_data, err_data)
 
-    async def run(self) -> int:
+    async def run(self) -> None:
+        """Execute. Raises ShishError on non-zero exit."""
+        await self.result(check=True)
+
+    async def code(self) -> int:
         """Execute and return exit code."""
-        async with self.start() as job:
-            return await job.wait()
+        res = await self.result(check=False)
+        return res.code
 
     @ty.overload
     async def out(self, encoding: None) -> bytes: ...
     @ty.overload
     async def out(self, encoding: str = ...) -> str: ...
+    @ty.overload
+    async def out(
+        self, encoding: None, *, check: ty.Literal[False]
+    ) -> tuple[int, bytes]: ...
+    @ty.overload
+    async def out(
+        self, encoding: str = ..., *, check: ty.Literal[False]
+    ) -> tuple[int, str]: ...
 
-    async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-        """Execute and return stdout."""
-        res = await self.result(check=True, stdout=PIPE, encoding=encoding)
-        return res.out
+    async def out(
+        self, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+    ) -> ty.Any:
+        """Execute and return stdout. check=False prepends exit code."""
+        res = await self.result(check=check, stdout=PIPE, encoding=encoding)
+        if check:
+            return res.out
+        return (res.code, res.out)
+
+    @ty.overload
+    async def err(self, encoding: None) -> bytes: ...
+    @ty.overload
+    async def err(self, encoding: str = ...) -> str: ...
+    @ty.overload
+    async def err(
+        self, encoding: None, *, check: ty.Literal[False]
+    ) -> tuple[int, bytes]: ...
+    @ty.overload
+    async def err(
+        self, encoding: str = ..., *, check: ty.Literal[False]
+    ) -> tuple[int, str]: ...
+
+    async def err(
+        self, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+    ) -> ty.Any:
+        """Execute and return stderr. check=False prepends exit code."""
+        res = await self.result(check=check, stderr=PIPE, encoding=encoding)
+        if check:
+            return res.err
+        return (res.code, res.err)
+
+    @ty.overload
+    async def out_err(self, encoding: None) -> tuple[bytes, bytes]: ...
+    @ty.overload
+    async def out_err(self, encoding: str = ...) -> tuple[str, str]: ...
+    @ty.overload
+    async def out_err(
+        self, encoding: None, *, check: ty.Literal[False]
+    ) -> tuple[int, bytes, bytes]: ...
+    @ty.overload
+    async def out_err(
+        self, encoding: str = ..., *, check: ty.Literal[False]
+    ) -> tuple[int, str, str]: ...
+
+    async def out_err(
+        self, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+    ) -> ty.Any:
+        """Execute and return stdout + stderr. check=False prepends exit code."""
+        res = await self.result(
+            check=check, stdout=PIPE, stderr=PIPE, encoding=encoding
+        )
+        if check:
+            return (res.out, res.err)
+        return (res.code, res.out, res.err)
+
 
 @dc.dataclass(frozen=True)
 class Cmd(BaseRunnable):
@@ -338,7 +401,6 @@ class Pipeline(BaseRunnable):
 
 
 Runnable = Cmd | Pipeline | Fn
-
 
 
 def cmd(*args: Arg) -> Cmd:

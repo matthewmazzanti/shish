@@ -97,7 +97,7 @@ class Cmd:
             "Cmd cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> Generator[object]:
         return self._shish_ir.run().__await__()
 
 
@@ -152,7 +152,7 @@ class Pipeline:
             "Pipeline cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> Generator[object]:
         return self._shish_ir.run().__await__()
 
 
@@ -169,7 +169,7 @@ class Fn:
     def __bool__(self) -> ty.Never:
         raise TypeError("Fn cannot be used as bool")
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> Generator[object]:
         return self._shish_ir.run().__await__()
 
 
@@ -325,14 +325,83 @@ def start(cmd: Runnable) -> JobCtx[None, None, None]:
     return unwrap(cmd).start()
 
 
-async def run(cmd: Runnable) -> int:
-    """Execute a command or pipeline and return exit code."""
-    return await unwrap(cmd).run()
+async def run(cmd: Runnable) -> None:
+    """Execute. Raises ShishError on non-zero exit."""
+    await unwrap(cmd).run()
 
 
-async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-    """Execute command and return stdout."""
-    return await unwrap(cmd).out(encoding)
+async def code(cmd: Runnable) -> int:
+    """Execute and return exit code."""
+    return await unwrap(cmd).code()
+
+
+@ty.overload
+async def out(cmd: Runnable, encoding: None) -> bytes: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ...) -> str: ...
+@ty.overload
+async def out(
+    cmd: Runnable, encoding: None, *, check: ty.Literal[False]
+) -> tuple[int, bytes]: ...
+@ty.overload
+async def out(
+    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[False]
+) -> tuple[int, str]: ...
+
+
+async def out(
+    cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+) -> ty.Any:
+    """Execute and return stdout. check=False prepends exit code."""
+    # broad types guarded by overloads above; cast bypasses overload matching
+    inner: ty.Any = unwrap(cmd)
+    return await inner.out(encoding, check=check)
+
+
+@ty.overload
+async def err(cmd: Runnable, encoding: None) -> bytes: ...
+@ty.overload
+async def err(cmd: Runnable, encoding: str = ...) -> str: ...
+@ty.overload
+async def err(
+    cmd: Runnable, encoding: None, *, check: ty.Literal[False]
+) -> tuple[int, bytes]: ...
+@ty.overload
+async def err(
+    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[False]
+) -> tuple[int, str]: ...
+
+
+async def err(
+    cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+) -> ty.Any:
+    """Execute and return stderr. check=False prepends exit code."""
+    # broad types guarded by overloads above; cast bypasses overload matching
+    inner: ty.Any = unwrap(cmd)
+    return await inner.err(encoding, check=check)
+
+
+@ty.overload
+async def out_err(cmd: Runnable, encoding: None) -> tuple[bytes, bytes]: ...
+@ty.overload
+async def out_err(cmd: Runnable, encoding: str = ...) -> tuple[str, str]: ...
+@ty.overload
+async def out_err(
+    cmd: Runnable, encoding: None, *, check: ty.Literal[False]
+) -> tuple[int, bytes, bytes]: ...
+@ty.overload
+async def out_err(
+    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[False]
+) -> tuple[int, str, str]: ...
+
+
+async def out_err(
+    cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+) -> ty.Any:
+    """Execute and return stdout + stderr. check=False prepends exit code."""
+    # broad types guarded by overloads above; cast bypasses overload matching
+    inner: ty.Any = unwrap(cmd)
+    return await inner.out_err(encoding, check=check)
 
 
 # Convenience

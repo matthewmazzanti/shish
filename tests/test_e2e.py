@@ -14,6 +14,7 @@ from shish import (
     ShishError,
     TextStage,
     close,
+    code,
     cwd,
     env,
     fn,
@@ -33,17 +34,17 @@ from shish.builders import cmd
 
 
 async def test_run_exit_code() -> None:
-    assert await run(sh.true()) == 0
-    assert await run(sh.false()) == 1
+    await run(sh.true())
+    assert await code(sh.false()) == 1
 
 
 async def test_await_cmd() -> None:
-    assert await sh.true() == 0
-    assert await sh.false() == 1
+    await sh.true()
+    assert await code(sh.false()) == 1
 
 
 async def test_single_command_no_args() -> None:
-    assert await run(sh.true()) == 0
+    await run(sh.true())
 
 
 async def test_command_with_empty_string_arg(tmp_path: Path) -> None:
@@ -58,21 +59,22 @@ async def test_command_with_empty_string_arg(tmp_path: Path) -> None:
 
 
 async def test_pipeline_execution() -> None:
-    assert await (sh.echo("hello") | sh.cat()) == 0
+    await (sh.echo("hello") | sh.cat())
 
 
 async def test_pipeline_pipefail() -> None:
-    assert await (sh.false() | sh.cat()) != 0
+    assert await code(sh.false() | sh.cat()) != 0
 
 
 async def test_pipeline_sigpipe() -> None:
     # yes | head -1: yes gets SIGPIPE when head exits
-    result = await asyncio.wait_for(sh.yes() | sh.head(n="1"), timeout=2.0)
+    pipeline = sh.yes() | sh.head(n="1")
+    result = await asyncio.wait_for(code(pipeline), timeout=2.0)
     assert result in (0, 141)  # head exits 0, yes gets SIGPIPE (128+13)
 
 
 async def test_pipeline_with_failing_middle_stage() -> None:
-    result = await (sh.echo("test") | sh.false() | sh.cat())
+    result = await code(sh.echo("test") | sh.false() | sh.cat())
     assert result != 0
 
 
@@ -97,7 +99,7 @@ async def test_pipeline_many_transforms() -> None:
 
 async def test_redirect_stdout_to_file(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
-    assert await (sh.echo("hello") > out) == 0
+    await (sh.echo("hello") > out)
     assert out.read_text() == "hello\n"
 
 
@@ -249,8 +251,7 @@ async def test_sub_in_two_sources(tmp_path: Path) -> None:
     out = tmp_path / "out.txt"
     file1.write_text("b\na\nc\n")
     file2.write_text("b\na\nc\n")
-    result = await (sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2))) > out)
-    assert result == 0
+    await (sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2))) > out)
     assert out.read_text() == ""
 
 
@@ -259,7 +260,7 @@ async def test_sub_in_diff_sources(tmp_path: Path) -> None:
     file2 = tmp_path / "file2.txt"
     file1.write_text("a\nb\n")
     file2.write_text("a\nc\n")
-    result = await sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2)))
+    result = await code(sh.diff(sub_in(sh.sort(file1)), sub_in(sh.sort(file2))))
     assert result == 1
 
 
@@ -312,8 +313,7 @@ async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:
     file2 = tmp_path / "file2.txt"
     file1.write_text("c\na\nb\n")
     file2.write_text("a\nb\nc\n")
-    result = await sh.diff(sub_in(sh.sort(file1)), file2)
-    assert result == 0  # sorted file1 == file2
+    await sh.diff(sub_in(sh.sort(file1)), file2)  # sorted file1 == file2
 
 
 # =============================================================================
@@ -322,12 +322,11 @@ async def test_mixed_sub_in_and_file_redirect(tmp_path: Path) -> None:
 
 
 async def test_concurrent_runs() -> None:
-    results = await asyncio.gather(
+    await asyncio.gather(
         run(sh.echo("a") | sh.cat()),
         run(sh.echo("b") | sh.cat()),
         run(sh.echo("c") | sh.cat()),
     )
-    assert results == [0, 0, 0]
 
 
 async def test_concurrent_runs_with_files(tmp_path: Path) -> None:
@@ -422,8 +421,8 @@ async def test_out_binary() -> None:
 
 
 async def test_builder_run() -> None:
-    assert await cmd("true").run() == 0
-    assert await cmd("false").run() == 1
+    await cmd("true").run()
+    assert await cmd("false").code() == 1
 
 
 async def test_builder_pipeline() -> None:
@@ -512,7 +511,7 @@ async def test_tuple_fd_append(tmp_path: Path) -> None:
 
 async def test_close_stdin() -> None:
     """close(cmd, STDIN) — cat with stdin closed exits non-zero."""
-    result = await run(close(sh.cat(), STDIN))
+    result = await code(close(sh.cat(), STDIN))
     assert result == 1
 
 
@@ -743,9 +742,8 @@ async def test_fn_as_first_stage() -> None:
 
 
 async def test_fn_standalone() -> None:
-    """Await fn directly returns exit code."""
-    result = await _generate
-    assert result == 0
+    """Await fn directly — succeeds without raising."""
+    await _generate
 
 
 async def test_fn_standalone_out() -> None:
@@ -768,8 +766,7 @@ async def test_fn_pipe() -> None:
 
 async def test_fn_gt() -> None:
     """cmd > sub_out(fn(...)) redirects to Python function."""
-    result = await run(sh.echo("hello") > sub_out(_upper))
-    assert result == 0
+    await run(sh.echo("hello") > sub_out(_upper))
 
 
 async def test_fn_lt() -> None:
@@ -786,13 +783,13 @@ async def test_fn_sub_in() -> None:
 
 async def test_fn_exit_code() -> None:
     """fn exit code propagates."""
-    result = await run(_exit_code)
+    result = await code(_exit_code)
     assert result == 42
 
 
 async def test_fn_pipefail_rightmost() -> None:
     """Pipefail: rightmost non-zero wins; fn(42) is the rightmost failure."""
-    result = await (_exit_code | sh.cat())
+    result = await code(_exit_code | sh.cat())
     assert result == 42
 
 
@@ -803,7 +800,7 @@ async def test_fn_exception() -> None:
     async def _raises(ctx: TextStage) -> int:
         raise ValueError("boom")
 
-    assert await run(_raises) == 1
+    assert await code(_raises) == 1
 
 
 async def test_fn_line_processing() -> None:
