@@ -1,4 +1,4 @@
-"""Public lifecycle API: Job, JobCtx, start(), run(), out().
+"""Public lifecycle API: Job, JobCtx, start().
 
 Provides the user-facing entry points for spawning and managing
 process trees built from IR commands.
@@ -411,46 +411,3 @@ def start(cmd: Runnable, *, cleanup_timeout: float = 3) -> JobCtx[None, None, No
             (SIGTERM → SIGKILL) during exception close. Default 3s.
     """
     return JobCtx(cmd, _cleanup_timeout=cleanup_timeout)
-
-
-async def run(cmd: Runnable) -> int:
-    """Execute a command or pipeline and return exit code."""
-    async with start(cmd) as execution:
-        return await execution.wait()
-
-
-@ty.overload
-async def out(cmd: Runnable, encoding: None) -> bytes: ...
-@ty.overload
-async def out(cmd: Runnable, encoding: str = DEFAULT_ENCODING) -> str: ...
-
-
-async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-    """Execute a command and return its captured stdout.
-
-    Spawns with stdout=PIPE, then reads stdout concurrently with
-    wait(). Concurrency is required to avoid deadlock: if the child
-    fills the pipe buffer, it blocks until someone reads, but if we
-    wait() first we never read.
-
-    Args:
-        cmd: Command to execute.
-        encoding: Decode stdout with this encoding. None for raw bytes.
-
-    Raises:
-        ShishError: On non-zero exit code, with
-            the captured stdout/stderr attached for diagnostic use.
-    """
-    async with (
-        start(cmd).stdout(PIPE, encoding=encoding).stderr(PIPE, encoding=encoding)
-    ) as execution:
-        code, stdout, stderr = await asyncio.gather(
-            execution.wait(),
-            execution.stdout.read(),
-            execution.stderr.read(),
-        )
-
-    if code != 0:
-        raise ShishError(code, cmd, stdout, stderr)
-
-    return stdout

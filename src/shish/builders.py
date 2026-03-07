@@ -184,15 +184,32 @@ class Cmd:
 
     async def run(self) -> int:
         """Execute and return exit code."""
-        from shish import runtime  # noqa: PLC0415
+        async with self.start() as job:
+            return await job.wait()
 
-        return await runtime.run(self)
+    @ty.overload
+    async def out(self, encoding: None) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: str = ...) -> str: ...
 
     async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
-        from shish import runtime  # noqa: PLC0415
+        import asyncio  # local: needed only in this method  # noqa: PLC0415
 
-        return await runtime.out(self, encoding)
+        from shish.fd import PIPE  # noqa: PLC0415
+        from shish.runtime import ShishError  # noqa: PLC0415
+
+        async with (
+            self.start()
+            .stdout(PIPE, encoding=encoding)
+            .stderr(PIPE, encoding=encoding) as job
+        ):
+            code, stdout, stderr = await asyncio.gather(
+                job.wait(), job.stdout.read(), job.stderr.read()
+            )
+        if code != 0:
+            raise ShishError(code, self, stdout, stderr)
+        return stdout
 
 
 @dc.dataclass(frozen=True)
@@ -219,15 +236,32 @@ class Fn:
 
     async def run(self) -> int:
         """Execute and return exit code."""
-        from shish import runtime  # noqa: PLC0415
+        async with self.start() as job:
+            return await job.wait()
 
-        return await runtime.run(self)
+    @ty.overload
+    async def out(self, encoding: None) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: str = ...) -> str: ...
 
     async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
-        from shish import runtime  # noqa: PLC0415
+        import asyncio  # local: needed only in this method  # noqa: PLC0415
 
-        return await runtime.out(self, encoding)
+        from shish.fd import PIPE  # noqa: PLC0415
+        from shish.runtime import ShishError  # noqa: PLC0415
+
+        async with (
+            self.start()
+            .stdout(PIPE, encoding=encoding)
+            .stderr(PIPE, encoding=encoding) as job
+        ):
+            code, stdout, stderr = await asyncio.gather(
+                job.wait(), job.stdout.read(), job.stderr.read()
+            )
+        if code != 0:
+            raise ShishError(code, self, stdout, stderr)
+        return stdout
 
 
 @dc.dataclass(frozen=True)
@@ -246,15 +280,32 @@ class Pipeline:
 
     async def run(self) -> int:
         """Execute and return exit code."""
-        from shish import runtime  # noqa: PLC0415
+        async with self.start() as job:
+            return await job.wait()
 
-        return await runtime.run(self)
+    @ty.overload
+    async def out(self, encoding: None) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: str = ...) -> str: ...
 
     async def out(self, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
         """Execute and return stdout."""
-        from shish import runtime  # noqa: PLC0415
+        import asyncio  # local: needed only in this method  # noqa: PLC0415
 
-        return await runtime.out(self, encoding)
+        from shish.fd import PIPE  # noqa: PLC0415
+        from shish.runtime import ShishError  # noqa: PLC0415
+
+        async with (
+            self.start()
+            .stdout(PIPE, encoding=encoding)
+            .stderr(PIPE, encoding=encoding) as job
+        ):
+            code, stdout, stderr = await asyncio.gather(
+                job.wait(), job.stdout.read(), job.stderr.read()
+            )
+        if code != 0:
+            raise ShishError(code, self, stdout, stderr)
+        return stdout
 
 
 Runnable = Cmd | Pipeline | Fn

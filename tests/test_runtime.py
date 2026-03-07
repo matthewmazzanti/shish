@@ -10,7 +10,7 @@ import pytest
 from shish import PIPE, STDERR, STDIN, STDOUT, builders
 from shish.fd import Fd
 from shish.fn_stage import ByteStage
-from shish.runtime import CloseMethod, Job, ShishError, out, run, start
+from shish.runtime import CloseMethod, Job, ShishError, start
 from shish.streams import ByteReadStream, ByteWriteStream
 
 # =============================================================================
@@ -19,12 +19,12 @@ from shish.streams import ByteReadStream, ByteWriteStream
 
 
 async def test_run_cmd() -> None:
-    assert await run(builders.Cmd(("true",))) == 0
-    assert await run(builders.Cmd(("false",))) == 1
+    assert await builders.Cmd(("true",)).run() == 0
+    assert await builders.Cmd(("false",)).run() == 1
 
 
 async def test_run_cmd_with_args() -> None:
-    result = await out(builders.Cmd(("echo", "hello")))
+    result = await builders.Cmd(("echo", "hello")).out()
     assert result == "hello\n"
 
 
@@ -40,7 +40,7 @@ async def test_pipeline() -> None:
             builders.Cmd(("cat",)),
         )
     )
-    assert await run(pipeline) == 0
+    assert await pipeline.run() == 0
 
 
 async def test_pipeline_output() -> None:
@@ -50,7 +50,7 @@ async def test_pipeline_output() -> None:
             builders.Cmd(("tr", "a-z", "A-Z")),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "HELLO WORLD\n"
 
 
@@ -61,7 +61,7 @@ async def test_pipeline_pipefail() -> None:
             builders.Cmd(("cat",)),
         )
     )
-    assert await run(pipeline) != 0
+    assert await pipeline.run() != 0
 
 
 async def test_pipeline_pipefail_rightmost() -> None:
@@ -73,7 +73,7 @@ async def test_pipeline_pipefail_rightmost() -> None:
             builders.Cmd(("sh", "-c", "exit 2")),
         )
     )
-    assert await run(pipeline) == 2
+    assert await pipeline.run() == 2
 
 
 async def test_pipeline_three_stages() -> None:
@@ -84,7 +84,7 @@ async def test_pipeline_three_stages() -> None:
             builders.Cmd(("tr", "H", "J")),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "JELLO\n"
 
 
@@ -95,18 +95,18 @@ async def test_pipeline_sigpipe() -> None:
             builders.Cmd(("head", "-n", "1")),
         )
     )
-    result = await asyncio.wait_for(run(pipeline), timeout=2.0)
+    result = await asyncio.wait_for(pipeline.run(), timeout=2.0)
     assert result in (0, 141)
 
 
 async def test_empty_pipeline() -> None:
     """Empty pipeline returns success."""
-    assert await run(builders.Pipeline(())) == 0
+    assert await builders.Pipeline(()).run() == 0
 
 
 async def test_single_stage_pipeline() -> None:
     """Pipeline with one stage behaves like a plain command."""
-    result = await out(builders.Pipeline((builders.Cmd(("echo", "hello")),)))
+    result = await builders.Pipeline((builders.Cmd(("echo", "hello")),)).out()
     assert result == "hello\n"
 
 
@@ -120,21 +120,19 @@ async def test_cmd_stdout_redirect(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("echo", "hello"), redirects=(builders.FdToFile(STDOUT, outfile),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
 async def test_cmd_stdout_append(tmp_path: Path) -> None:
     outfile = tmp_path / "out.txt"
-    await run(
-        builders.Cmd(("echo", "first"), redirects=(builders.FdToFile(STDOUT, outfile),))
-    )
-    await run(
-        builders.Cmd(
-            ("echo", "second"),
-            redirects=(builders.FdToFile(STDOUT, outfile, append=True),),
-        )
-    )
+    await builders.Cmd(
+        ("echo", "first"), redirects=(builders.FdToFile(STDOUT, outfile),)
+    ).run()
+    await builders.Cmd(
+        ("echo", "second"),
+        redirects=(builders.FdToFile(STDOUT, outfile, append=True),),
+    ).run()
     assert outfile.read_text() == "first\nsecond\n"
 
 
@@ -149,7 +147,7 @@ async def test_cmd_stdin_file(tmp_path: Path) -> None:
             builders.FdToFile(STDOUT, outfile),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello from file"
 
 
@@ -162,7 +160,7 @@ async def test_cmd_stdin_data(tmp_path: Path) -> None:
             builders.FdToFile(STDOUT, outfile),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello world"
 
 
@@ -176,7 +174,7 @@ async def test_cmd_stdin_data_bytes(tmp_path: Path) -> None:
             builders.FdToFile(STDOUT, outfile),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_bytes() == data
 
 
@@ -194,7 +192,7 @@ async def test_pipeline_first_stage_stdin(tmp_path: Path) -> None:
             builders.Cmd(("grep", "world")),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "world\n"
 
 
@@ -210,7 +208,7 @@ async def test_pipeline_stage_stdout_override(tmp_path: Path) -> None:
             builders.Cmd(("cat",), redirects=(builders.FdToFile(STDOUT, result_file),)),
         )
     )
-    assert await run(pipeline) == 0
+    assert await pipeline.run() == 0
     assert outfile.read_text() == "hello\n"
     assert result_file.read_text() == ""
 
@@ -226,7 +224,7 @@ async def test_pipeline_first_stage_data(tmp_path: Path) -> None:
             builders.Cmd(("grep", "world")),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "world\n"
 
 
@@ -239,7 +237,7 @@ async def test_pipeline_last_stage_file(tmp_path: Path) -> None:
             builders.Cmd(("cat",), redirects=(builders.FdToFile(STDOUT, outfile),)),
         )
     )
-    assert await run(pipeline) == 0
+    assert await pipeline.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -253,7 +251,7 @@ async def test_pipeline_middle_stage_redirect(tmp_path: Path) -> None:
             builders.Cmd(("cat",)),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert logfile.read_text() == "hello\n"
     assert result == ""
 
@@ -269,7 +267,7 @@ async def test_fd_to_fd_stderr_to_stdout() -> None:
         ("sh", "-c", "echo out; echo err >&2"),
         redirects=(builders.FdToFd(STDOUT, STDERR),),
     )
-    result = await out(command)
+    result = await command.out()
     assert "out\n" in result
     assert "err\n" in result
 
@@ -284,7 +282,7 @@ async def test_fd_to_fd_file_then_dup(tmp_path: Path) -> None:
             builders.FdToFd(STDOUT, STDERR),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     content = outfile.read_text()
     assert "out\n" in content
     assert "err\n" in content
@@ -305,7 +303,7 @@ async def test_fd_to_fd_order_matters(tmp_path: Path) -> None:
         ),
     )
     # Capture what comes through the pipeline stdout (which is stderr after dup)
-    result = await out(command)
+    result = await command.out()
     assert result == "err\n"
     assert outfile.read_text() == "out\n"
 
@@ -317,7 +315,7 @@ async def test_fd_to_file_stderr(tmp_path: Path) -> None:
         ("sh", "-c", "echo out; echo err >&2"),
         redirects=(builders.FdToFile(STDERR, errfile),),
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "out\n"
     assert errfile.read_text() == "err\n"
 
@@ -329,7 +327,7 @@ async def test_fd_to_file_arbitrary_fd(tmp_path: Path) -> None:
         ("sh", "-c", "echo hello >&3"),
         redirects=(builders.FdToFile(3, outfile),),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -341,7 +339,7 @@ async def test_fd_from_file_arbitrary_fd(tmp_path: Path) -> None:
         ("sh", "-c", "cat <&3"),
         redirects=(builders.FdFromFile(3, infile),),
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "hello from fd3"
 
 
@@ -351,24 +349,20 @@ async def test_fd_from_data_arbitrary_fd(tmp_path: Path) -> None:
         ("sh", "-c", "cat <&3"),
         redirects=(builders.FdFromData(3, "hello from fd3"),),
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "hello from fd3"
 
 
 async def test_fd_to_file_append_arbitrary_fd(tmp_path: Path) -> None:
     """cmd 3>> file — append mode on arbitrary fd."""
     outfile = tmp_path / "out.txt"
-    await run(
-        builders.Cmd(
-            ("sh", "-c", "echo first >&3"), redirects=(builders.FdToFile(3, outfile),)
-        )
-    )
-    await run(
-        builders.Cmd(
-            ("sh", "-c", "echo second >&3"),
-            redirects=(builders.FdToFile(3, outfile, append=True),),
-        )
-    )
+    await builders.Cmd(
+        ("sh", "-c", "echo first >&3"), redirects=(builders.FdToFile(3, outfile),)
+    ).run()
+    await builders.Cmd(
+        ("sh", "-c", "echo second >&3"),
+        redirects=(builders.FdToFile(3, outfile, append=True),),
+    ).run()
     assert outfile.read_text() == "first\nsecond\n"
 
 
@@ -383,7 +377,7 @@ async def test_multiple_redirects_same_fd(tmp_path: Path) -> None:
             builders.FdToFile(STDOUT, file2),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     # Second redirect wins — output goes to file2
     assert file2.read_text() == "hello\n"
     # file1 gets created but nothing written to it
@@ -401,7 +395,7 @@ async def test_fd_close() -> None:
         ("cat",),
         redirects=(builders.FdClose(STDIN),),
     )
-    assert await run(command) == 1
+    assert await command.run() == 1
 
 
 # =============================================================================
@@ -415,7 +409,7 @@ async def test_sub_in(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("cat", sub), redirects=(builders.FdToFile(STDOUT, outfile),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -430,7 +424,7 @@ async def test_sub_in_two_sources(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("diff", sub1, sub2), redirects=(builders.FdToFile(STDOUT, outfile),)
     )
-    result = await run(command)
+    result = await command.run()
     assert result == 0
     assert outfile.read_text() == ""
 
@@ -449,7 +443,7 @@ async def test_sub_out(tmp_path: Path) -> None:
             ),
         )
     )
-    assert await run(pipeline) == 0
+    assert await pipeline.run() == 0
     assert outfile.read_text() == "hello\n"
     assert main_out.read_text() == "hello\n"
 
@@ -467,7 +461,7 @@ async def test_sub_in_with_pipeline(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("cat", sub), redirects=(builders.FdToFile(STDOUT, outfile),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "HELLO\n"
 
 
@@ -475,7 +469,7 @@ async def test_fd_from_sub_stdin() -> None:
     """cat < <(echo hello) — redirect stdin from process substitution."""
     sub = builders.SubIn(builders.Cmd(("echo", "hello")))
     command = builders.Cmd(("cat",), redirects=(builders.FdFromSub(STDIN, sub),))
-    result = await out(command)
+    result = await command.out()
     assert result == "hello\n"
 
 
@@ -490,7 +484,7 @@ async def test_fd_from_sub_arbitrary_fd(tmp_path: Path) -> None:
             builders.FdToFile(STDOUT, outfile),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -503,7 +497,7 @@ async def test_fd_to_sub_stdout(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("echo", "hello"), redirects=(builders.FdToSub(STDOUT, sub),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -517,7 +511,7 @@ async def test_fd_to_sub_arbitrary_fd(tmp_path: Path) -> None:
         ("sh", "-c", "echo hello >&3"),
         redirects=(builders.FdToSub(3, sub),),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -532,7 +526,7 @@ async def test_fd_from_sub_with_pipeline() -> None:
         ),
     )
     command = builders.Cmd(("cat",), redirects=(builders.FdFromSub(STDIN, sub),))
-    result = await out(command)
+    result = await command.out()
     assert result == "HELLO\n"
 
 
@@ -550,7 +544,7 @@ async def test_fd_to_sub_with_pipeline(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("echo", "hello"), redirects=(builders.FdToSub(STDOUT, sub),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "HELLO\n"
 
 
@@ -562,7 +556,7 @@ async def test_data_write_to_early_exit() -> None:
         ("head", "-c", "1"),
         redirects=(builders.FdFromData(STDIN, data),),
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "x"
 
 
@@ -570,21 +564,21 @@ async def test_sub_exit_code_ignored_arg() -> None:
     """cat <(false) — sub failure doesn't affect main exit code."""
     sub = builders.SubIn(builders.Cmd(("false",)))
     command = builders.Cmd(("cat", sub))
-    assert await run(command) == 0
+    assert await command.run() == 0
 
 
 async def test_sub_exit_code_ignored_redirect() -> None:
     """true 1> >(false) — redirect sub failure doesn't affect exit code."""
     sub = builders.SubOut(builders.Cmd(("false",)))
     command = builders.Cmd(("true",), redirects=(builders.FdToSub(STDOUT, sub),))
-    assert await run(command) == 0
+    assert await command.run() == 0
 
 
 async def test_sub_exit_code_ignored_from_redirect() -> None:
     """cat < <(false) — input sub failure doesn't affect exit code."""
     sub = builders.SubIn(builders.Cmd(("false",)))
     command = builders.Cmd(("cat",), redirects=(builders.FdFromSub(STDIN, sub),))
-    assert await run(command) == 0
+    assert await command.run() == 0
 
 
 async def test_sub_nested(tmp_path: Path) -> None:
@@ -595,7 +589,7 @@ async def test_sub_nested(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("cat", outer), redirects=(builders.FdToFile(STDOUT, outfile),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "hello\n"
 
 
@@ -609,7 +603,7 @@ async def test_sub_in_with_data_stdin(tmp_path: Path) -> None:
     command = builders.Cmd(
         ("cat", sub), redirects=(builders.FdToFile(STDOUT, outfile),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert outfile.read_text() == "injected data"
 
 
@@ -619,7 +613,7 @@ async def test_sub_in_with_data_stdin(tmp_path: Path) -> None:
 
 
 async def test_out_simple() -> None:
-    result = await out(builders.Cmd(("echo", "hello")))
+    result = await builders.Cmd(("echo", "hello")).out()
     assert result == "hello\n"
 
 
@@ -630,13 +624,13 @@ async def test_out_pipeline() -> None:
             builders.Cmd(("tr", "a-z", "A-Z")),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "HELLO WORLD\n"
 
 
 async def test_out_empty() -> None:
     command = builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, ""),))
-    result = await out(command)
+    result = await command.out()
     assert result == ""
 
 
@@ -644,14 +638,14 @@ async def test_out_with_data() -> None:
     command = builders.Cmd(
         ("cat",), redirects=(builders.FdFromData(STDIN, "input data"),)
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "input data"
 
 
 async def test_out_binary() -> None:
     data = bytes(range(256))
     command = builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, data),))
-    result = await out(command, encoding=None)
+    result = await command.out(encoding=None)
     assert result == data
 
 
@@ -659,7 +653,7 @@ async def test_out_large_data() -> None:
     """Data larger than pipe buffer (64K) exercises backpressure path."""
     data = b"x" * (256 * 1024)
     command = builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, data),))
-    result = await out(command, encoding=None)
+    result = await command.out(encoding=None)
     assert result == data
 
 
@@ -667,13 +661,11 @@ async def test_out_large_data_pipeline() -> None:
     """Multiple large data feeds in concurrent pipelines exercise interleaved writes."""
     data = b"x" * (256 * 1024)
     result_a, result_b = await asyncio.gather(
-        out(
-            builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, data),)),
-            encoding=None,
+        builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, data),)).out(
+            encoding=None
         ),
-        out(
-            builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, data),)),
-            encoding=None,
+        builders.Cmd(("cat",), redirects=(builders.FdFromData(STDIN, data),)).out(
+            encoding=None
         ),
     )
     assert result_a == data
@@ -692,7 +684,7 @@ async def test_out_large_data_multi_fd(tmp_path: Path) -> None:
             builders.FdFromData(4, data),
         ),
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
     assert out3.read_bytes() == data
     assert out4.read_bytes() == data
 
@@ -739,13 +731,13 @@ async def test_start_stdin_fd_with_stdout_fd() -> None:
 
 async def test_out_raises_on_failure() -> None:
     with pytest.raises(ShishError) as exc_info:
-        await out(builders.Cmd(("false",)))
+        await builders.Cmd(("false",)).out()
     assert exc_info.value.returncode == 1
 
 
 async def test_out_raises_preserves_output() -> None:
     with pytest.raises(ShishError) as exc_info:
-        await out(builders.Cmd(("sh", "-c", "echo partial; exit 1")))
+        await builders.Cmd(("sh", "-c", "echo partial; exit 1")).out()
     assert exc_info.value.stdout == "partial\n"
 
 
@@ -867,9 +859,9 @@ async def test_start_no_pipe_streams_none() -> None:
 
 async def test_concurrent_runs() -> None:
     results = await asyncio.gather(
-        run(builders.Pipeline((builders.Cmd(("echo", "a")), builders.Cmd(("cat",))))),
-        run(builders.Pipeline((builders.Cmd(("echo", "b")), builders.Cmd(("cat",))))),
-        run(builders.Pipeline((builders.Cmd(("echo", "c")), builders.Cmd(("cat",))))),
+        builders.Pipeline((builders.Cmd(("echo", "a")), builders.Cmd(("cat",)))).run(),
+        builders.Pipeline((builders.Cmd(("echo", "b")), builders.Cmd(("cat",)))).run(),
+        builders.Pipeline((builders.Cmd(("echo", "c")), builders.Cmd(("cat",)))).run(),
     )
     assert results == [0, 0, 0]
 
@@ -878,12 +870,10 @@ async def test_concurrent_file_writes(tmp_path: Path) -> None:
     files = [tmp_path / f"out{idx}.txt" for idx in range(5)]
     await asyncio.gather(
         *[
-            run(
-                builders.Cmd(
-                    ("echo", f"content{idx}"),
-                    redirects=(builders.FdToFile(STDOUT, fpath),),
-                )
-            )
+            builders.Cmd(
+                ("echo", f"content{idx}"),
+                redirects=(builders.FdToFile(STDOUT, fpath),),
+            ).run()
             for idx, fpath in enumerate(files)
         ]
     )
@@ -898,7 +888,7 @@ async def test_concurrent_file_writes(tmp_path: Path) -> None:
 
 async def test_cancel_kills_child() -> None:
     """Cancelling a running task kills the child process."""
-    task = asyncio.create_task(run(builders.Cmd(("sleep", "60"))))
+    task = asyncio.create_task(builders.Cmd(("sleep", "60")).run())
     await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -908,11 +898,9 @@ async def test_cancel_kills_child() -> None:
 async def test_cancel_pipeline_kills_all_stages() -> None:
     """Cancelling a pipeline kills all stages."""
     task = asyncio.create_task(
-        run(
-            builders.Pipeline(
-                (builders.Cmd(("sleep", "60")), builders.Cmd(("sleep", "60")))
-            )
-        )
+        builders.Pipeline(
+            (builders.Cmd(("sleep", "60")), builders.Cmd(("sleep", "60")))
+        ).run()
     )
     await asyncio.sleep(0.01)
     task.cancel()
@@ -928,7 +916,7 @@ async def test_cancel_pipeline_kills_all_stages() -> None:
 async def test_signal_killed_exit_code() -> None:
     """Process killed by signal returns 128 + signal number."""
     # SIGKILL = 9, so exit code should be 137
-    result = await run(builders.Cmd(("sh", "-c", "kill -9 $$")))
+    result = await builders.Cmd(("sh", "-c", "kill -9 $$")).run()
     assert result == 137
 
 
@@ -937,7 +925,7 @@ async def test_pipeline_factory_execution() -> None:
         builders.Cmd(("echo", "hello")),
         builders.Cmd(("tr", "a-z", "A-Z")),
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "HELLO\n"
 
 
@@ -949,7 +937,7 @@ async def test_pipeline_factory_execution() -> None:
 async def test_env_vars() -> None:
     """Child process sees env vars set via env_vars."""
     command = builders.Cmd(("printenv", "FOO"), env_vars=(("FOO", "bar"),))
-    result = await out(command)
+    result = await command.out()
     assert result == "bar\n"
 
 
@@ -959,7 +947,7 @@ async def test_env_vars_multiple() -> None:
         ("sh", "-c", "echo $FOO $BAZ"),
         env_vars=(("FOO", "hello"), ("BAZ", "world")),
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "hello world\n"
 
 
@@ -969,7 +957,7 @@ async def test_env_vars_unset() -> None:
         ("sh", "-c", "echo ${HOME-unset}"),
         env_vars=(("HOME", None),),
     )
-    result = await out(command)
+    result = await command.out()
     assert result == "unset\n"
 
 
@@ -978,7 +966,7 @@ async def test_env_vars_override() -> None:
 
     original = os.environ.get("HOME", "")
     command = builders.Cmd(("printenv", "HOME"), env_vars=(("HOME", "/fake/home"),))
-    result = await out(command)
+    result = await command.out()
     assert result == "/fake/home\n"
     # Verify parent env is not affected
     assert os.environ.get("HOME", "") == original
@@ -992,7 +980,7 @@ async def test_env_vars_pipeline_per_cmd() -> None:
             builders.Cmd(("cat",)),
         )
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "first\n"
 
 
@@ -1004,14 +992,14 @@ async def test_env_vars_pipeline_per_cmd() -> None:
 async def test_working_dir(tmp_path: Path) -> None:
     """Child process runs in the specified working directory."""
     command = builders.Cmd(("pwd",), working_dir=tmp_path)
-    result = await out(command)
+    result = await command.out()
     assert result.strip() == str(tmp_path.resolve())
 
 
 async def test_working_dir_pwd_synced(tmp_path: Path) -> None:
     """PWD env var is synced when working_dir is set."""
     command = builders.Cmd(("printenv", "PWD"), working_dir=tmp_path)
-    result = await out(command)
+    result = await command.out()
     assert result.strip() == str(tmp_path)
 
 
@@ -1090,26 +1078,26 @@ async def _raises(ctx: ByteStage) -> int:
 
 async def test_fn_standalone() -> None:
     """Standalone Fn execution returns 0."""
-    assert await run(builders.Fn(_generate)) == 0
+    assert await builders.Fn(_generate).run() == 0
 
 
 async def test_fn_standalone_out() -> None:
     """Standalone Fn captures stdout correctly."""
-    result = await out(builders.Fn(_generate))
+    result = await builders.Fn(_generate).out()
     assert result == "generated\n"
 
 
 async def test_fn_in_pipeline_last() -> None:
     """Fn as the last stage of a pipeline processes piped input."""
     pipeline = builders.Pipeline((builders.Cmd(("echo", "hello")), builders.Fn(_upper)))
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "HELLO\n"
 
 
 async def test_fn_in_pipeline_first() -> None:
     """Fn as the first stage of a pipeline produces output for next stage."""
     pipeline = builders.Pipeline((builders.Fn(_generate), builders.Cmd(("cat",))))
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "generated\n"
 
 
@@ -1118,20 +1106,20 @@ async def test_fn_in_pipeline_middle() -> None:
     pipeline = builders.Pipeline(
         (builders.Cmd(("echo", "hello")), builders.Fn(_upper), builders.Cmd(("cat",)))
     )
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "HELLO\n"
 
 
 async def test_fn_only_pipeline() -> None:
     """Pipeline with only Fn stages works end to end."""
     pipeline = builders.Pipeline((builders.Fn(_generate), builders.Fn(_upper)))
-    result = await out(pipeline)
+    result = await pipeline.out()
     assert result == "GENERATED\n"
 
 
 async def test_fn_exit_code() -> None:
-    """Fn exit code is propagated through run()."""
-    assert await run(builders.Fn(_exit_42)) == 42
+    """Fn exit code is propagated through .run()."""
+    assert await builders.Fn(_exit_42).run() == 42
 
 
 async def test_fn_pipefail() -> None:
@@ -1140,31 +1128,31 @@ async def test_fn_pipefail() -> None:
     pipeline_fn_first = builders.Pipeline(
         (builders.Fn(_exit_42), builders.Cmd(("cat",)))
     )
-    assert await run(pipeline_fn_first) == 42
+    assert await pipeline_fn_first.run() == 42
 
     # Cmd succeeds (0), Fn fails (42) → rightmost non-zero is 42
     pipeline_fn_last = builders.Pipeline(
         (builders.Cmd(("true",)), builders.Fn(_exit_42))
     )
-    assert await run(pipeline_fn_last) == 42
+    assert await pipeline_fn_last.run() == 42
 
     # Both succeed → 0
     pipeline_both_ok = builders.Pipeline(
         (builders.Fn(_generate), builders.Cmd(("cat",)))
     )
-    assert await run(pipeline_both_ok) == 0
+    assert await pipeline_both_ok.run() == 0
 
 
 async def test_fn_exception_returns_1() -> None:
     """Exception in Fn is caught and reported as returncode 1."""
-    assert await run(builders.Fn(_raises)) == 1
+    assert await builders.Fn(_raises).run() == 1
 
 
 async def test_fn_as_sub_in() -> None:
     """Fn used as input process substitution via FdFromSub."""
     sub = builders.SubIn(builders.Fn(_generate))
     command = builders.Cmd(("cat",), redirects=(builders.FdFromSub(STDIN, sub),))
-    result = await out(command)
+    result = await command.out()
     assert result == "generated\n"
 
 
@@ -1180,7 +1168,7 @@ async def test_fn_as_sub_out() -> None:
     command = builders.Cmd(
         ("echo", "hello"), redirects=(builders.FdToSub(STDOUT, sub),)
     )
-    assert await run(command) == 0
+    assert await command.run() == 0
 
 
 async def test_fn_cancel() -> None:
@@ -1190,7 +1178,7 @@ async def test_fn_cancel() -> None:
         await asyncio.sleep(60)
         return 0
 
-    task = asyncio.create_task(run(builders.Fn(_slow)))
+    task = asyncio.create_task(builders.Fn(_slow).run())
     await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1205,15 +1193,13 @@ async def test_fn_cancel_mixed_pipeline() -> None:
         return 0
 
     task = asyncio.create_task(
-        run(
-            builders.Pipeline(
-                (
-                    builders.Cmd(("sleep", "60")),
-                    builders.Fn(_slow),
-                    builders.Cmd(("sleep", "60")),
-                )
+        builders.Pipeline(
+            (
+                builders.Cmd(("sleep", "60")),
+                builders.Fn(_slow),
+                builders.Cmd(("sleep", "60")),
             )
-        )
+        ).run()
     )
     await asyncio.sleep(0.01)
     task.cancel()
@@ -1229,7 +1215,7 @@ async def test_fn_cancel_mid_read() -> None:
         return 0
 
     task = asyncio.create_task(
-        run(builders.Pipeline((builders.Cmd(("sleep", "60")), builders.Fn(_reader))))
+        builders.Pipeline((builders.Cmd(("sleep", "60")), builders.Fn(_reader))).run()
     )
     await asyncio.sleep(0.01)
     task.cancel()
@@ -1248,7 +1234,7 @@ async def test_fn_cancel_mid_write() -> None:
         return 0  # type: ignore[unreachable]
 
     task = asyncio.create_task(
-        run(builders.Pipeline((builders.Fn(_writer), builders.Cmd(("sleep", "60")))))
+        builders.Pipeline((builders.Fn(_writer), builders.Cmd(("sleep", "60")))).run()
     )
     await asyncio.sleep(0.01)
     task.cancel()
