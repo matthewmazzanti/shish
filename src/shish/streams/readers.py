@@ -65,6 +65,11 @@ class ByteReadStream:
         """Read all remaining lines until EOF."""
         return [line async for line in self]
 
+    @property
+    def closed(self) -> bool:
+        """Whether the stream is closed."""
+        return self._fd.closed
+
     async def close(self) -> None:
         """Close the fd."""
         self._fd.close()
@@ -169,6 +174,11 @@ class TextReadStream:
     async def readlines(self) -> list[str]:
         """Read all remaining lines until EOF."""
         return [line async for line in self]
+
+    @property
+    def closed(self) -> bool:
+        """Whether the stream is closed."""
+        return self._stream.closed
 
     async def close(self) -> None:
         """Close the underlying byte stream."""

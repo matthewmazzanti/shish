@@ -85,7 +85,7 @@ async def test_write_eof_with_data() -> None:
     read_fd, write_fd = os.pipe()
     writer = ByteWriteStream(Fd(write_fd))
     await writer.write_eof(b"goodbye")
-    assert writer._fd.closed  # pyright: ignore[reportPrivateUsage]
+    assert writer.closed
     result = os.read(read_fd, 1024)
     os.close(read_fd)
     assert result == b"goodbye"
@@ -96,7 +96,7 @@ async def test_write_eof_empty() -> None:
     read_fd, write_fd = os.pipe()
     writer = ByteWriteStream(Fd(write_fd))
     await writer.write_eof()
-    assert writer._fd.closed  # pyright: ignore[reportPrivateUsage]
+    assert writer.closed
     result = os.read(read_fd, 1024)
     os.close(read_fd)
     assert result == b""
@@ -588,9 +588,9 @@ async def test_decode_does_not_close_byte_streams() -> None:
     await noop(byte_ctx)
 
     # Byte streams should NOT be closed by the decorator
-    assert not stdin_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
-    assert not stdout_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
-    assert not stderr_stream._fd.closed  # pyright: ignore[reportPrivateUsage]
+    assert not stdin_stream.closed
+    assert not stdout_stream.closed
+    assert not stderr_stream.closed
 
     # Clean up
     await stdin_stream.close()

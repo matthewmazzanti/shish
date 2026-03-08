@@ -39,6 +39,11 @@ class _DirectWriter:
                 await self._writable()
         return written
 
+    @property
+    def closed(self) -> bool:
+        """Whether the fd is closed."""
+        return self._fd.closed
+
     def close(self) -> None:
         """Close the fd."""
         self._fd.close()
@@ -71,13 +76,22 @@ class ByteWriteStream:
 
     def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
         self._writer = _DirectWriter(owned_fd)
-        self._fd = owned_fd
         self._buf = bytearray()
         self._buffer_size = buffer_size
 
+    @property
+    def closed(self) -> bool:
+        """Whether the stream is closed."""
+        return self._writer.closed
+
+    @property
+    def buffer_size(self) -> int:
+        """Buffer capacity in bytes."""
+        return self._buffer_size
+
     async def write(self, data: Buffer) -> int:
         """Write data, buffering small writes. Returns len(data)."""
-        if self._fd.closed:
+        if self.closed:
             raise OSError("write to closed stream")
         if not data:
             return 0
@@ -120,7 +134,7 @@ class ByteWriteStream:
 
     async def close(self) -> None:
         """Flush buffer and close the fd."""
-        if self._fd.closed:
+        if self.closed:
             return
         try:
             await self.flush()
@@ -139,26 +153,39 @@ class TextWriteStream:
 
     Mirrors open(mode="w"). Owns the byte stream — closing this closes it.
 
-    write() encodes in buffer_size character chunks to avoid allocating
-    the full encoded bytes for large strings. Returns the number of
-    characters written (always len(data)), not bytes.
+    write() encodes and passes through to the underlying ByteWriteStream,
+    which handles buffering. Returns the number of characters written
+    (always len(data)), not bytes.
     """
 
     def __init__(
         self,
-        stream: ByteWriteStream,
+        writer: ByteWriteStream,
         encoding: str = DEFAULT_ENCODING,
-        buffer_size: int = DEFAULT_BUFFER_SIZE,
     ) -> None:
-        self._stream = stream
+        self._writer = writer
         self._encoding = encoding
-        self._buffer_size = buffer_size
+
+    @property
+    def closed(self) -> bool:
+        """Whether the stream is closed."""
+        return self._writer.closed
 
     async def write(self, data: str) -> int:
-        """Encode in chunks and write. Returns number of characters written."""
-        for offset in range(0, len(data), self._buffer_size):
-            chunk = data[offset : offset + self._buffer_size]
-            await self._stream.write(chunk.encode(self._encoding))
+        """Encode in chunks and write. Returns number of characters written.
+
+        Chunks by the underlying byte stream's buffer size to avoid
+        allocating the full encoded string at once.
+        """
+        if self.closed:
+            raise OSError("write to closed stream")
+        # Divide by 4: worst-case bytes per char in any Unicode encoding
+        # (UTF-8, UTF-16 surrogates, UTF-32). Ensures encoded chunks
+        # fit within the byte stream's buffer.
+        chunk_size = max(self._writer.buffer_size // 4, 1)
+        for offset in range(0, len(data), chunk_size):
+            chunk = data[offset : offset + chunk_size]
+            await self._writer.write(chunk.encode(self._encoding))
         return len(data)
 
     async def writelines(self, lines: Iterable[str]) -> None:
@@ -174,7 +201,7 @@ class TextWriteStream:
 
     async def close(self) -> None:
         """Close the underlying byte stream."""
-        await self._stream.close()
+        await self._writer.close()
 
     async def __aenter__(self) -> TextWriteStream:
         return self
