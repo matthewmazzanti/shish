@@ -45,6 +45,7 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PLC0415", "ICN"]
+ignore = ["E501"]  # line length enforced by formatter; overload tables use fmt: off
 
 [tool.ruff.lint.flake8-import-conventions.aliases]
 typing = "ty"

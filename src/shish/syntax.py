@@ -12,7 +12,7 @@ from collections.abc import Callable, Generator, Mapping
 
 import shish.builders as builders
 from shish._defaults import DEFAULT_ENCODING
-from shish.fd import STDIN, STDOUT
+from shish.fd import STDIN, STDOUT, Pipe
 from shish.fn_stage import ByteFn, TextFn, make_byte_wrapper
 
 if ty.TYPE_CHECKING:
@@ -97,7 +97,7 @@ class Cmd:
             "Cmd cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> Generator[object]:
         return self._shish_ir.run().__await__()
 
 
@@ -152,7 +152,7 @@ class Pipeline:
             "Pipeline cannot be used as bool. Use parentheses: (cmd < 'in') > 'out'"
         )
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> Generator[object]:
         return self._shish_ir.run().__await__()
 
 
@@ -169,7 +169,7 @@ class Fn:
     def __bool__(self) -> ty.Never:
         raise TypeError("Fn cannot be used as bool")
 
-    def __await__(self) -> Generator[object, None, int]:
+    def __await__(self) -> Generator[object]:
         return self._shish_ir.run().__await__()
 
 
@@ -325,14 +325,104 @@ def start(cmd: Runnable) -> JobCtx[None, None, None]:
     return unwrap(cmd).start()
 
 
-async def run(cmd: Runnable) -> int:
-    """Execute a command or pipeline and return exit code."""
-    return await unwrap(cmd).run()
+# fmt: off
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: None = ..., stderr: None = ..., encoding: str | None = ...) -> builders.Result[None, None]: ...
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: None = ..., encoding: str = ...) -> builders.Result[str, None]: ...
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: None = ..., encoding: None = ...) -> builders.Result[bytes, None]: ...
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: None = ..., stderr: Pipe, encoding: str = ...) -> builders.Result[None, str]: ...
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: None = ..., stderr: Pipe, encoding: None = ...) -> builders.Result[None, bytes]: ...
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: str = ...) -> builders.Result[str, str]: ...
+@ty.overload
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: None = ...) -> builders.Result[bytes, bytes]: ...
+# fmt: on
 
 
-async def out(cmd: Runnable, encoding: str | None = DEFAULT_ENCODING) -> str | bytes:
-    """Execute command and return stdout."""
-    return await unwrap(cmd).out(encoding)
+async def result(
+    cmd: Runnable,
+    *,
+    check: bool = True,
+    stdout: Pipe | None = None,
+    stderr: Pipe | None = None,
+    encoding: str | None = DEFAULT_ENCODING,
+) -> builders.Result[ty.Any, ty.Any]:
+    """Execute and return Result with exit code and optional captured streams."""
+    return await unwrap(cmd).result(
+        check=check, stdout=stdout, stderr=stderr, encoding=encoding
+    )
+
+
+async def run(cmd: Runnable) -> None:
+    """Execute. Raises ShishError on non-zero exit."""
+    await unwrap(cmd).run()
+
+
+async def code(cmd: Runnable) -> int:
+    """Execute and return exit code."""
+    return await unwrap(cmd).code()
+
+
+async def ok(cmd: Runnable) -> bool:
+    """Execute and return True if exit code is 0."""
+    return await unwrap(cmd).ok()
+
+
+# fmt: off
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> tuple[str, str]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, str, str]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[True] = ...) -> str: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[False]) -> tuple[int, str]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> str: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, str]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> tuple[bytes, bytes]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, bytes, bytes]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[True] = ...) -> bytes: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[False]) -> tuple[int, bytes]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> bytes: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, bytes]: ...
+# fmt: on
+
+
+async def out(
+    cmd: Runnable,
+    encoding: str | None = DEFAULT_ENCODING,
+    *,
+    stdout: bool = True,
+    stderr: bool = False,
+    check: bool = True,
+) -> ty.Any:
+    """Execute and return captured output.
+
+    By default captures stdout. Pass stderr=True to also capture stderr,
+    stdout=False to skip stdout. check=False prepends exit code.
+    Single-stream capture returns a scalar; multi-stream returns a tuple.
+    """
+    # broad types (bool, str | None) span multiple overloads;
+    # bypass builder overload resolution — callers see our syntax-layer overloads
+    inner: ty.Any = unwrap(cmd)
+    return await inner.out(encoding, stdout=stdout, stderr=stderr, check=check)
+
+
+async def err(cmd: Runnable) -> bool:
+    """Execute and return True if exit code is non-zero."""
+    return await unwrap(cmd).err()
 
 
 # Convenience

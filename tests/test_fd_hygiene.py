@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 
 from shish import STDERR, STDIN, STDOUT, builders
-from shish.runtime import out
 
 
 def _child_fds(output: str) -> set[int]:
@@ -20,7 +19,7 @@ def _child_fds(output: str) -> set[int]:
 
 async def test_child_default_fds(list_fds_bin: str) -> None:
     """Plain command sees only stdin, stdout, stderr."""
-    fds = _child_fds(await out(builders.Cmd((list_fds_bin,))))
+    fds = _child_fds(await builders.Cmd((list_fds_bin,)).out())
     assert fds == {STDIN, STDOUT, STDERR}
 
 
@@ -31,7 +30,7 @@ async def test_child_fds_with_redirect(list_fds_bin: str, tmp_path: Path) -> Non
         (list_fds_bin,),
         redirects=(builders.FdToFile(3, outfile),),
     )
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     assert fds == {STDIN, STDOUT, STDERR, 3}
 
 
@@ -42,7 +41,7 @@ async def test_child_fds_with_sub_redirect(list_fds_bin: str) -> None:
         (list_fds_bin,),
         redirects=(builders.FdFromSub(3, sub),),
     )
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     assert fds == {STDIN, STDOUT, STDERR, 3}
 
 
@@ -52,7 +51,7 @@ async def test_child_fds_close_removes_fd(list_fds_bin: str) -> None:
         (list_fds_bin,),
         redirects=(builders.FdClose(STDIN),),
     )
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     assert fds == {STDOUT, STDERR}
 
 
@@ -65,7 +64,7 @@ async def test_child_fds_multiple_arbitrary(list_fds_bin: str, tmp_path: Path) -
             builders.FdToFile(5, tmp_path / "b.txt"),
         ),
     )
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     assert fds == {STDIN, STDOUT, STDERR, 3, 5}
 
 
@@ -75,7 +74,7 @@ async def test_child_fds_dup_no_extra(list_fds_bin: str) -> None:
         (list_fds_bin,),
         redirects=(builders.FdToFd(STDOUT, STDERR),),
     )
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     assert fds == {STDIN, STDOUT, STDERR}
 
 
@@ -83,7 +82,7 @@ async def test_child_fds_sub_in_arg(list_fds_bin: str) -> None:
     """SubIn as arg exposes exactly one extra fd."""
     sub = builders.SubIn(builders.Cmd(("echo", "hello")))
     command = builders.Cmd((list_fds_bin, sub))
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     # Sub fd replaces the SubIn arg with /dev/fd/N — only that fd is extra
     assert STDIN in fds
     assert STDOUT in fds
@@ -97,7 +96,7 @@ async def test_child_fds_multiple_sub_in_args(list_fds_bin: str) -> None:
     sub1 = builders.SubIn(builders.Cmd(("echo", "a")))
     sub2 = builders.SubIn(builders.Cmd(("echo", "b")))
     command = builders.Cmd((list_fds_bin, sub1, sub2))
-    fds = _child_fds(await out(command))
+    fds = _child_fds(await command.out())
     assert STDIN in fds
     assert STDOUT in fds
     assert STDERR in fds
@@ -119,7 +118,7 @@ async def test_child_fds_pipeline_no_leak(list_fds_bin: str) -> None:
             builders.Cmd(("cat",)),
         )
     )
-    fds = _child_fds(await out(pipeline))
+    fds = _child_fds(await pipeline.out())
     assert fds == {STDIN, STDOUT, STDERR}
 
 
@@ -137,7 +136,7 @@ async def test_child_fds_pipeline_first_stage_redirect(
             builders.Cmd(("cat",)),
         )
     )
-    fds = _child_fds(await out(pipeline))
+    fds = _child_fds(await pipeline.out())
     assert fds == {STDIN, STDOUT, STDERR}
 
 
@@ -145,7 +144,7 @@ async def test_parent_fds_not_leaked_to_child(list_fds_bin: str) -> None:
     """Pipe fds open in parent process are not visible to child."""
     read_fd, write_fd = os.pipe()
     try:
-        fds = _child_fds(await out(builders.Cmd((list_fds_bin,))))
+        fds = _child_fds(await builders.Cmd((list_fds_bin,)).out())
         assert read_fd not in fds
         assert write_fd not in fds
     finally:
@@ -158,5 +157,5 @@ async def test_parent_open_file_not_leaked_to_child(
 ) -> None:
     """A file opened in the parent is not visible to child."""
     with open(tmp_path / "leak.txt", "w") as fobj:
-        fds = _child_fds(await out(builders.Cmd((list_fds_bin,))))
+        fds = _child_fds(await builders.Cmd((list_fds_bin,)).out())
         assert fobj.fileno() not in fds

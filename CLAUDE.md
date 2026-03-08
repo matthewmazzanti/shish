@@ -27,10 +27,11 @@ src/shish/          # main package
   streams.py        # async byte/text streams for subprocess pipes
   runtime/
     __init__.py     # re-exports from api + tree
-    api.py          # Job, JobCtx, start(), run(), out()
+    api.py          # Job, JobCtx, start()
     spawn.py        # SpawnScope: fd/proc tracking, pipeline/fn spawn
     spawn_cmd.py    # SpawnCmdScope, FdOps: per-cmd redirect resolution
     tree.py         # process tree nodes: CmdNode, PipelineNode, FnNode
+docs/design/        # planning and design docs
 TODO.md             # planned features and known issues
 ```
 
@@ -38,8 +39,12 @@ TODO.md             # planned features and known issues
 
 - `cmd("echo", "hello")` or `sh.echo("hello")` returns `Cmd` - immutable command builder
 - `cmd1 | cmd2` returns `Pipeline` - concurrent execution
-- `await cmd` or `await run(cmd)` - returns exit code
+- `await cmd` or `await run(cmd)` - raises `ShishError` on non-zero exit
+- `await code(cmd)` - returns exit code as int
 - `await out(cmd)` - returns stdout as string (or bytes with `encoding=None`)
+- `await err(cmd)` / `await out_err(cmd)` - capture stderr or both
+- `await result(cmd, stdout=PIPE)` - returns `Result` namedtuple with `.code`, `.out`, `.err`
+- `check=False` on capture functions prepends exit code: `code, stdout = await out(cmd, check=False)`
 - `sub_in(cmd)` / `sub_out(cmd)` - process substitution via `/dev/fd/N`
 - Operators: `|` pipe, `>` write, `>>` append, `<` read, `<<` feed, `@` cwd, `%` env (Cmd only, not Pipeline; enforced order: `env % cmd @ cwd`)
 - Redirect operators are Cmd-only to avoid precedence confusion: in Python `|` binds tighter
@@ -56,6 +61,7 @@ TODO.md             # planned features and known issues
 - ruff ANN rules enforce annotation coverage
 - No one or two letter variable names except loop indexes
 - Local imports are allowed but must include a descriptive comment explaining why and `# noqa: PLC0415`
+- Put the descriptive comment on its own line above the import, keep `# noqa: PLC0415` inline (ruff format can reflow long lines, breaking inline comments off the import)
 - Conventional Commits: messages use `feat:`, `fix:`, `chore:`, `docs:`, etc. prefix
 - Branch names match: `feat/`, `fix/`, `chore/`, `docs/`, etc.
 - Always ask before committing to main — use a feature branch instead
