@@ -15,10 +15,11 @@ DEFAULT_BUFFER_SIZE = 65536
 class _DirectWriter:
     """Unbuffered async fd writer. Owns the fd.
 
-    Extracted from the original ByteWriteStream. Uses os.write +
-    loop.add_writer directly. write() loops with a memoryview,
-    advancing past each partial os.write until all data is delivered.
-    If EAGAIN, it suspends on add_writer until the fd is writable.
+    Uses os.write + loop.add_writer directly. write() performs a
+    single os.write call — if the fd would block, it suspends on
+    add_writer first. Returns the actual byte count written (may be
+    less than len(data) on partial writes). The caller is responsible
+    for looping on short writes.
     """
 
     def __init__(self, owned_fd: Fd) -> None:
@@ -27,17 +28,14 @@ class _DirectWriter:
         os.set_blocking(owned_fd.fd, False)
 
     async def write(self, data: Buffer) -> int:
-        """Write all bytes. Awaits when pipe buffer is full. Returns len(data)."""
+        """Write once. Returns actual bytes written (may be short)."""
         if not data:
             return 0
-        view = memoryview(data)
-        written = 0
-        while written < len(view):
+        while True:
             try:
-                written += os.write(self._fd.fd, view[written:])
+                return os.write(self._fd.fd, data)
             except BlockingIOError:
                 await self._writable()
-        return written
 
     @property
     def closed(self) -> bool:
@@ -108,7 +106,7 @@ class ByteWriteStream:
 
         if length >= self._buffer_size:
             # Large write — bypass buffer, write directly
-            await self._writer.write(view)
+            await self._drain(view)
         else:
             # Small write — buffer it
             self._buf.extend(view)
@@ -129,8 +127,15 @@ class ByteWriteStream:
     async def flush(self) -> None:
         """Flush the buffer to the underlying writer."""
         if self._buf:
-            await self._writer.write(self._buf)
+            await self._drain(self._buf)
             self._buf.clear()
+
+    async def _drain(self, data: Buffer) -> None:
+        """Write all of data via the underlying writer, looping on short writes."""
+        view = memoryview(data)
+        written = 0
+        while written < len(view):
+            written += await self._writer.write(view[written:])
 
     async def close(self) -> None:
         """Flush buffer and close the fd."""
