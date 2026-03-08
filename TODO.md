@@ -17,7 +17,6 @@
 - Configurable flag handling — current `Sh.__call__` hardcodes `-k`/`--key` and `_` → `-`
   mapping. Consider making flag style pluggable (e.g. `+flag`, `/flag`, `--no-flag` negation).
 - Configurable command builder: `sh = CommandBuilder(env={...}, cwd="...", raise_on_error=True)`
-- Bad return codes: map to something? raise exceptions? configurable?
 
 ## Cleanup
 
