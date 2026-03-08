@@ -2,22 +2,29 @@
 
 ## Overview
 
-| check | stdout | stderr | alias | returns |
-|---|---|---|---|---|
-| True | None | None | `run` / `await cmd` | `None` |
-| True | PIPE | None | `out` | `str` |
-| True | None | PIPE | `err` | `str` |
-| True | PIPE | PIPE | `out_err` | `(str, str)` |
-| False | None | None | `code` | `int` |
-| False | PIPE | None | `out(check=False)` | `(int, str)` |
-| False | None | PIPE | `err(check=False)` | `(int, str)` |
-| False | PIPE | PIPE | `out_err(check=False)` | `(int, str, str)` |
+| function | returns | description |
+|---|---|---|
+| `run` / `await cmd` | `None` | execute, raise on non-zero |
+| `code` | `int` | exit code |
+| `ok` | `bool` | True if exit code == 0 |
+| `err` | `bool` | True if exit code != 0 |
+| `out` | `str` | captured stdout (default) |
+| `out(stderr=True)` | `(str, str)` | stdout + stderr |
+| `out(stdout=False, stderr=True)` | `str` | stderr only |
+| `out(check=False)` | `(int, str)` | exit code + stdout |
+| `out(encoding=None)` | `bytes` | raw bytes |
+| `result(stdout=PIPE)` | `Result[str, None]` | full control escape hatch |
+| `start` | `JobCtx` | streaming/interactive escape hatch |
 
-5 functions: `run`, `code`, `out`, `err`, `out_err`. The capture functions
-(`out`, `err`, `out_err`) accept `check=False` to prepend exit code to the return.
+3 execution functions (`run`, `out`, `result`), 3 exit-code accessors (`code`,
+`ok`, `err`), 1 streaming escape hatch (`start`).
 
-`result()` is the unified parametric function returning `Result` — covers any
-combination via explicit flags. Aliases are sugar over `result()`.
+`out()` is the single capture entrypoint with `stdout`/`stderr` bool selectors,
+`encoding` for str/bytes, and `check` to prepend exit code. Single-stream
+capture returns a scalar; multi-stream returns a tuple.
+
+`result()` is the parametric escape hatch returning `Result` — covers any
+combination via explicit `stdout=PIPE`/`stderr=PIPE` flags.
 
 `start()` is the escape hatch for streaming, interactive, or long-running processes.
 
@@ -68,11 +75,11 @@ async def result(
 Overloads narrow the `Result` generic:
 
 ```python
-result(cmd)                                        -> Result[None, None]
-result(cmd, stdout=PIPE)                           -> Result[str, None]
-result(cmd, stderr=PIPE)                           -> Result[None, str]
-result(cmd, stdout=PIPE, stderr=PIPE)              -> Result[str, str]
-result(cmd, stdout=PIPE, encoding=None)            -> Result[bytes, None]
+result(cmd)                                          -> Result[None, None]
+result(cmd, stdout=PIPE)                             -> Result[str, None]
+result(cmd, stderr=PIPE)                             -> Result[None, str]
+result(cmd, stdout=PIPE, stderr=PIPE)                -> Result[str, str]
+result(cmd, stdout=PIPE, encoding=None)              -> Result[bytes, None]
 result(cmd, stdout=PIPE, stderr=PIPE, encoding=None) -> Result[bytes, bytes]
 ```
 
@@ -90,34 +97,45 @@ code, out, err = await result(sh.ls(), stdout=PIPE, stderr=PIPE)
 code, out, err = await result(sh.grep("pat"), check=False, stdout=PIPE)
 ```
 
-### Convenience aliases
+### `out()`: flexible capture
 
-5 functions. `check=False` on capture functions prepends exit code to the return.
-Naming convention: `out` → `stdout=PIPE`, `err` → `stderr=PIPE`.
+`out()` is the single capture entrypoint. Bool selectors for `stdout`/`stderr`
+control which streams to capture. `encoding` controls str vs bytes. `check=False`
+prepends exit code to the return.
 
 ```python
-# run: no capture, raise on non-zero
-async def run(cmd) -> None:
-
-# code: no capture, return exit code
-async def code(cmd) -> int:
-
-# out: capture stdout (check= overload)
-async def out(cmd, encoding=...) -> str:                  # raises
-async def out(cmd, check=False, encoding=...) -> tuple[int, str]:  # (code, stdout)
-
-# err: capture stderr (check= overload)
-async def err(cmd, encoding=...) -> str:                  # raises
-async def err(cmd, check=False, encoding=...) -> tuple[int, str]:  # (code, stderr)
-
-# out_err: capture both (check= overload)
-async def out_err(cmd, encoding=...) -> tuple[str, str]:                    # raises
-async def out_err(cmd, check=False, encoding=...) -> tuple[int, str, str]:  # (code, stdout, stderr)
+async def out(
+    cmd: Runnable,
+    encoding: str | None = DEFAULT_ENCODING,
+    *,
+    stdout: bool = True,
+    stderr: bool = False,
+    check: bool = True,
+) -> ...:  # 12 overloads
 ```
 
-Stderr is only captured when explicitly requested — no implicit capture for
-exceptions. If a checked function raises `ShishError` without stderr captured,
-the exception has no stderr context (the user sees it in the terminal instead).
+Single-stream capture returns a scalar, multi-stream returns a tuple:
+
+```python
+await out(sh.ls())                                     # -> str
+await out(sh.ls(), stderr=True)                        # -> (str, str)
+await out(sh.ls(), stdout=False, stderr=True)          # -> str (stderr)
+await out(sh.ls(), check=False)                        # -> (int, str)
+await out(sh.ls(), stderr=True, check=False)           # -> (int, str, str)
+await out(sh.ls(), encoding=None)                      # -> bytes
+await out(sh.ls(), encoding=None, stderr=True)         # -> (bytes, bytes)
+```
+
+Raises `ValueError` if both `stdout=False` and `stderr=False` (use `run()` instead).
+
+### Exit code accessors
+
+```python
+async def run(cmd) -> None:      # raises ShishError on non-zero
+async def code(cmd) -> int:      # exit code
+async def ok(cmd) -> bool:       # True if exit code == 0
+async def err(cmd) -> bool:      # True if exit code != 0
+```
 
 ### `start()` for streaming / interactive
 
@@ -133,42 +151,33 @@ async with start(cmd).stdin(PIPE).stdout(PIPE) as job:
 ## Layer responsibilities
 
 ### Runtime (`runtime/api.py`)
-- Exports: `start()`, `Job`, `JobCtx`, `ShishError`, `CloseMethod`
+- Exports: `start()`, `Job`, `JobCtx`, `CloseMethod`
 - No `run()`, `out()`, `code()`, `result()` — those live in builders/syntax
 
 ### Builders (`builders.py`)
+- `ShishError` exception class
+- `Result` NamedTuple
 - `BaseRunnable` base class:
   - `.start()` → delegates to `runtime.start()`
-  - `.result()` → implemented via `self.start()`, returns `Result`
-  - `.run()`, `.code()`, `.out()`, `.err()`, `.out_err()` → sugar over `.result()`
+  - `.result()` → implemented via `self.start()`, returns `Result` (7 overloads)
+  - `.out()` → sugar over `.result()` with stream selectors (12 overloads)
+  - `.run()`, `.code()`, `.ok()`, `.err()` → sugar over `.result()`/`.code()`
 - `Cmd`, `Pipeline`, `Fn` are frozen dataclasses inheriting from `BaseRunnable`
-  - Pure spec/data + builder methods (`.arg()`, `.env()`, `.cwd()`, etc.)
-- `Result` NamedTuple defined here
-- `Runnable = Cmd | Pipeline | Fn` union type unchanged
-- Only one import from runtime needed (`start`)
+- `Runnable = Cmd | Pipeline | Fn` union type
 
 ### Syntax (`syntax.py`)
 - `Cmd`, `Pipeline`, `Fn` syntax wrappers with `__await__` → `.run()`
 - Thin combinators delegate to builder methods:
-  - `result(cmd)` → `unwrap(cmd).result()`
-  - `run(cmd)` → `unwrap(cmd).run()`
-  - `out(cmd)` → `unwrap(cmd).out()`
-  - `code(cmd)` → `unwrap(cmd).code()`
-  - `err(cmd)` → `unwrap(cmd).err()`
-  - `out_err(cmd)` → `unwrap(cmd).out_err()`
-- `start(cmd)` → `unwrap(cmd).start()`
+  - `result(cmd)` → `unwrap(cmd).result()` (7 overloads)
+  - `out(cmd)` → `unwrap(cmd).out()` (12 overloads)
+  - `run(cmd)`, `code(cmd)`, `ok(cmd)`, `err(cmd)` → delegate
+  - `start(cmd)` → `unwrap(cmd).start()`
 
 ## Deferred
 
 ### Encoding defaults
 
 `await cmd` maps to `run()` (no capture), so encoding isn't relevant there.
-For `out()`/`err()`/`out_err()`, encoding defaults to `DEFAULT_ENCODING`.
-Configurability of encoding defaults deferred to configuration API design
-(which will also handle defaults for env, cwd, etc.).
-
-### `out_err` naming
-
-No satisfying alternative found. Candidates considered and rejected:
-`output`, `streams`, `outs`, `capture`, `communicate`. Keeping `out_err`
-for now — consistent with the naming convention even if not beautiful.
+For `out()`, encoding defaults to `DEFAULT_ENCODING`. Configurability of
+encoding defaults deferred to configuration API design (which will also
+handle defaults for env, cwd, etc.).
