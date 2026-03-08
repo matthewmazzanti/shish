@@ -186,6 +186,11 @@ class SpawnScope:
                     stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream
                 )
                 return await func(ctx)
+            except asyncio.CancelledError:
+                # Don't flush on cancel — pipe is likely full/dead
+                stdout_stream.discard()
+                stderr_stream.discard()
+                raise
             except Exception:
                 traceback.print_exc(file=sys.stderr)
                 return 1

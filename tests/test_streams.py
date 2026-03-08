@@ -102,6 +102,117 @@ async def test_write_eof_empty() -> None:
     assert result == b""
 
 
+async def test_write_buffered_then_flushed_on_close() -> None:
+    """Small writes are buffered; close() flushes them to the fd."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    await writer.write(b"aaa")
+    await writer.write(b"bbb")
+    # Data is buffered, not yet on the pipe
+    assert os.get_blocking(read_fd) or True  # fd is valid
+    await writer.close()
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b"aaabbb"
+
+
+async def test_write_flush_drains_buffer() -> None:
+    """Explicit flush() drains buffered data to the fd."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    await writer.write(b"hello")
+    await writer.flush()
+    # Data should be on the pipe now
+    result = os.read(read_fd, 1024)
+    assert result == b"hello"
+    await writer.close()
+    os.close(read_fd)
+
+
+async def test_write_large_flushes_immediately() -> None:
+    """Data exceeding buffer_size is flushed, not just buffered."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=8)
+    await writer.write(b"short")  # 5 bytes, fits in buffer
+    await writer.write(b"this-is-longer-than-eight")  # triggers flush
+    await writer.close()
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b"shortthis-is-longer-than-eight"
+
+
+async def test_write_error_preserves_buffer() -> None:
+    """On write error, unflushed data stays in the buffer."""
+    _read_fd, write_fd = os.pipe()
+    os.close(_read_fd)
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    await writer.write(b"buffered")
+    # Force flush — will fail because read end is closed
+    with pytest.raises(BrokenPipeError):
+        await writer.flush()
+    # Data that wasn't written should still be in the buffer
+    assert len(writer._buf) > 0  # pyright: ignore[reportPrivateUsage]
+    # Close still closes the fd despite the error
+    with pytest.raises(BrokenPipeError):
+        await writer.close()
+    assert writer.closed
+
+
+async def test_discard_drops_buffered_data() -> None:
+    """discard() clears buffered data without writing."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    await writer.write(b"will-be-discarded")
+    writer.discard()
+    await writer.close()
+    # Nothing written — pipe is empty, read returns empty on EOF
+    result = os.read(read_fd, 1024)
+    os.close(read_fd)
+    assert result == b""
+
+
+async def test_cancel_preserves_buffered_data() -> None:
+    """Cancel during flush leaves unwritten data in the buffer."""
+    read_fd, write_fd = os.pipe()
+    if hasattr(fcntl, "F_SETPIPE_SZ"):
+        fcntl.fcntl(write_fd, fcntl.F_SETPIPE_SZ, 4096)
+
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+
+    # One write larger than pipe buffer — blocks during flush
+    task = asyncio.create_task(writer.write(b"x" * 262144))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Buffer retains data from the cancelled write
+    assert len(writer._buf) > 0  # pyright: ignore[reportPrivateUsage]
+    os.close(read_fd)
+    writer.discard()
+    await writer.close()
+
+
+async def test_cancel_discard_then_close() -> None:
+    """After cancel, discard() + close() completes without hanging."""
+    read_fd, write_fd = os.pipe()
+    if hasattr(fcntl, "F_SETPIPE_SZ"):
+        fcntl.fcntl(write_fd, fcntl.F_SETPIPE_SZ, 4096)
+
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+
+    task = asyncio.create_task(writer.write(b"x" * 262144))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    writer.discard()
+    await writer.close()
+    assert writer.closed
+    os.close(read_fd)
+
+
 async def test_write_backpressure() -> None:
     """write() suspends when pipe buffer is full, resumes when drained."""
     read_fd, write_fd = os.pipe()

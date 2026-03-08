@@ -66,17 +66,20 @@ class ByteWriteStream:
     flush() drains them via the underlying writer. close() is async
     to ensure the buffer is flushed before the fd is closed.
 
-    Buffering strategy:
-    - write(data) fits in buffer: append (copy).
-    - write(data) doesn't fit: flush(next=data) — drains the buffer,
-      fills the transition gap from data, then drains the rest of data
-      zero-copy from the caller's memory.
+    Buffering strategy (modeled after CPython's _pyio.BufferedWriter):
+    - write(data) extends the internal buffer, then flushes if over capacity.
+    - flush() loops short writes until the buffer is fully drained.
+    - Data stays in self._buf on error so close() can retry the flush.
+    - Callers handle CancelledError via discard() before close().
     """
 
     def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
         self._writer = _DirectWriter(owned_fd)
         self._buf = bytearray()
         self._buffer_size = buffer_size
+        # Serializes write/flush so concurrent coroutines (e.g. gather)
+        # don't interleave buffer mutations and flush loops.
+        self._lock = asyncio.Lock()
 
     @property
     def closed(self) -> bool:
@@ -97,13 +100,11 @@ class ByteWriteStream:
         view = memoryview(data)
         length = len(view)
 
-        if len(self._buf) + length <= self._buffer_size:
-            # Fits in buffer — just append
+        async with self._lock:
+            # Always extend — data stays in self._buf for error recovery
             self._buf.extend(view)
-            return length
-
-        # Doesn't fit — flush buf then drain data, zero-copy
-        await self.flush(next=view)
+            if len(self._buf) > self._buffer_size:
+                await self._flush_unlocked()
         return length
 
     async def writelines(self, data: Iterable[Buffer]) -> None:
@@ -117,30 +118,20 @@ class ByteWriteStream:
             await self.write(data)
         await self.close()
 
-    async def flush(self, *, next: Buffer = b"") -> None:
-        """Flush the buffer, then drain next without copying.
+    def discard(self) -> None:
+        """Discard buffered data without flushing."""
+        self._buf.clear()
 
-        At the transition, fills the buffer from next up to buffer_size
-        for an optimal-sized write. The rest of next drains zero-copy
-        from the caller's memory.
-        """
-        next_view = memoryview(next)
-        next_pos = 0
+    async def flush(self) -> None:
+        """Drain the entire internal buffer."""
+        async with self._lock:
+            await self._flush_unlocked()
 
-        # Transition: top up buf from next for a full-sized write
-        if self._buf and next_view and len(self._buf) < self._buffer_size:
-            fill = min(self._buffer_size - len(self._buf), len(next_view))
-            self._buf.extend(next_view[:fill])
-            next_pos = fill
-
-        # Drain internal buffer
+    async def _flush_unlocked(self) -> None:
+        """Drain the entire internal buffer. Caller must hold self._lock."""
         while self._buf:
             written = await self._writer.write(self._buf)
             del self._buf[:written]
-
-        # Drain remaining next (zero-copy from caller's memory)
-        while next_pos < len(next_view):
-            next_pos += await self._writer.write(next_view[next_pos:])
 
     async def close(self) -> None:
         """Flush buffer and close the fd."""
