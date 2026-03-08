@@ -3,20 +3,25 @@
 Design goal: feel like Python's open(), but async. If open() has a
 method, we have the async equivalent. If open() doesn't, we don't.
 
-Two layers, matching the text/binary x read/write matrix:
+Three layers, matching CPython's IO stack (FileIO → BufferedReader/Writer
+→ TextIOWrapper):
+
+    Raw IO (_DirectReader, _DirectWriter)
+        Non-blocking fd + event loop. Single os.read/os.write per call
+        with add_reader/add_writer for backpressure. Own the fd.
 
     Byte streams (ByteReadStream, ByteWriteStream)
-        Non-blocking fd + event loop. No asyncio transports or
-        protocols — just os.read/os.write with add_reader/add_writer
-        for backpressure. These own the fd.
+        Userspace buffering over the raw layer. ByteWriteStream batches
+        small writes and flushes when over capacity. ByteReadStream
+        fills on demand. These own their raw reader/writer.
 
     Text streams (TextReadStream, TextWriteStream)
         Encoding/decoding over a byte stream. TextReadStream uses an
         incremental decoder to handle multi-byte characters split
         across read boundaries. These own their byte stream.
 
-Ownership chain: text stream → byte stream → fd. Closing any layer
-closes everything below it. Context managers guarantee cleanup.
+Ownership chain: text stream → byte stream → raw IO → fd. Closing any
+layer closes everything below it. Context managers guarantee cleanup.
 
 Key invariants matching open():
     read()          Read all until EOF (like f.read())

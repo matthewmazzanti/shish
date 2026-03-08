@@ -10,30 +10,65 @@ from collections.abc import AsyncIterator
 from shish._defaults import DEFAULT_ENCODING
 from shish.fd import Fd
 
+DEFAULT_READ_SIZE = 65536
+
+
+class _DirectReader:
+    """Unbuffered async fd reader. Owns the fd.
+
+    Uses os.read + loop.add_reader directly. read() performs a single
+    os.read call — if the fd would block, it suspends on add_reader
+    first. Returns the bytes read (may be short), or empty bytes on EOF.
+    """
+
+    def __init__(self, owned_fd: Fd) -> None:
+        self._fd = owned_fd
+        self._loop = asyncio.get_running_loop()
+        os.set_blocking(owned_fd.fd, False)
+
+    async def read(self, size: int) -> bytes:
+        """Read once. Returns bytes read, empty = EOF."""
+        while True:
+            try:
+                return os.read(self._fd.fd, size)
+            except BlockingIOError:
+                await self._readable()
+
+    @property
+    def closed(self) -> bool:
+        """Whether the fd is closed."""
+        return self._fd.closed
+
+    def close(self) -> None:
+        """Close the fd."""
+        self._fd.close()
+
+    async def _readable(self) -> None:
+        """Suspend until the fd is readable."""
+        future: asyncio.Future[None] = self._loop.create_future()
+        self._loop.add_reader(self._fd.fd, future.set_result, None)
+        try:
+            await future
+        finally:
+            self._loop.remove_reader(self._fd.fd)
+
 
 class ByteReadStream:
-    """Async readable byte stream backed by a non-blocking fd.
+    """Async readable byte stream with userspace buffering.
 
     Mirrors open(mode="rb"). Owns the fd — closing the stream closes it.
 
-    Uses os.read + loop.add_reader directly. No asyncio StreamReader —
-    just a bytearray buffer filled one syscall at a time. _fill() does
-    a single non-blocking read; if EAGAIN, it suspends on add_reader
-    until the fd is readable.
-
-    read(n) returns whatever is in the buffer (up to n), or waits for
-    one fill if empty. It does NOT loop to accumulate n bytes — that
-    matches BufferedReader.read(n) on pipes, where a short read is
-    normal when data arrives in chunks.
+    Wraps a _DirectReader with a bytearray buffer (modeled after
+    CPython's _pyio.BufferedReader). read(n) loops filling from the
+    underlying reader until n bytes are buffered or EOF is reached,
+    matching BufferedReader.read(n) semantics.
     """
 
-    def __init__(self, owned_fd: Fd, buffer_size: int = 65536) -> None:
-        self._fd = owned_fd
-        self._loop = asyncio.get_running_loop()
+    def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_READ_SIZE) -> None:
+        self._reader = _DirectReader(owned_fd)
         self._buf = bytearray()
         self._eof = False
         self._buffer_size = buffer_size
-        os.set_blocking(owned_fd.fd, False)
 
     async def read(self, size: int = -1) -> bytes:
         """Read up to size bytes. -1 = read all. Empty bytes = EOF."""
@@ -41,8 +76,8 @@ class ByteReadStream:
             return await self._read_all()
         if size == 0:
             return b""
-        if not self._buf:
-            await self._fill()
+        while len(self._buf) < size and not self._eof:
+            await self._fill(size - len(self._buf))
         result = bytes(self._buf[:size])
         del self._buf[:size]
         return result
@@ -68,11 +103,11 @@ class ByteReadStream:
     @property
     def closed(self) -> bool:
         """Whether the stream is closed."""
-        return self._fd.closed
+        return self._reader.closed
 
     async def close(self) -> None:
         """Close the fd."""
-        self._fd.close()
+        self._reader.close()
 
     async def _read_all(self) -> bytes:
         """Read until EOF, return everything."""
@@ -82,29 +117,16 @@ class ByteReadStream:
         self._buf.clear()
         return result
 
-    async def _fill(self) -> None:
+    async def _fill(self, size: int = -1) -> None:
         """Read once from fd into buffer. Sets _eof on EOF."""
         if self._eof:
             return
-        while True:
-            try:
-                chunk = os.read(self._fd.fd, self._buffer_size)
-                if chunk:
-                    self._buf.extend(chunk)
-                else:
-                    self._eof = True
-                return
-            except BlockingIOError:
-                await self._readable()
-
-    async def _readable(self) -> None:
-        """Suspend until the fd is readable."""
-        future: asyncio.Future[None] = self._loop.create_future()
-        self._loop.add_reader(self._fd.fd, future.set_result, None)
-        try:
-            await future
-        finally:
-            self._loop.remove_reader(self._fd.fd)
+        read_size = self._buffer_size if size < 0 else max(size, self._buffer_size)
+        chunk = await self._reader.read(read_size)
+        if chunk:
+            self._buf.extend(chunk)
+        else:
+            self._eof = True
 
     async def __aenter__(self) -> ByteReadStream:
         return self
@@ -137,7 +159,7 @@ class TextReadStream:
         self,
         stream: ByteReadStream,
         encoding: str = DEFAULT_ENCODING,
-        buffer_size: int = 65536,
+        buffer_size: int = DEFAULT_READ_SIZE,
     ) -> None:
         self._stream = stream
         self._decoder = codecs.getincrementaldecoder(encoding)()
