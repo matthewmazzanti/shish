@@ -325,69 +325,22 @@ def start(cmd: Runnable) -> JobCtx[None, None, None]:
     return unwrap(cmd).start()
 
 
+# fmt: off
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: None = ...,
-    stderr: None = ...,
-    encoding: str | None = ...,
-) -> builders.Result[None, None]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: None = ..., stderr: None = ..., encoding: str | None = ...) -> builders.Result[None, None]: ...
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: Pipe,
-    stderr: None = ...,
-    encoding: str = ...,
-) -> builders.Result[str, None]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: None = ..., encoding: str = ...) -> builders.Result[str, None]: ...
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: Pipe,
-    stderr: None = ...,
-    encoding: None = ...,
-) -> builders.Result[bytes, None]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: None = ..., encoding: None = ...) -> builders.Result[bytes, None]: ...
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: None = ...,
-    stderr: Pipe,
-    encoding: str = ...,
-) -> builders.Result[None, str]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: None = ..., stderr: Pipe, encoding: str = ...) -> builders.Result[None, str]: ...
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: None = ...,
-    stderr: Pipe,
-    encoding: None = ...,
-) -> builders.Result[None, bytes]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: None = ..., stderr: Pipe, encoding: None = ...) -> builders.Result[None, bytes]: ...
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: Pipe,
-    stderr: Pipe,
-    encoding: str = ...,
-) -> builders.Result[str, str]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: str = ...) -> builders.Result[str, str]: ...
 @ty.overload
-async def result(
-    cmd: Runnable,
-    *,
-    check: bool = ...,
-    stdout: Pipe,
-    stderr: Pipe,
-    encoding: None = ...,
-) -> builders.Result[bytes, bytes]: ...
+async def result(cmd: Runnable, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: None = ...) -> builders.Result[bytes, bytes]: ...
+# fmt: on
 
 
 async def result(
@@ -419,79 +372,57 @@ async def ok(cmd: Runnable) -> bool:
     return await unwrap(cmd).ok()
 
 
+# fmt: off
 @ty.overload
-async def out(
-    cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...
-) -> bytes: ...
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> tuple[str, str]: ...
 @ty.overload
-async def out(
-    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[True] = ...
-) -> str: ...
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, str, str]: ...
 @ty.overload
-async def out(
-    cmd: Runnable, encoding: None, *, check: ty.Literal[False]
-) -> tuple[int, bytes]: ...
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[True] = ...) -> str: ...
 @ty.overload
-async def out(
-    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[False]
-) -> tuple[int, str]: ...
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[False]) -> tuple[int, str]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> str: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: str = ..., *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, str]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> tuple[bytes, bytes]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, bytes, bytes]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[True] = ...) -> bytes: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[False]) -> tuple[int, bytes]: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> bytes: ...
+@ty.overload
+async def out(cmd: Runnable, encoding: None, *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, bytes]: ...
+# fmt: on
 
 
 async def out(
-    cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+    cmd: Runnable,
+    encoding: str | None = DEFAULT_ENCODING,
+    *,
+    stdout: bool = True,
+    stderr: bool = False,
+    check: bool = True,
 ) -> ty.Any:
-    """Execute and return stdout. check=False prepends exit code."""
-    return await unwrap(cmd).out(encoding, check=check)
+    """Execute and return captured output.
+
+    By default captures stdout. Pass stderr=True to also capture stderr,
+    stdout=False to skip stdout. check=False prepends exit code.
+    Single-stream capture returns a scalar; multi-stream returns a tuple.
+    """
+    # broad types (bool, str | None) span multiple overloads;
+    # bypass builder overload resolution — callers see our syntax-layer overloads
+    inner: ty.Any = unwrap(cmd)
+    return await inner.out(encoding, stdout=stdout, stderr=stderr, check=check)
 
 
-@ty.overload
-async def err(
-    cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...
-) -> bytes: ...
-@ty.overload
-async def err(
-    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[True] = ...
-) -> str: ...
-@ty.overload
-async def err(
-    cmd: Runnable, encoding: None, *, check: ty.Literal[False]
-) -> tuple[int, bytes]: ...
-@ty.overload
-async def err(
-    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[False]
-) -> tuple[int, str]: ...
-
-
-async def err(
-    cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
-) -> ty.Any:
-    """Execute and return stderr. check=False prepends exit code."""
-    return await unwrap(cmd).err(encoding, check=check)
-
-
-@ty.overload
-async def out_err(
-    cmd: Runnable, encoding: None, *, check: ty.Literal[True] = ...
-) -> tuple[bytes, bytes]: ...
-@ty.overload
-async def out_err(
-    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[True] = ...
-) -> tuple[str, str]: ...
-@ty.overload
-async def out_err(
-    cmd: Runnable, encoding: None, *, check: ty.Literal[False]
-) -> tuple[int, bytes, bytes]: ...
-@ty.overload
-async def out_err(
-    cmd: Runnable, encoding: str = ..., *, check: ty.Literal[False]
-) -> tuple[int, str, str]: ...
-
-
-async def out_err(
-    cmd: Runnable, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
-) -> ty.Any:
-    """Execute and return stdout + stderr. check=False prepends exit code."""
-    return await unwrap(cmd).out_err(encoding, check=check)
+async def err(cmd: Runnable) -> bool:
+    """Execute and return True if exit code is non-zero."""
+    return await unwrap(cmd).err()
 
 
 # Convenience

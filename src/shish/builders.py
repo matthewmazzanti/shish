@@ -126,59 +126,22 @@ class BaseRunnable:
 
         return runtime.start(ty.cast("Runnable", self))
 
+    # fmt: off
     @ty.overload
-    async def result(
-        self,
-        *,
-        check: bool = ...,
-        stdout: None = ...,
-        stderr: None = ...,
-        encoding: str | None = ...,
-    ) -> Result[None, None]: ...
+    async def result(self, *, check: bool = ..., stdout: None = ..., stderr: None = ..., encoding: str | None = ...) -> Result[None, None]: ...
     @ty.overload
-    async def result(
-        self,
-        *,
-        check: bool = ...,
-        stdout: Pipe,
-        stderr: None = ...,
-        encoding: str = ...,
-    ) -> Result[str, None]: ...
+    async def result(self, *, check: bool = ..., stdout: Pipe, stderr: None = ..., encoding: str = ...) -> Result[str, None]: ...
     @ty.overload
-    async def result(
-        self,
-        *,
-        check: bool = ...,
-        stdout: Pipe,
-        stderr: None = ...,
-        encoding: None = ...,
-    ) -> Result[bytes, None]: ...
+    async def result(self, *, check: bool = ..., stdout: Pipe, stderr: None = ..., encoding: None = ...) -> Result[bytes, None]: ...
     @ty.overload
-    async def result(
-        self,
-        *,
-        check: bool = ...,
-        stdout: None = ...,
-        stderr: Pipe,
-        encoding: str = ...,
-    ) -> Result[None, str]: ...
+    async def result(self, *, check: bool = ..., stdout: None = ..., stderr: Pipe, encoding: str = ...) -> Result[None, str]: ...
     @ty.overload
-    async def result(
-        self,
-        *,
-        check: bool = ...,
-        stdout: None = ...,
-        stderr: Pipe,
-        encoding: None = ...,
-    ) -> Result[None, bytes]: ...
+    async def result(self, *, check: bool = ..., stdout: None = ..., stderr: Pipe, encoding: None = ...) -> Result[None, bytes]: ...
     @ty.overload
-    async def result(
-        self, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: str = ...
-    ) -> Result[str, str]: ...
+    async def result(self, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: str = ...) -> Result[str, str]: ...
     @ty.overload
-    async def result(
-        self, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: None = ...
-    ) -> Result[bytes, bytes]: ...
+    async def result(self, *, check: bool = ..., stdout: Pipe, stderr: Pipe, encoding: None = ...) -> Result[bytes, bytes]: ...
+    # fmt: on
 
     async def result(
         self,
@@ -222,81 +185,69 @@ class BaseRunnable:
         """Execute and return True if exit code is 0."""
         return await self.code() == 0
 
+    # fmt: off
     @ty.overload
-    async def out(self, encoding: None, *, check: ty.Literal[True] = ...) -> bytes: ...
+    async def out(self, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> tuple[str, str]: ...
     @ty.overload
-    async def out(
-        self, encoding: str = ..., *, check: ty.Literal[True] = ...
-    ) -> str: ...
+    async def out(self, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, str, str]: ...
     @ty.overload
-    async def out(
-        self, encoding: None, *, check: ty.Literal[False]
-    ) -> tuple[int, bytes]: ...
+    async def out(self, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[True] = ...) -> str: ...
     @ty.overload
-    async def out(
-        self, encoding: str = ..., *, check: ty.Literal[False]
-    ) -> tuple[int, str]: ...
+    async def out(self, encoding: str = ..., *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[False]) -> tuple[int, str]: ...
+    @ty.overload
+    async def out(self, encoding: str = ..., *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> str: ...
+    @ty.overload
+    async def out(self, encoding: str = ..., *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, str]: ...
+    @ty.overload
+    async def out(self, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> tuple[bytes, bytes]: ...
+    @ty.overload
+    async def out(self, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, bytes, bytes]: ...
+    @ty.overload
+    async def out(self, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[True] = ...) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: None, *, stdout: ty.Literal[True] = ..., stderr: ty.Literal[False] = ..., check: ty.Literal[False]) -> tuple[int, bytes]: ...
+    @ty.overload
+    async def out(self, encoding: None, *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[True] = ...) -> bytes: ...
+    @ty.overload
+    async def out(self, encoding: None, *, stdout: ty.Literal[False], stderr: ty.Literal[True], check: ty.Literal[False]) -> tuple[int, bytes]: ...
+    # fmt: on
 
     async def out(
-        self, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
+        self,
+        encoding: str | None = DEFAULT_ENCODING,
+        *,
+        stdout: bool = True,
+        stderr: bool = False,
+        check: bool = True,
     ) -> ty.Any:
-        """Execute and return stdout. check=False prepends exit code."""
-        res = await self.result(check=check, stdout=PIPE, encoding=encoding)
-        if check:
-            return res.out
-        return (res.code, res.out)
+        """Execute and return captured output.
 
-    @ty.overload
-    async def err(self, encoding: None, *, check: ty.Literal[True] = ...) -> bytes: ...
-    @ty.overload
-    async def err(
-        self, encoding: str = ..., *, check: ty.Literal[True] = ...
-    ) -> str: ...
-    @ty.overload
-    async def err(
-        self, encoding: None, *, check: ty.Literal[False]
-    ) -> tuple[int, bytes]: ...
-    @ty.overload
-    async def err(
-        self, encoding: str = ..., *, check: ty.Literal[False]
-    ) -> tuple[int, str]: ...
-
-    async def err(
-        self, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
-    ) -> ty.Any:
-        """Execute and return stderr. check=False prepends exit code."""
-        res = await self.result(check=check, stderr=PIPE, encoding=encoding)
-        if check:
-            return res.err
-        return (res.code, res.err)
-
-    @ty.overload
-    async def out_err(
-        self, encoding: None, *, check: ty.Literal[True] = ...
-    ) -> tuple[bytes, bytes]: ...
-    @ty.overload
-    async def out_err(
-        self, encoding: str = ..., *, check: ty.Literal[True] = ...
-    ) -> tuple[str, str]: ...
-    @ty.overload
-    async def out_err(
-        self, encoding: None, *, check: ty.Literal[False]
-    ) -> tuple[int, bytes, bytes]: ...
-    @ty.overload
-    async def out_err(
-        self, encoding: str = ..., *, check: ty.Literal[False]
-    ) -> tuple[int, str, str]: ...
-
-    async def out_err(
-        self, encoding: str | None = DEFAULT_ENCODING, *, check: bool = True
-    ) -> ty.Any:
-        """Execute and return stdout + stderr. check=False prepends exit code."""
+        By default captures stdout. Pass stderr=True to also capture stderr,
+        stdout=False to skip stdout. check=False prepends exit code.
+        Single-stream capture returns a scalar; multi-stream returns a tuple.
+        """
+        if not stdout and not stderr:
+            raise ValueError("out() requires stdout=True or stderr=True")
         res = await self.result(
-            check=check, stdout=PIPE, stderr=PIPE, encoding=encoding
+            check=check,
+            stdout=PIPE if stdout else None,
+            stderr=PIPE if stderr else None,
+            encoding=encoding,
         )
-        if check:
-            return (res.out, res.err)
-        return (res.code, res.out, res.err)
+        parts: list[ty.Any] = []
+        if not check:
+            parts.append(res.code)
+        if stdout:
+            parts.append(res.out)
+        if stderr:
+            parts.append(res.err)
+        if len(parts) == 1:
+            return parts[0]
+        return tuple(parts)
+
+    async def err(self) -> bool:
+        """Execute and return True if exit code is non-zero."""
+        return await self.code() != 0
 
 
 @dc.dataclass(frozen=True)
