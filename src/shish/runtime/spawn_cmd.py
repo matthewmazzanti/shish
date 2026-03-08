@@ -274,8 +274,8 @@ class SpawnCmdScope:
         if isinstance(data, bytes):
 
             async def write_byte_data(stage: ByteStage) -> int:
-                stage.stdin.close()
-                stage.stderr.close()
+                await stage.stdin.close()
+                await stage.stderr.close()
                 with contextlib.suppress(OSError):
                     await stage.stdout.write_eof(data)
                 return 0
@@ -284,8 +284,8 @@ class SpawnCmdScope:
         else:
 
             async def write_str_data(stage: TextStage) -> int:
-                stage.stdin.close()
-                stage.stderr.close()
+                await stage.stdin.close()
+                await stage.stderr.close()
                 with contextlib.suppress(OSError):
                     await stage.stdout.write_eof(data)
                 return 0

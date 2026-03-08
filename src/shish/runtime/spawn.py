@@ -190,9 +190,9 @@ class SpawnScope:
                 traceback.print_exc(file=sys.stderr)
                 return 1
             finally:
-                stdout_stream.close()
-                stdin_stream.close()
-                stderr_stream.close()
+                await stdout_stream.close()
+                await stdin_stream.close()
+                await stderr_stream.close()
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)

@@ -1,48 +1,14 @@
-"""Async IO streams for subprocess pipes.
-
-Design goal: feel like Python's open(), but async. If open() has a
-method, we have the async equivalent. If open() doesn't, we don't.
-
-Two layers, matching the text/binary x read/write matrix:
-
-    Byte streams (ByteReadStream, ByteWriteStream)
-        Non-blocking fd + event loop. No asyncio transports or
-        protocols — just os.read/os.write with add_reader/add_writer
-        for backpressure. These own the fd.
-
-    Text streams (TextReadStream, TextWriteStream)
-        Encoding/decoding over a byte stream. TextReadStream uses an
-        incremental decoder to handle multi-byte characters split
-        across read boundaries. These own their byte stream.
-
-Ownership chain: text stream → byte stream → fd. Closing any layer
-closes everything below it. Context managers guarantee cleanup.
-
-Key invariants matching open():
-    read()          Read all until EOF (like f.read())
-    read(n)         Up to n bytes/chars (like f.read(n) on pipes)
-    readline()      One line including \\n, empty = EOF
-    readlines()     All remaining lines
-    write(data)     All-or-error, returns count
-    writelines()    Write iterable, returns None
-    close()         Release the fd
-    async with      Guarantees close on exit
-    async for       Yields lines
-"""
+"""Async readable streams — byte and text layers."""
 
 from __future__ import annotations
 
 import asyncio
 import codecs
 import os
-from collections.abc import AsyncIterator, Buffer, Iterable
+from collections.abc import AsyncIterator
 
 from shish._defaults import DEFAULT_ENCODING
 from shish.fd import Fd
-
-# =============================================================================
-# Byte streams — non-blocking fd + event loop
-# =============================================================================
 
 
 class ByteReadStream:
@@ -99,7 +65,7 @@ class ByteReadStream:
         """Read all remaining lines until EOF."""
         return [line async for line in self]
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the fd."""
         self._fd.close()
 
@@ -139,7 +105,7 @@ class ByteReadStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        self.close()
+        await self.close()
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         """Yield lines with trailing newline. Stops at EOF."""
@@ -150,72 +116,6 @@ class ByteReadStream:
             yield line
 
 
-class ByteWriteStream:
-    """Async writable byte stream backed by a non-blocking fd.
-
-    Mirrors open(mode="wb"). Owns the fd — closing the stream closes it.
-
-    Uses os.write + loop.add_writer directly. No asyncio StreamWriter —
-    write() loops with a memoryview, advancing past each partial
-    os.write until all data is delivered. If EAGAIN, it suspends on
-    add_writer until the fd is writable. This makes write()
-    all-or-error: it returns len(data) or raises, never a short count.
-    """
-
-    def __init__(self, owned_fd: Fd) -> None:
-        self._fd = owned_fd
-        self._loop = asyncio.get_running_loop()
-        os.set_blocking(owned_fd.fd, False)
-
-    async def write(self, data: Buffer) -> int:
-        """Write all bytes. Awaits when pipe buffer is full. Returns len(data)."""
-        if not data:
-            return 0
-        view = memoryview(data)
-        written = 0
-        while written < len(view):
-            try:
-                written += os.write(self._fd.fd, view[written:])
-            except BlockingIOError:
-                await self._writable()
-        return written
-
-    async def writelines(self, data: Iterable[Buffer]) -> None:
-        """Write an iterable of byte chunks."""
-        for chunk in data:
-            await self.write(chunk)
-
-    async def write_eof(self, data: Buffer = b"") -> None:
-        """Write final data and close. Signals EOF to the reader."""
-        if data:
-            await self.write(data)
-        self.close()
-
-    def close(self) -> None:
-        """Close the fd."""
-        self._fd.close()
-
-    async def _writable(self) -> None:
-        """Suspend until the fd is writable."""
-        future: asyncio.Future[None] = self._loop.create_future()
-        self._loop.add_writer(self._fd.fd, future.set_result, None)
-        try:
-            await future
-        finally:
-            self._loop.remove_writer(self._fd.fd)
-
-    async def __aenter__(self) -> ByteWriteStream:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        self.close()
-
-
-# =============================================================================
-# Text streams — encoding/decoding over byte streams
-# =============================================================================
-
-
 class TextReadStream:
     """Async readable text stream. Decodes bytes from a ByteReadStream.
 
@@ -223,7 +123,7 @@ class TextReadStream:
 
     read(n) counts characters, not bytes, matching TextIOWrapper.
     Uses codecs.getincrementaldecoder to handle multi-byte characters
-    (e.g. UTF-8 é, 🎉) that may be split across underlying byte reads.
+    (e.g. UTF-8 e, U+1F389) that may be split across underlying byte reads.
     The decoder carries state between _fill() calls, so a 4-byte emoji
     arriving as two 2-byte chunks decodes correctly.
     """
@@ -270,9 +170,9 @@ class TextReadStream:
         """Read all remaining lines until EOF."""
         return [line async for line in self]
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the underlying byte stream."""
-        self._stream.close()
+        await self._stream.close()
 
     async def _read_all(self) -> str:
         """Read until EOF, return everything decoded."""
@@ -297,7 +197,7 @@ class TextReadStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        self.close()
+        await self.close()
 
     async def __aiter__(self) -> AsyncIterator[str]:
         """Yield decoded lines with trailing newline. Stops at EOF."""
@@ -306,52 +206,3 @@ class TextReadStream:
             if not line:
                 return
             yield line
-
-
-class TextWriteStream:
-    """Async writable text stream. Encodes strings into a ByteWriteStream.
-
-    Mirrors open(mode="w"). Owns the byte stream — closing this closes it.
-
-    write() encodes in buffer_size character chunks to avoid allocating
-    the full encoded bytes for large strings. Returns the number of
-    characters written (always len(data)), not bytes.
-    """
-
-    def __init__(
-        self,
-        stream: ByteWriteStream,
-        encoding: str = DEFAULT_ENCODING,
-        buffer_size: int = 65536,
-    ) -> None:
-        self._stream = stream
-        self._encoding = encoding
-        self._buffer_size = buffer_size
-
-    async def write(self, data: str) -> int:
-        """Encode in chunks and write. Returns number of characters written."""
-        for offset in range(0, len(data), self._buffer_size):
-            chunk = data[offset : offset + self._buffer_size]
-            await self._stream.write(chunk.encode(self._encoding))
-        return len(data)
-
-    async def writelines(self, lines: Iterable[str]) -> None:
-        """Write an iterable of strings."""
-        for line in lines:
-            await self.write(line)
-
-    async def write_eof(self, data: str = "") -> None:
-        """Write final data and close. Signals EOF to the reader."""
-        if data:
-            await self.write(data)
-        self.close()
-
-    def close(self) -> None:
-        """Close the underlying byte stream."""
-        self._stream.close()
-
-    async def __aenter__(self) -> TextWriteStream:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        self.close()

@@ -136,11 +136,11 @@ class Job[
             RuntimeError: If processes don't exit after SIGKILL + timeout.
         """
         if self.stdin is not None:
-            self.stdin.close()
+            await self.stdin.close()
         if self.stdout is not None:
-            self.stdout.close()
+            await self.stdout.close()
         if self.stderr is not None:
-            self.stderr.close()
+            await self.stderr.close()
         self.root.close_fds()
 
         if self.returncode is not None:

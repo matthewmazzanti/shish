@@ -750,7 +750,7 @@ async def test_start_stdin_pipe() -> None:
     """start(stdin=PIPE) defaults to text mode."""
     async with start(builders.Cmd(("cat",))).stdin(PIPE) as execution:
         await execution.stdin.write("hello from pipe")
-        execution.stdin.close()
+        await execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -769,7 +769,7 @@ async def test_start_stdin_stdout_pipe() -> None:
     """start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
     async with start(builders.Cmd(("cat",))).stdin(PIPE).stdout(PIPE) as execution:
         await execution.stdin.write("round trip")
-        execution.stdin.close()
+        await execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -796,7 +796,7 @@ async def test_start_stdin_pipe_bytes() -> None:
     """start(stdin=PIPE, encoding=None) gives ByteWriteStream."""
     async with start(builders.Cmd(("cat",))).stdin(PIPE, encoding=None) as execution:
         await execution.stdin.write(b"hello bytes")
-        execution.stdin.close()
+        await execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -821,7 +821,7 @@ async def test_start_stdin_stdout_pipe_bytes() -> None:
         .stdout(PIPE, encoding=None) as execution
     ):
         await execution.stdin.write(b"bytes round trip")
-        execution.stdin.close()
+        await execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
