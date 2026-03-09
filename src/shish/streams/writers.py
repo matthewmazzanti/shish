@@ -61,24 +61,36 @@ class ByteWriteStream:
 
     Mirrors open(mode="wb"). Owns the fd — closing the stream closes it.
 
-    Wraps a _DirectWriter with a bytearray buffer (matching Python's
-    BufferedWriter pattern). Small writes accumulate in the buffer;
-    flush() drains them via the underlying writer. close() is async
-    to ensure the buffer is flushed before the fd is closed.
+    Memory contract:
+        The writer allocates exactly buffer_size bytes at construction.
+        This buffer never grows. Writes larger than buffer_size bypass
+        the buffer entirely (write-through to raw). The writer never
+        holds a reference to the caller's data across await boundaries
+        beyond the current raw write() call.
 
-    Buffering strategy (modeled after CPython's _pyio.BufferedWriter):
-    - write(data) extends the internal buffer, then flushes if over capacity.
-    - flush() loops short writes until the buffer is fully drained.
-    - Data stays in self._buf on error so close() can retry the flush.
-    - Callers handle CancelledError via discard() before close().
+    Cancellation contract:
+        CancelledError may interrupt any await point. On cancellation:
+        - The writer's internal buffer is in a consistent state.
+        - An unknown amount of data may have been written to raw.
+        - The current write()'s data is partially lost. This is by design.
+        - The writer is NOT poisoned — subsequent writes work normally.
+
+    Error contract:
+        OSError from the raw writer sets a sticky error. All subsequent
+        write() and flush() calls raise the sticky error immediately.
+        Call reset() to clear it.
+
+    Concurrency:
+        An asyncio.Lock serializes write() and flush() so multiple tasks
+        can safely call write() without interleaving buffer mutations.
     """
 
     def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
         self._writer = _DirectWriter(owned_fd)
-        self._buf = bytearray()
+        self._buffer = bytearray(buffer_size)
+        self._buf_len = 0
         self._buffer_size = buffer_size
-        # Serializes write/flush so concurrent coroutines (e.g. gather)
-        # don't interleave buffer mutations and flush loops.
+        self._error: OSError | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -91,21 +103,60 @@ class ByteWriteStream:
         """Buffer capacity in bytes."""
         return self._buffer_size
 
+    @property
+    def buffered(self) -> int:
+        """Bytes currently in the write buffer (not yet flushed to raw)."""
+        return self._buf_len
+
+    @property
+    def error(self) -> OSError | None:
+        """Sticky error, if any. Once set, all writes fail until reset()."""
+        return self._error
+
     async def write(self, data: Buffer) -> int:
-        """Write data, buffering small writes. Returns len(data)."""
+        """Write data, buffering small writes. Returns len(data).
+
+        For data <= buffer_size: copies into the internal buffer. Flushes
+        the buffer first if needed to make room. No await if data fits in
+        available space (fast path).
+
+        For data > buffer_size: flushes the buffer, then writes data
+        directly to raw in a loop (write-through). No copy.
+
+        On CancelledError: the writer is not poisoned. On OSError: writer
+        enters sticky error state.
+        """
+        if self._error:
+            raise self._error
         if self.closed:
             raise OSError("write to closed stream")
         if not data:
             return 0
-        view = memoryview(data)
-        length = len(view)
 
         async with self._lock:
-            # Always extend — data stays in self._buf for error recovery
-            self._buf.extend(view)
-            if len(self._buf) > self._buffer_size:
-                await self._flush_unlocked()
-        return length
+            with memoryview(data) as view:
+                # 1. Fast path: fits in available space — memcpy, no I/O
+                if self._buf_len + len(view) <= self._buffer_size:
+                    self._buffer[self._buf_len : self._buf_len + len(view)] = view
+                    self._buf_len += len(view)
+                    return len(view)
+
+                # 2. Make room: flush existing buffer contents
+                if self._buf_len > 0:
+                    await self._flush()
+
+                # 3. Re-check: data may now fit in the empty buffer
+                if len(view) <= self._buffer_size:
+                    self._buffer[: len(view)] = view
+                    self._buf_len = len(view)
+                    return len(view)
+
+                # 4. Write-through: drain all data directly to raw
+                pos = 0
+                while pos < len(view):
+                    pos += await self._write_raw(view[pos:])
+
+                return len(view)
 
     async def writelines(self, data: Iterable[Buffer]) -> None:
         """Write an iterable of byte chunks."""
@@ -120,18 +171,47 @@ class ByteWriteStream:
 
     def discard(self) -> None:
         """Discard buffered data without flushing."""
-        self._buf.clear()
+        self._buf_len = 0
+
+    def reset(self) -> None:
+        """Clear sticky error and discard buffered data."""
+        self._buf_len = 0
+        self._error = None
 
     async def flush(self) -> None:
         """Drain the entire internal buffer."""
+        if self._error:
+            raise self._error
         async with self._lock:
-            await self._flush_unlocked()
+            await self._flush()
 
-    async def _flush_unlocked(self) -> None:
-        """Drain the entire internal buffer. Caller must hold self._lock."""
-        while self._buf:
-            written = await self._writer.write(self._buf)
-            del self._buf[:written]
+    async def _write_raw(self, data: Buffer) -> int:
+        """Single raw write with sticky error on OSError."""
+        try:
+            return await self._writer.write(data)
+        except OSError as exc:
+            self._error = exc
+            raise
+
+    async def _flush(self) -> None:
+        """Drain internal buffer to raw. Updates _buf_len on all exit paths.
+
+        memoryview is hoisted out of the loop and released in finally
+        before buffer mutation. The finally block runs on success,
+        OSError, and CancelledError, ensuring _buf_len is always
+        consistent. CancelledError propagates through finally naturally
+        without setting _error.
+        """
+        pos = 0
+        with memoryview(self._buffer) as view:
+            try:
+                while pos < self._buf_len:
+                    pos += await self._write_raw(view[pos : self._buf_len])
+            finally:
+                if pos > 0:
+                    remaining = self._buf_len - pos
+                    self._buffer[:remaining] = self._buffer[pos : self._buf_len]
+                    self._buf_len = remaining
 
     async def close(self) -> None:
         """Flush buffer and close the fd."""

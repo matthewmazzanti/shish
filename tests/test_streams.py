@@ -151,7 +151,7 @@ async def test_write_error_preserves_buffer() -> None:
     with pytest.raises(BrokenPipeError):
         await writer.flush()
     # Data that wasn't written should still be in the buffer
-    assert len(writer._buf) > 0  # pyright: ignore[reportPrivateUsage]
+    assert writer.buffered > 0
     # Close still closes the fd despite the error
     with pytest.raises(BrokenPipeError):
         await writer.close()
@@ -171,23 +171,24 @@ async def test_discard_drops_buffered_data() -> None:
     assert result == b""
 
 
-async def test_cancel_preserves_buffered_data() -> None:
-    """Cancel during flush leaves unwritten data in the buffer."""
+async def test_cancel_write_through_not_poisoned() -> None:
+    """Cancel during write-through does not set sticky error."""
     read_fd, write_fd = os.pipe()
     if hasattr(fcntl, "F_SETPIPE_SZ"):
         fcntl.fcntl(write_fd, fcntl.F_SETPIPE_SZ, 4096)
 
     writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
 
-    # One write larger than pipe buffer — blocks during flush
+    # Data > buffer_size takes write-through path — blocks when pipe full
     task = asyncio.create_task(writer.write(b"x" * 262144))
     await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # Buffer retains data from the cancelled write
-    assert len(writer._buf) > 0  # pyright: ignore[reportPrivateUsage]
+    # CancelledError must NOT poison the writer
+    assert writer.error is None
+    assert writer.buffered == 0
     os.close(read_fd)
     writer.discard()
     await writer.close()
@@ -230,6 +231,57 @@ async def test_write_backpressure() -> None:
         result = await reader.read()
     await write_task
     assert result == data
+
+
+async def test_sticky_error_blocks_subsequent_write() -> None:
+    """After OSError on flush, subsequent write() raises immediately."""
+    _read_fd, write_fd = os.pipe()
+    os.close(_read_fd)
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    await writer.write(b"buffered")
+    with pytest.raises(BrokenPipeError):
+        await writer.flush()
+    # Sticky error blocks new writes without attempting I/O
+    with pytest.raises(BrokenPipeError):
+        await writer.write(b"more data")
+    writer.discard()
+    with pytest.raises(BrokenPipeError):
+        await writer.close()
+
+
+async def test_reset_clears_error_and_buffer() -> None:
+    """reset() clears buffered data and sticky error."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    await writer.write(b"buffered")
+    assert writer.buffered > 0
+    # Simulate an error by closing the read end and flushing
+    os.close(read_fd)
+    with pytest.raises(BrokenPipeError):
+        await writer.flush()
+    assert writer.error is not None
+    assert writer.buffered > 0
+    # reset() clears both
+    writer.reset()
+    assert writer.error is None
+    assert writer.buffered == 0
+    # fd is still broken, but close() should work (flush has nothing to write)
+    writer._writer.close()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_buffered_property() -> None:
+    """buffered property tracks buffer usage correctly."""
+    read_fd, write_fd = os.pipe()
+    writer = ByteWriteStream(Fd(write_fd), buffer_size=1024)
+    assert writer.buffered == 0
+    await writer.write(b"hello")
+    assert writer.buffered == 5
+    await writer.write(b"world")
+    assert writer.buffered == 10
+    await writer.flush()
+    assert writer.buffered == 0
+    await writer.close()
+    os.close(read_fd)
 
 
 # =============================================================================
