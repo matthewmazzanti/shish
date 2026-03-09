@@ -75,11 +75,6 @@ class ByteWriteStream:
         - The current write()'s data is partially lost. This is by design.
         - The writer is NOT poisoned — subsequent writes work normally.
 
-    Error contract:
-        OSError from the raw writer sets a sticky error. All subsequent
-        write() and flush() calls raise the sticky error immediately.
-        Call reset() to clear it.
-
     Concurrency:
         An asyncio.Lock serializes write() and flush() so multiple tasks
         can safely call write() without interleaving buffer mutations.
@@ -90,7 +85,6 @@ class ByteWriteStream:
         self._buffer = bytearray(buffer_size)
         self._buf_len = 0
         self._buffer_size = buffer_size
-        self._error: OSError | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -108,11 +102,6 @@ class ByteWriteStream:
         """Bytes currently in the write buffer (not yet flushed to raw)."""
         return self._buf_len
 
-    @property
-    def error(self) -> OSError | None:
-        """Sticky error, if any. Once set, all writes fail until reset()."""
-        return self._error
-
     async def write(self, data: Buffer) -> int:
         """Write data, buffering small writes. Returns len(data).
 
@@ -122,12 +111,7 @@ class ByteWriteStream:
 
         For data > buffer_size: flushes the buffer, then writes data
         directly to raw in a loop (write-through). No copy.
-
-        On CancelledError: the writer is not poisoned. On OSError: writer
-        enters sticky error state.
         """
-        if self._error:
-            raise self._error
         if self.closed:
             raise OSError("write to closed stream")
         if not data:
@@ -135,28 +119,23 @@ class ByteWriteStream:
 
         async with self._lock:
             with memoryview(data) as view:
-                # 1. Fast path: fits in available space — memcpy, no I/O
-                if self._buf_len + len(view) <= self._buffer_size:
-                    self._buffer[self._buf_len : self._buf_len + len(view)] = view
-                    self._buf_len += len(view)
-                    return len(view)
-
-                # 2. Make room: flush existing buffer contents
-                if self._buf_len > 0:
+                length = len(view)
+                # Flush if the new data won't fit alongside existing
+                if self._buf_len > 0 and self._buf_len + length > self._buffer_size:
                     await self._flush()
 
-                # 3. Re-check: data may now fit in the empty buffer
-                if len(view) <= self._buffer_size:
-                    self._buffer[: len(view)] = view
-                    self._buf_len = len(view)
-                    return len(view)
+                # Buffer if small enough
+                if length <= self._buffer_size:
+                    self._buffer[self._buf_len : self._buf_len + length] = view
+                    self._buf_len += length
+                    return length
 
-                # 4. Write-through: drain all data directly to raw
+                # Write-through if oversized
                 pos = 0
-                while pos < len(view):
-                    pos += await self._write_raw(view[pos:])
+                while pos < length:
+                    pos += await self._writer.write(view[pos:])
 
-                return len(view)
+                return length
 
     async def writelines(self, data: Iterable[Buffer]) -> None:
         """Write an iterable of byte chunks."""
@@ -169,49 +148,32 @@ class ByteWriteStream:
             await self.write(data)
         await self.close()
 
-    def discard(self) -> None:
-        """Discard buffered data without flushing."""
-        self._buf_len = 0
-
-    def reset(self) -> None:
-        """Clear sticky error and discard buffered data."""
-        self._buf_len = 0
-        self._error = None
-
     async def flush(self) -> None:
         """Drain the entire internal buffer."""
-        if self._error:
-            raise self._error
         async with self._lock:
             await self._flush()
-
-    async def _write_raw(self, data: Buffer) -> int:
-        """Single raw write with sticky error on OSError."""
-        try:
-            return await self._writer.write(data)
-        except OSError as exc:
-            self._error = exc
-            raise
 
     async def _flush(self) -> None:
         """Drain internal buffer to raw. Updates _buf_len on all exit paths.
 
-        memoryview is hoisted out of the loop and released in finally
-        before buffer mutation. The finally block runs on success,
-        OSError, and CancelledError, ensuring _buf_len is always
-        consistent. CancelledError propagates through finally naturally
-        without setting _error.
+        memoryview is released before buffer mutation. The finally block
+        runs on success, OSError, and CancelledError, ensuring _buf_len
+        is always consistent.
         """
         pos = 0
-        with memoryview(self._buffer) as view:
-            try:
+        try:
+            with memoryview(self._buffer) as view:
                 while pos < self._buf_len:
-                    pos += await self._write_raw(view[pos : self._buf_len])
-            finally:
-                if pos > 0:
-                    remaining = self._buf_len - pos
-                    self._buffer[:remaining] = self._buffer[pos : self._buf_len]
-                    self._buf_len = remaining
+                    pos += await self._writer.write(view[pos : self._buf_len])
+        finally:
+            if pos > 0:
+                remaining = self._buf_len - pos
+                self._buffer[:remaining] = self._buffer[pos : self._buf_len]
+                self._buf_len = remaining
+
+    def close_fd(self) -> None:
+        """Close the fd without flushing."""
+        self._writer.close()
 
     async def close(self) -> None:
         """Flush buffer and close the fd."""
@@ -225,8 +187,15 @@ class ByteWriteStream:
     async def __aenter__(self) -> ByteWriteStream:
         return self
 
-    async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_args: object,
+    ) -> None:
+        if exc_type is not None and not issubclass(exc_type, Exception):
+            self.close_fd()
+        else:
+            await self.close()
 
 
 class TextWriteStream:
@@ -287,5 +256,12 @@ class TextWriteStream:
     async def __aenter__(self) -> TextWriteStream:
         return self
 
-    async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_args: object,
+    ) -> None:
+        if exc_type is not None and not issubclass(exc_type, Exception):
+            self._writer.close_fd()
+        else:
+            await self.close()

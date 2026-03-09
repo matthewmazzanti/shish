@@ -178,26 +178,21 @@ class SpawnScope:
         func = fn_ir.func
 
         async def execute() -> int:
-            stdin_stream = ByteReadStream(dup_stdin)
-            stdout_stream = ByteWriteStream(dup_stdout)
-            stderr_stream = ByteWriteStream(dup_stderr)
-            try:
-                ctx = ByteStage(
-                    stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream
-                )
-                return await func(ctx)
-            except asyncio.CancelledError:
-                # Don't flush on cancel — pipe is likely full/dead
-                stdout_stream.discard()
-                stderr_stream.discard()
-                raise
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                return 1
-            finally:
-                await stdout_stream.close()
-                await stdin_stream.close()
-                await stderr_stream.close()
+            async with (
+                ByteReadStream(dup_stdin) as stdin_stream,
+                ByteWriteStream(dup_stdout) as stdout_stream,
+                ByteWriteStream(dup_stderr) as stderr_stream,
+            ):
+                try:
+                    ctx = ByteStage(
+                        stdin=stdin_stream,
+                        stdout=stdout_stream,
+                        stderr=stderr_stream,
+                    )
+                    return await func(ctx)
+                except Exception:
+                    traceback.print_exc(file=sys.stderr)
+                    return 1
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)
