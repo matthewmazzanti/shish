@@ -22,7 +22,7 @@ memory usage.
 
 The canonical reference. Key behaviors:
 
-```
+```python
 class BufferedWriter(BufferedIOBase):
     def __init__(self, raw: RawIOBase, buffer_size=DEFAULT_BUFFER_SIZE): ...
     def write(self, b: bytes | bytearray) -> int: ...
@@ -362,88 +362,7 @@ internally by suspending on `add_writer` — callers never see it.
 `ByteWriteStream` adds buffering on top. `TextWriteStream` adds encoding on top
 of that.
 
-### 6.2 ByteWriteStream
-
-```python
-class ByteWriteStream:
-    def __init__(self, owned_fd: Fd, buffer_size: int = 65536) -> None:
-        self._writer = _DirectWriter(owned_fd)
-        self._buffer = bytearray(buffer_size)
-        self._buf_len = 0
-        self._buffer_size = buffer_size
-        self._lock = asyncio.Lock()
-
-    # -- Properties ---------------------------------------------------------
-
-    @property
-    def closed(self) -> bool: ...
-    @property
-    def buffer_size(self) -> int: ...
-    @property
-    def buffered(self) -> int: ...
-
-    # -- Core API -----------------------------------------------------------
-
-    async def write(self, data: Buffer) -> int:
-        """Write data, buffering small writes. Returns len(data)."""
-        # guards: closed check, empty check
-        async with self._lock:
-            with memoryview(data) as view:
-                length = len(view)
-                # 1. Flush if the new data won't fit alongside existing
-                if self._buf_len > 0 and self._buf_len + length > self._buffer_size:
-                    await self._flush()
-                # 2. Buffer if small enough
-                if length <= self._buffer_size:
-                    self._buffer[self._buf_len : self._buf_len + length] = view
-                    self._buf_len += length
-                    return length
-                # 3. Write-through if oversized
-                pos = 0
-                while pos < length:
-                    pos += await self._writer.write(view[pos:])
-                return length
-
-    async def flush(self) -> None:
-        async with self._lock:
-            await self._flush()
-
-    async def close(self) -> None:
-        """Flush buffer and close the fd."""
-        if self.closed:
-            return
-        try:
-            await self.flush()
-        finally:
-            self._writer.close()
-
-    def close_fd(self) -> None:
-        """Close the fd without flushing."""
-        self._writer.close()
-
-    async def __aenter__(self) -> ByteWriteStream: ...
-    async def __aexit__(self, exc_type, *_args) -> None:
-        if exc_type is not None and not issubclass(exc_type, Exception):
-            self.close_fd()  # BaseException (cancel, KeyboardInterrupt): skip flush
-        else:
-            await self.close()  # normal exit or Exception: flush + close
-
-    # -- Internal -----------------------------------------------------------
-
-    async def _flush(self) -> None:
-        pos = 0
-        try:
-            with memoryview(self._buffer) as view:
-                while pos < self._buf_len:
-                    pos += await self._writer.write(view[pos : self._buf_len])
-        finally:
-            if pos > 0:
-                remaining = self._buf_len - pos
-                self._buffer[:remaining] = self._buffer[pos : self._buf_len]
-                self._buf_len = remaining
-```
-
-### 6.3 Contracts
+### 6.2 Contracts
 
 **Memory contract** (unchanged from survey):
 The writer allocates exactly `buffer_size` bytes at construction. This buffer
@@ -468,7 +387,7 @@ state. After an `OSError`, the buffer is in a consistent state (partial flush
 progress preserved via `_flush()`'s `finally` block) and the writer remains
 usable. See §8 for why sticky errors were dropped.
 
-### 6.4 write() algorithm
+### 6.3 write() algorithm
 
 The `write()` method is a flat three-step sequence, not a loop:
 
@@ -484,7 +403,7 @@ The original design used a `while pos < len(view)` loop with `continue` after
 flush to re-evaluate. The flat version is equivalent but easier to reason about:
 after step 1, exactly one of step 2 or step 3 applies.
 
-### 6.5 _flush() cancel safety
+### 6.4 _flush() cancel safety
 
 `_flush()` tracks `pos` (bytes successfully written to raw) and uses a `finally`
 block to shift unwritten bytes to the front of the buffer on every exit path:
@@ -499,7 +418,7 @@ live memoryview on a bytearray prevents the bytearray from being resized — whi
 we don't resize today, releasing it avoids a confusing failure if a resize path
 is ever added).
 
-### 6.6 __aexit__ and teardown
+### 6.5 __aexit__ and teardown
 
 `__aexit__` inspects `exc_type` to choose the teardown path:
 
@@ -522,31 +441,22 @@ plain `async with`.
 
 ## 7. Internal State Machine
 
-```
-                     ┌──────────────┐
-                     │     IDLE     │
-                     │ buf_len < cap│
-                     └──────┬───────┘
-                            │ write(data)
-                    ┌───────┴────────┐
-                    │                │
-              len ≤ cap          len > cap
-                    │                │
-                    ▼                ▼
-         ┌─────────────────┐  ┌─────────────────┐
-         │ fits alongside? │  │ flush if needed  │
-         │ yes → memcpy    │  │ then write-      │
-         │ no  → flush,    │  │ through to raw   │
-         │       then copy │  │ (loop on view)   │
-         └─────────────────┘  └─────────────────┘
-              no await             cancel here:
-              on fast path         partial data lost,
-                                   writer state clean
-```
-
 All state lives in one variable: `_buf_len`. No phase enum, no error flag.
 The `finally` block in `_flush()` guarantees `_buf_len` is correct on every
 exit path. The `asyncio.Lock` ensures only one task mutates the buffer at a time.
+
+On `write(data)`:
+
+- **len ≤ buffer_size** (bufferable):
+  - Fits alongside existing data → memcpy into buffer, return. No await.
+  - Doesn't fit → flush buffer, then memcpy into now-empty buffer, return.
+- **len > buffer_size** (write-through):
+  - Flush buffer if non-empty, then write directly to raw in a loop.
+  - Cancel here: partial data written to raw, rest lost. Writer state clean.
+
+On `flush()`:
+- Drain buffer to raw in a loop. Partial progress tracked by `pos`.
+- On any exit (success, OSError, CancelledError): shift unwritten bytes to front.
 
 ---
 
@@ -605,24 +515,3 @@ the buffer. This export lock prevents `clear()`/`del` on the bytearray, raising
 size buffer with external `_buf_len` tracker never resizes, so export locks are
 irrelevant — slicing a fixed buffer is always safe.
 
----
-
-## 9. Open Questions / Next Steps
-
-1. **Timeout support**: Left to `asyncio.wait_for()` at the call site. The writer
-   API stays simple; callers compose with asyncio primitives.
-
-2. **Batched/vectored writes**: `writev()`-style scatter writes could reduce
-   syscalls (write buffer + caller data in one call). Increases API surface —
-   probably a follow-up if profiling shows syscall overhead matters.
-
-3. **Backpressure signaling**: The `buffered` property exposes current buffer
-   usage. Unclear if more is needed for application-level flow control.
-
-4. **write() returning 0 from raw**: The raw layer (`_DirectWriter`) awaits
-   writability rather than returning 0, so this shouldn't occur. If it did, the
-   write-through loop would spin. Consider a guard if this becomes a concern.
-
-5. **Buffer reclamation strategy**: Current impl uses memmove (shift unwritten
-   bytes to front). A ring buffer avoids the copy but adds complexity. For
-   typical buffer sizes (64 KiB), memmove is fine.
