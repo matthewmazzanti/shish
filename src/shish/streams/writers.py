@@ -82,8 +82,7 @@ class ByteWriteStream:
 
     def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
         self._writer = _DirectWriter(owned_fd)
-        self._buffer = bytearray(buffer_size)
-        self._buf_len = 0
+        self._buffer = bytearray()
         self._buffer_size = buffer_size
         self._lock = asyncio.Lock()
 
@@ -100,7 +99,7 @@ class ByteWriteStream:
     @property
     def buffered(self) -> int:
         """Bytes currently in the write buffer (not yet flushed to raw)."""
-        return self._buf_len
+        return len(self._buffer)
 
     async def write(self, data: Buffer) -> int:
         """Write data, buffering small writes. Returns len(data).
@@ -121,13 +120,12 @@ class ByteWriteStream:
             with memoryview(data) as view:
                 length = len(view)
                 # Flush if the new data won't fit alongside existing
-                if self._buf_len > 0 and self._buf_len + length > self._buffer_size:
+                if self._buffer and len(self._buffer) + length > self._buffer_size:
                     await self._flush()
 
                 # Buffer if small enough
                 if length <= self._buffer_size:
-                    self._buffer[self._buf_len : self._buf_len + length] = view
-                    self._buf_len += length
+                    self._buffer.extend(view)
                     return length
 
                 # Write-through if oversized
@@ -154,22 +152,20 @@ class ByteWriteStream:
             await self._flush()
 
     async def _flush(self) -> None:
-        """Drain internal buffer to raw. Updates _buf_len on all exit paths.
+        """Drain internal buffer to raw.
 
-        memoryview is released before buffer mutation. The finally block
-        runs on success, OSError, and CancelledError, ensuring _buf_len
-        is always consistent.
+        Each memoryview slice is with-blocked so its export lock is
+        released on all exit paths (including exception tracebacks).
+        This keeps the bytearray resizable for del[:pos] compaction.
         """
         pos = 0
         try:
-            with memoryview(self._buffer) as view:
-                while pos < self._buf_len:
-                    pos += await self._writer.write(view[pos : self._buf_len])
+            while pos < len(self._buffer):
+                with memoryview(self._buffer)[pos:] as chunk:
+                    pos += await self._writer.write(chunk)
         finally:
             if pos > 0:
-                remaining = self._buf_len - pos
-                self._buffer[:remaining] = self._buffer[pos : self._buf_len]
-                self._buf_len = remaining
+                del self._buffer[:pos]
 
     def close_fd(self) -> None:
         """Close the fd without flushing."""
