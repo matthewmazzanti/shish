@@ -179,9 +179,25 @@ class TextReadStream:
         self._stream = stream
         self._decoder = codecs.getincrementaldecoder(encoding)()
         self._buf = ""
+        self._buf_start = 0
         self._eof = False
         self._buffer_size = buffer_size
         self._lock = asyncio.Lock()
+
+    @property
+    def buffered(self) -> int:
+        """Characters available in the buffer (not yet returned to caller)."""
+        return len(self._buf) - self._buf_start
+
+    def _consume(self, count: int) -> str:
+        """Return count chars from the buffer and advance past them."""
+        result = self._buf[self._buf_start : self._buf_start + count]
+        self._buf_start += count
+        # Compact when consumed prefix exceeds unconsumed suffix
+        if self._buf_start > self.buffered:
+            self._buf = self._buf[self._buf_start :]
+            self._buf_start = 0
+        return result
 
     async def read(self, size: int = -1) -> str:
         """Read up to size characters. -1 = read all. Empty string = EOF."""
@@ -190,25 +206,19 @@ class TextReadStream:
         async with self._lock:
             if size < 0:
                 return await self._read_all()
-            while len(self._buf) < size and not self._eof:
+            while self.buffered < size and not self._eof:
                 await self._fill()
-            result = self._buf[:size]
-            self._buf = self._buf[size:]
-            return result
+            return self._consume(min(size, self.buffered))
 
     async def readline(self) -> str:
         """Read one decoded line including trailing newline. Empty string = EOF."""
         async with self._lock:
             while True:
-                pos = self._buf.find("\n")
+                pos = self._buf.find("\n", self._buf_start)
                 if pos >= 0:
-                    result = self._buf[: pos + 1]
-                    self._buf = self._buf[pos + 1 :]
-                    return result
+                    return self._consume(pos - self._buf_start + 1)
                 if self._eof:
-                    result = self._buf
-                    self._buf = ""
-                    return result
+                    return self._consume(self.buffered)
                 await self._fill()
 
     async def readlines(self) -> list[str]:
@@ -229,9 +239,7 @@ class TextReadStream:
         """Read until EOF, return everything decoded."""
         while not self._eof:
             await self._fill()
-        result = self._buf
-        self._buf = ""
-        return result
+        return self._consume(self.buffered)
 
     async def _fill(self) -> None:
         """Read bytes from underlying stream, decode, append to text buffer."""
