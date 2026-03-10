@@ -93,7 +93,7 @@ TODO.md             # planned features and known issues
 - `test_fd_ops.py` — FdOps fd-table simulation. Sync only, no execution.
 - `streams/test_writers.py` — ByteWriteStream, TextWriteStream.
 - `streams/test_readers.py` — ByteReadStream, TextReadStream.
-- `streams/test_stages.py` — ByteStage, TextStage, @decode decorator.
+- `test_stages.py` — ByteStage, TextStage, @decode decorator.
 - `test_runtime.py` — Raw builders → run. No syntax layer. Tests runtime behavior.
 - `test_e2e.py` — Full integration from syntax or builder → run.
 - `test_fd_hygiene.py` — Verifies child processes see exactly the expected fd set.
