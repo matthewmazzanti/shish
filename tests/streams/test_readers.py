@@ -262,7 +262,9 @@ async def test_text_read_split_multibyte(read_fd: Fd, write_fd: Fd) -> None:
         write_fd.close()
 
     write_task = asyncio.create_task(do_write())
-    async with TextReadStream.from_bytes(ByteReadStream.from_fd(read_fd, buffer_size=2)) as reader:
+    async with TextReadStream.from_bytes(
+        ByteReadStream.from_fd(read_fd, buffer_size=2)
+    ) as reader:
         result = await reader.read()
     await write_task
     assert result == "🎉"

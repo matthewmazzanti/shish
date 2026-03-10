@@ -89,7 +89,9 @@ class ByteWriteStream:
         self._lock = asyncio.Lock()
 
     @classmethod
-    def from_fd(cls, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> ByteWriteStream:
+    def from_fd(
+        cls, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE
+    ) -> ByteWriteStream:
         """Create a ByteWriteStream from a file descriptor."""
         return cls(RawWriter(owned_fd), buffer_size)
 

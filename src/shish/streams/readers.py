@@ -72,7 +72,9 @@ class ByteReadStream:
         self._lock = asyncio.Lock()
 
     @classmethod
-    def from_fd(cls, owned_fd: Fd, buffer_size: int = DEFAULT_READ_SIZE) -> ByteReadStream:
+    def from_fd(
+        cls, owned_fd: Fd, buffer_size: int = DEFAULT_READ_SIZE
+    ) -> ByteReadStream:
         """Create a ByteReadStream from a file descriptor."""
         return cls(RawReader(owned_fd), buffer_size)
 
