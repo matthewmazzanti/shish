@@ -1,4 +1,4 @@
-# Async Buffered Writer: Design Survey & API Contracts
+# Async Buffered Writer: Design & Reference Survey
 
 ## 1. Problem Statement
 
@@ -10,9 +10,14 @@ We need a **buffered writer** on top that:
 - Has well-defined behavior under cancellation and exceptions
 - Works well over pipes (the primary transport)
 
-The motivating scenario: Python programmers love to `data = f.read()` 10 GB into memory
-and then push that through a write. The buffered layer must handle this without doubling
-memory usage.
+Two motivating scenarios:
+
+- **Many small writes**: A function that prints line-by-line or writes JSON
+  fields one at a time. Without buffering, each `write("}\n")` is a syscall.
+  The buffered layer should coalesce these into fewer, larger writes.
+- **Few huge writes**: `data = f.read()` slurps 10 GB into memory, then pushes
+  it through a single `write(data)`. The buffered layer must handle this without
+  copying into an equally large internal buffer — bounded memory, not doubled.
 
 ---
 
@@ -63,7 +68,7 @@ class BufferedWriter(BufferedIOBase):
 
 ### 2.2 Python `asyncio.StreamWriter` (async, pipes/sockets)
 
-```
+```python
 class StreamWriter:
     def write(self, data: bytes) -> None:        # sync! not a coroutine
     async def drain(self) -> None:
@@ -313,17 +318,11 @@ translate to Python's exception-based cancellation model.
 
 ### 5.3 Why resumable writes re-create unbounded memory
 
-A resumable design stores a reference to the caller's data on `self._pending` so it can
-resume draining after cancellation. But this pins the caller's data:
-
-1. Caller holds 10 GB `bytes`, calls `write(data)`.
-2. Writer stores `memoryview(data)` in `self._pending`, starts draining.
-3. `CancelledError` — caller's frame unwinds. Data stays alive via `_pending`.
-4. Next caller arrives with another 10 GB. Writer must drain old pending first.
-5. Two 10 GB allocations live simultaneously. Back to 20 GB.
-
-This is the same unbounded growth as `asyncio.StreamWriter`, disguised as a reference
-rather than a copy.
+A resumable design stores a reference to the caller's data on `self._pending` so
+it can resume draining after cancellation. This pins the caller's memory via the
+same mechanism as [scatter-gather](#scatter-gather-alternative-considered-and-rejected): the writer holds a `memoryview` that
+keeps the caller's data alive after `CancelledError` unwinds their frame.
+Multiple cancellations accumulate pinned references without bound.
 
 ### 5.4 Decision: bounded memory + cancellable, accept data loss on cancel
 
@@ -340,13 +339,9 @@ caller data across await points (except transiently within a single `raw.write()
 
 ---
 
-## 6. Final Implementation
+## 6. Design
 
-The design was iterated extensively during implementation. This section documents
-the actual API as built, noting where and why it diverges from what the survey
-suggested.
-
-### 6.1 Architecture: two layers
+### 6.1 Architecture
 
 ```
 ByteWriteStream          ← buffered, async, owns the fd
@@ -354,42 +349,40 @@ ByteWriteStream          ← buffered, async, owns the fd
         └── Fd            ← owned fd, close-once semantics
 ```
 
-`_DirectWriter` is a concrete class (not a Protocol). It handles non-blocking I/O
-via `os.write` + `loop.add_writer`. A single `write()` call performs one `os.write`
-and returns the actual byte count (may be short). `BlockingIOError` is handled
-internally by suspending on `add_writer` — callers never see it.
+`_DirectWriter` handles non-blocking I/O via `os.write` + `loop.add_writer`.
+A single `write()` call performs one `os.write` and returns the actual byte
+count (may be short). `BlockingIOError` is handled internally by suspending
+on `add_writer` — callers never see it.
 
 `ByteWriteStream` adds buffering on top. `TextWriteStream` adds encoding on top
 of that.
 
 ### 6.2 Contracts
 
-**Memory contract** (unchanged from survey):
-The writer allocates exactly `buffer_size` bytes at construction. This buffer
-never grows. Writes larger than `buffer_size` bypass the buffer entirely
-(write-through to raw). The writer never holds a reference to the caller's data
-across await boundaries beyond the current raw `write()` call.
+**Memory:** The internal buffer grows up to `buffer_size` bytes via `extend()`.
+Writes larger than `buffer_size` bypass the buffer entirely (write-through to
+raw). The writer never holds a reference to the caller's data across await
+boundaries beyond the current raw `write()` call.
 
-**Cancellation contract** (unchanged from survey):
-`CancelledError` may interrupt any await point. On cancellation the writer's
-internal buffer is in a consistent state, an unknown amount of data may have
-been written to raw, the current `write()`'s data is partially lost, and the
-writer is NOT poisoned — subsequent writes work normally.
+**Cancellation:** `CancelledError` may interrupt any await point. On
+cancellation the writer's internal buffer is in a consistent state, an unknown
+amount of data may have been written to raw, the current `write()`'s data is
+partially lost, and the writer is NOT poisoned — subsequent writes work normally.
 
-**Concurrency contract** (new — diverges from survey):
-An `asyncio.Lock` serializes `write()` and `flush()` so multiple tasks can
-safely call `write()` without interleaving buffer mutations. See §8 for the
-rationale.
+**Concurrency:** An `asyncio.Lock` serializes `write()` and `flush()` so
+multiple tasks can safely call `write()` without interleaving buffer mutations.
+The API surface resembles Python's `logging` module — multiple tasks writing to
+the same stream is a natural usage pattern. Cost is one uncontended lock
+acquisition per write (fast path).
 
-**Error contract** (simplified — diverges from survey):
-`OSError` propagates directly from the raw writer. There is no sticky error
-state. After an `OSError`, the buffer is in a consistent state (partial flush
-progress preserved via `_flush()`'s `finally` block) and the writer remains
-usable. See §8 for why sticky errors were dropped.
+**Errors:** `OSError` propagates directly from the raw writer. After an
+`OSError`, the buffer is in a consistent state (partial flush progress preserved
+via `_flush()`'s `finally` block) and the writer remains usable for subsequent
+writes.
 
 ### 6.3 write() algorithm
 
-The `write()` method is a flat three-step sequence, not a loop:
+A flat three-step sequence:
 
 1. **Make room**: If the buffer has data and the new write wouldn't fit alongside
    it, flush first. After flush, the buffer is empty.
@@ -399,24 +392,22 @@ The `write()` method is a flat three-step sequence, not a loop:
 3. **Write-through**: If `length > buffer_size`, the buffer is guaranteed empty
    (step 1 flushed it if needed). Write directly to raw in a loop. No copy.
 
-The original design used a `while pos < len(view)` loop with `continue` after
-flush to re-evaluate. The flat version is equivalent but easier to reason about:
-after step 1, exactly one of step 2 or step 3 applies.
+After step 1, exactly one of step 2 or step 3 applies — no re-evaluation needed.
+All state lives in one variable: `len(self._buffer)`. No phase enum, no error flag.
 
 ### 6.4 _flush() cancel safety
 
 `_flush()` tracks `pos` (bytes successfully written to raw) and uses a `finally`
 block to shift unwritten bytes to the front of the buffer on every exit path:
 
-- **Success**: `pos == _buf_len`, `remaining == 0`, buffer is effectively empty.
-- **OSError mid-flush**: `pos < _buf_len`, unwritten bytes shifted to `buffer[0:]`.
-- **CancelledError mid-flush**: Same as OSError — `finally` runs, buffer compacted.
+- **Success**: all bytes written, `del buffer[:pos]` leaves buffer empty.
+- **OSError mid-flush**: `del buffer[:pos]` removes only the bytes written.
+- **CancelledError mid-flush**: Same — `finally` runs, buffer compacted.
 
-The `memoryview` on the buffer is scoped with `with` so it's released before the
-buffer mutation in `finally`. This prevents `BufferError` from export locks (a
-live memoryview on a bytearray prevents the bytearray from being resized — while
-we don't resize today, releasing it avoids a confusing failure if a resize path
-is ever added).
+Each memoryview slice passed to raw is `with`-blocked so its export lock is
+released on all exit paths. This ensures the bytearray remains resizable for
+`del[:pos]` compaction in the `finally` block — a live memoryview export would
+prevent it with `BufferError`.
 
 ### 6.5 __aexit__ and teardown
 
@@ -432,86 +423,23 @@ The check uses `not issubclass(exc_type, Exception)` rather than checking for
 flush. Flushing during cancellation would fight the event loop's teardown and
 risk hanging.
 
-This eliminates the need for a separate `discard()` method — callers use
-`async with` and the context manager handles cleanup correctly for all exit paths.
-`spawn.py` was simplified from manual try/except/finally with discard/close to
-plain `async with`.
+Callers use `async with` and the context manager handles cleanup for all exit
+paths. No separate `discard()` method is needed.
 
 ---
 
-## 7. Internal State Machine
-
-All state lives in one variable: `_buf_len`. No phase enum, no error flag.
-The `finally` block in `_flush()` guarantees `_buf_len` is correct on every
-exit path. The `asyncio.Lock` ensures only one task mutates the buffer at a time.
-
-On `write(data)`:
-
-- **len ≤ buffer_size** (bufferable):
-  - Fits alongside existing data → memcpy into buffer, return. No await.
-  - Doesn't fit → flush buffer, then memcpy into now-empty buffer, return.
-- **len > buffer_size** (write-through):
-  - Flush buffer if non-empty, then write directly to raw in a loop.
-  - Cancel here: partial data written to raw, rest lost. Writer state clean.
-
-On `flush()`:
-- Drain buffer to raw in a loop. Partial progress tracked by `pos`.
-- On any exit (success, OSError, CancelledError): shift unwritten bytes to front.
-
----
-
-## 8. Key Design Decisions
+## 7. Design Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Memory bound | Write-through for oversized data | All four references converge on this (§3) |
-| Cancellation | Allow, accept data loss | Cancel means "don't care about this data" (§5.4) |
+| Memory bound | Write-through for oversized data | All four references converge on this ([section 3](#3-deep-dive-memory-bounds)) |
+| Cancellation | Allow, accept data loss | Cancel means "don't care about this data" ([section 5.4](#54-decision-bounded-memory--cancellable-accept-data-loss-on-cancel)) |
 | Return type of write() | `int` (always `len(data)`) | Compatible with `io.BufferedIOBase.write()` |
-| Buffer strategy | Fixed `bytearray` + `_buf_len` + memmove | See "Why not growable bytearray" below |
-| Scatter-gather | Rejected | Pins caller memory, re-creates unbounded growth (§3) |
-| Short-write-on-cancel | Rejected | Can't return a value and raise an exception (§5.2) |
-| Resume-after-cancel | Rejected | Requires holding reference to caller data (§5.3) |
+| Buffer strategy | Growable `bytearray` + `with`-blocked memoryview slices | `len()` as implicit size; `del[:pos]` for compaction; `with` releases export locks |
+| Scatter-gather | Rejected | Pins caller memory, re-creates unbounded growth ([section 3](#3-deep-dive-memory-bounds)) |
+| Short-write-on-cancel | Rejected | Can't return a value and raise an exception ([section 5.2](#52-why-short-write-on-cancel-doesnt-work-in-python)) |
+| Resume-after-cancel | Rejected | Requires holding reference to caller data ([section 5.3](#53-why-resumable-writes-re-create-unbounded-memory)) |
 | memoryview in _flush | `with` block, released before mutation | Zero-copy slicing; prevents export lock |
-| __aexit__ | BaseException-aware | Skip flush on cancel/interrupt, flush on normal exit |
-
-### Changes from the original proposal
-
-**Sticky errors: dropped.** The survey (§2.3) highlighted Go's sticky error as
-appealing for simplicity. During implementation we found it adds complexity
-without saving meaningful work. The OS enforces the same behavior: writing to a
-dead pipe raises `BrokenPipeError` every time. A sticky flag just caches what
-the OS already tells you. Dropping it removes `_error`, `error` property, and
-`reset()` — three fewer things to test, document, and get wrong. The buffer
-stays consistent on OSError via `_flush()`'s `finally` block regardless.
-
-**asyncio.Lock: added.** The original proposal specified single-task use. During
-implementation we decided the API surface resembles Python's `logging` module —
-multiple tasks writing to the same stream is a natural usage pattern. The Lock
-serializes `write()` and `flush()` to prevent interleaved buffer mutations. Cost
-is one uncontended lock acquisition per write (fast path). The Lock is not held
-across the entire `_flush()` drain — it's acquired in the public `write()` and
-`flush()` methods, which call `_flush()` internally.
-
-**close_fd() instead of discard().** The original design had `discard()` to drop
-buffered data. In practice, `discard()` was always followed by `close()`. The
-combined operation — "close the fd without flushing" — is `close_fd()`. This
-simplified `spawn.py` from manual try/except/finally with discard/close to
-plain `async with`, since `__aexit__` calls `close_fd()` on BaseException.
-
-**write() algorithm: flat three-step instead of while loop.** The original
-proposal used a `while pos < len(view)` loop with `continue` after flush to
-re-evaluate whether data fits. The flat version (flush → buffer → write-through)
-is equivalent but each step has a clear single responsibility. After flushing,
-the buffer is empty, so exactly one of buffer-or-write-through applies —
-no need to re-evaluate in a loop.
-
-**Why not a growable bytearray.** We experimented with removing `_buf_len` in
-favor of a growable `bytearray` (using `len()` as the implicit size tracker,
-`extend()` to append, `del[:n]` to compact). This failed: exception tracebacks
-pin `memoryview` slices passed to `_DirectWriter.write()`. When `OSError` is
-raised, the traceback keeps the frame alive, which holds a memoryview slice of
-the buffer. This export lock prevents `clear()`/`del` on the bytearray, raising
-`BufferError: Existing exports of data: object cannot be re-sized`. The fixed-
-size buffer with external `_buf_len` tracker never resizes, so export locks are
-irrelevant — slicing a fixed buffer is always safe.
-
+| Sticky errors | Not used | OS enforces same behavior; caching adds complexity for no benefit |
+| Concurrency | `asyncio.Lock` | Logger-style multi-task writes are natural; Lock cost is minimal |
+| Teardown | `__aexit__` with BaseException check | Skip flush on cancel/interrupt, flush on normal exit |
