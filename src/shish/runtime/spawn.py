@@ -178,21 +178,21 @@ class SpawnScope:
         func = fn_ir.func
 
         async def execute() -> int:
-            stdin_stream = ByteReadStream(dup_stdin)
-            stdout_stream = ByteWriteStream(dup_stdout)
-            stderr_stream = ByteWriteStream(dup_stderr)
-            try:
-                ctx = ByteStage(
-                    stdin=stdin_stream, stdout=stdout_stream, stderr=stderr_stream
-                )
-                return await func(ctx)
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                return 1
-            finally:
-                stdout_stream.close()
-                stdin_stream.close()
-                stderr_stream.close()
+            async with (
+                ByteReadStream.from_fd(dup_stdin) as stdin_stream,
+                ByteWriteStream.from_fd(dup_stdout) as stdout_stream,
+                ByteWriteStream.from_fd(dup_stderr) as stderr_stream,
+            ):
+                try:
+                    ctx = ByteStage(
+                        stdin=stdin_stream,
+                        stdout=stdout_stream,
+                        stderr=stderr_stream,
+                    )
+                    return await func(ctx)
+                except Exception:
+                    traceback.print_exc(file=sys.stderr)
+                    return 1
 
         task = asyncio.create_task(execute())
         self.fn_tasks.append(task)

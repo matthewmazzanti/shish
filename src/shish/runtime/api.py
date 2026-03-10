@@ -136,11 +136,11 @@ class Job[
             RuntimeError: If processes don't exit after SIGKILL + timeout.
         """
         if self.stdin is not None:
-            self.stdin.close()
+            await self.stdin.close()
         if self.stdout is not None:
-            self.stdout.close()
+            await self.stdout.close()
         if self.stderr is not None:
-            self.stderr.close()
+            await self.stderr.close()
         self.root.close_fds()
 
         if self.returncode is not None:
@@ -303,7 +303,7 @@ class JobCtx[
         """Wrap an owned fd into a stdin stream, optionally text-encoded."""
         if fd is None:
             return None
-        stream = ByteWriteStream(fd)
+        stream = ByteWriteStream.from_fd(fd)
         if self._stdin_encoding is None:
             return stream
         return TextWriteStream(stream, encoding=self._stdin_encoding)
@@ -312,7 +312,7 @@ class JobCtx[
         """Wrap an owned fd into a stdout stream, optionally text-decoded."""
         if fd is None:
             return None
-        stream = ByteReadStream(fd)
+        stream = ByteReadStream.from_fd(fd)
         if self._stdout_encoding is None:
             return stream
         return TextReadStream(stream, encoding=self._stdout_encoding)
@@ -329,7 +329,7 @@ class JobCtx[
         """Wrap an owned fd into a stderr stream, optionally text-decoded."""
         if fd is None:
             return None
-        stream = ByteReadStream(fd)
+        stream = ByteReadStream.from_fd(fd)
         if self._stderr_encoding is None:
             return stream
         return TextReadStream(stream, encoding=self._stderr_encoding)

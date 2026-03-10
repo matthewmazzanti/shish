@@ -960,7 +960,7 @@ async def test_start_dsl_stdin_pipe() -> None:
     """DSL start(stdin=PIPE) defaults to text mode."""
     async with start(sh.cat()).stdin(PIPE) as execution:
         await execution.stdin.write("hello from pipe")
-        execution.stdin.close()
+        await execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -997,7 +997,7 @@ async def test_start_dsl_stdin_stdout_pipe() -> None:
     """DSL start(stdin=PIPE, stdout=PIPE) defaults to text mode."""
     async with start(sh.cat()).stdin(PIPE).stdout(PIPE) as execution:
         await execution.stdin.write("round trip")
-        execution.stdin.close()
+        await execution.stdin.close()
         code, captured = await asyncio.gather(
             execution.wait(),
             execution.stdout.read(),
@@ -1022,7 +1022,7 @@ async def test_start_ir_builder_pipe() -> None:
 
     async with cmd("cat").start().stdin(PIPE) as execution:
         await execution.stdin.write("builder pipe")
-        execution.stdin.close()
+        await execution.stdin.close()
         assert await execution.wait() == 0
 
 
@@ -1031,5 +1031,5 @@ async def test_start_ir_builder_pipe_bytes() -> None:
 
     async with cmd("cat").start().stdin(PIPE, encoding=None) as execution:
         await execution.stdin.write(b"builder bytes")
-        execution.stdin.close()
+        await execution.stdin.close()
         assert await execution.wait() == 0
