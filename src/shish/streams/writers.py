@@ -82,7 +82,8 @@ class ByteWriteStream:
 
     def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
         self._writer = _DirectWriter(owned_fd)
-        self._buffer = bytearray()
+        self._buffer = bytearray(buffer_size)
+        self._buf_len = 0
         self._buffer_size = buffer_size
         self._lock = asyncio.Lock()
 
@@ -99,7 +100,7 @@ class ByteWriteStream:
     @property
     def buffered(self) -> int:
         """Bytes currently in the write buffer (not yet flushed to raw)."""
-        return len(self._buffer)
+        return self._buf_len
 
     async def write(self, data: Buffer) -> int:
         """Write data, buffering small writes. Returns len(data).
@@ -120,18 +121,20 @@ class ByteWriteStream:
             with memoryview(data) as view:
                 length = len(view)
                 # Flush if the new data won't fit alongside existing
-                if self._buffer and len(self._buffer) + length > self._buffer_size:
+                if self._buf_len > 0 and self._buf_len + length > self._buffer_size:
                     await self._flush()
 
                 # Buffer if small enough
                 if length <= self._buffer_size:
-                    self._buffer.extend(view)
+                    self._buffer[self._buf_len : self._buf_len + length] = view
+                    self._buf_len += length
                     return length
 
                 # Write-through if oversized
                 pos = 0
                 while pos < length:
-                    pos += await self._writer.write(view[pos:])
+                    with view[pos:] as chunk:
+                        pos += await self._writer.write(chunk)
 
                 return length
 
@@ -155,17 +158,19 @@ class ByteWriteStream:
         """Drain internal buffer to raw.
 
         Each memoryview slice is with-blocked so its export lock is
-        released on all exit paths (including exception tracebacks).
-        This keeps the bytearray resizable for del[:pos] compaction.
+        released on all exit paths (including exception tracebacks),
+        keeping the buffer free of dangling exports.
         """
         pos = 0
         try:
-            while pos < len(self._buffer):
-                with memoryview(self._buffer)[pos:] as chunk:
+            while pos < self._buf_len:
+                with memoryview(self._buffer)[pos : self._buf_len] as chunk:
                     pos += await self._writer.write(chunk)
         finally:
             if pos > 0:
-                del self._buffer[:pos]
+                remaining = self._buf_len - pos
+                self._buffer[:remaining] = self._buffer[pos : self._buf_len]
+                self._buf_len = remaining
 
     def close_fd(self) -> None:
         """Close the fd without flushing."""
