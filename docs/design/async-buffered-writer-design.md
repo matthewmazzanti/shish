@@ -199,7 +199,7 @@ The write-through path is the key to the memory bound. Without it, you'd need to
 - Copy the oversized write into the buffer (buffer grows past `buffer_size`), or
 - Loop slicing the input into buffer-sized chunks (extra copies, still bounded)
 
-**Decision:** Implement write-through for `len(data) > buffer_size`. The raw writer's
+**Decision:** Implement write-through for `len(data) >= buffer_size`. The raw writer's
 `write()` may return short counts, so this needs a loop, but the caller's `data` buffer
 serves as the source — no extra allocation.
 
@@ -387,10 +387,10 @@ A flat three-step sequence:
 
 1. **Make room**: If the buffer has data and the new write wouldn't fit alongside
    it, flush first. After flush, the buffer is empty.
-2. **Buffer**: If `length <= buffer_size`, copy into the buffer and return. This
+2. **Buffer**: If `length < buffer_size`, copy into the buffer and return. This
    covers both the fast path (data fits in available space, no flush needed) and
    the post-flush path (buffer was just drained). No await on this path.
-3. **Write-through**: If `length > buffer_size`, the buffer is guaranteed empty
+3. **Write-through**: If `length >= buffer_size`, the buffer is guaranteed empty
    (step 1 flushed it if needed). Write directly to raw in a loop. No copy.
 
 After step 1, exactly one of step 2 or step 3 applies — no re-evaluation needed.

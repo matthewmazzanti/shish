@@ -64,7 +64,7 @@ class ByteWriteStream:
 
     Memory contract:
         The writer allocates exactly buffer_size bytes at construction.
-        This buffer never grows. Writes larger than buffer_size bypass
+        This buffer never grows. Writes of buffer_size or larger bypass
         the buffer entirely (write-through to raw). The writer never
         holds a reference to the caller's data across await boundaries
         beyond the current raw write() call.
@@ -111,11 +111,11 @@ class ByteWriteStream:
     async def write(self, data: Buffer) -> int:
         """Write data, buffering small writes. Returns len(data).
 
-        For data <= buffer_size: copies into the internal buffer. Flushes
+        For data < buffer_size: copies into the internal buffer. Flushes
         the buffer first if needed to make room. No await if data fits in
         available space (fast path).
 
-        For data > buffer_size: flushes the buffer, then writes data
+        For data >= buffer_size: flushes the buffer, then writes data
         directly to raw in a loop (write-through). No copy.
         """
         if self.closed:
@@ -133,13 +133,14 @@ class ByteWriteStream:
                 if self._buf_len > 0 and self._buf_len + length > self._buffer_size:
                     await self._flush()
 
-                # Buffer if small enough
-                if length <= self._buffer_size:
+                # Strict < so exactly buffer_size writes go through: a full
+                # buffer would flush immediately anyway (Go/Rust do the same).
+                if length < self._buffer_size:
                     self._buffer[self._buf_len : self._buf_len + length] = view
                     self._buf_len += length
                     return length
 
-                # Write-through if oversized
+                # Write-through for buffer_size or larger
                 pos = 0
                 while pos < length:
                     pos += await self._writer.write(view[pos:])
@@ -221,6 +222,7 @@ class TextWriteStream:
     ) -> None:
         self._writer = writer
         self._encoding = encoding
+        self._lock = asyncio.Lock()
 
     @classmethod
     def from_bytes(
@@ -250,18 +252,19 @@ class TextWriteStream:
         """Encode in chunks and write. Returns number of characters written.
 
         Chunks by the underlying byte stream's buffer size to avoid
-        allocating the full encoded string at once.
+        encoding the full string at once (2x memory). Full chunks
+        always take the write-through path: ASCII encodes to exactly
+        buffer_size bytes, multibyte to more — both >= the threshold.
+        Only a trailing partial chunk (< buffer_size chars) gets buffered.
         """
         if self.closed:
             raise OSError("write to closed stream")
-        # Divide by 4: worst-case bytes per char in any Unicode encoding
-        # (UTF-8, UTF-16 surrogates, UTF-32). Ensures encoded chunks
-        # fit within the byte stream's buffer.
-        chunk_size = max(self._writer.buffer_size // 4, 1)
-        for offset in range(0, len(data), chunk_size):
-            chunk = data[offset : offset + chunk_size]
-            await self._writer.write(chunk.encode(self._encoding))
-        return len(data)
+        async with self._lock:
+            chunk_size = self._writer.buffer_size
+            for offset in range(0, len(data), chunk_size):
+                chunk = data[offset : offset + chunk_size]
+                await self._writer.write(chunk.encode(self._encoding))
+            return len(data)
 
     async def writelines(self, lines: Iterable[str]) -> None:
         """Write an iterable of strings."""
@@ -276,7 +279,8 @@ class TextWriteStream:
 
     async def close(self) -> None:
         """Close the underlying byte stream."""
-        await self._writer.close()
+        async with self._lock:
+            await self._writer.close()
 
     async def __aenter__(self) -> TextWriteStream:
         return self

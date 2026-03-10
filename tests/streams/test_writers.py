@@ -213,11 +213,11 @@ async def test_buffered_property(write_fd: Fd) -> None:
 
 
 async def test_write_exactly_buffer_size(read_fd: Fd, write_fd: Fd) -> None:
-    """Data exactly equal to buffer_size is buffered, not write-through."""
+    """Data exactly equal to buffer_size takes write-through path."""
     writer = ByteWriteStream.from_fd(write_fd, buffer_size=16)
     data = b"x" * 16
     await writer.write(data)
-    assert writer.buffered == 16
+    assert writer.buffered == 0  # write-through, not buffered
     await writer.close()
     result = os.read(read_fd.fd, 1024)
     assert result == data
@@ -299,15 +299,42 @@ async def test_text_write_eof_empty(read_fd: Fd, write_fd: Fd) -> None:
 
 
 async def test_text_write_large_chunks(read_fd: Fd, write_fd: Fd) -> None:
-    """Text larger than buffer_size // 4 is chunked and delivered correctly."""
-    byte_writer = ByteWriteStream.from_fd(write_fd, buffer_size=32)
-    # chunk_size = 32 // 4 = 8 chars. 26 chars requires 4 chunks.
+    """Text larger than buffer_size is chunked and delivered correctly."""
+    byte_writer = ByteWriteStream.from_fd(write_fd, buffer_size=10)
+    # chunk_size = 10 chars. 26 chars = 2 full chunks + 6-char tail.
     data = "abcdefghijklmnopqrstuvwxyz"
     async with TextWriteStream(byte_writer) as writer:
         count = await writer.write(data)
     result = os.read(read_fd.fd, 1024)
     assert result == data.encode()
     assert count == 26
+
+
+async def test_text_write_chunks_write_through(read_fd: Fd, write_fd: Fd) -> None:
+    """Full text chunks (>= buffer_size chars) take the write-through path.
+
+    ASCII: buffer_size chars encode to buffer_size bytes (== threshold).
+    Multibyte: buffer_size chars encode to > buffer_size bytes.
+    Both hit write-through since the byte layer buffers data < buffer_size.
+    """
+    byte_writer = ByteWriteStream.from_fd(write_fd, buffer_size=16)
+    writer = TextWriteStream(byte_writer)
+
+    # Exactly buffer_size ASCII chars → 16 bytes → write-through
+    await writer.write("a" * 16)
+    assert byte_writer.buffered == 0
+
+    # Exactly buffer_size multibyte chars → 32 bytes → write-through
+    await writer.write("é" * 16)
+    assert byte_writer.buffered == 0
+
+    # Partial chunk (< buffer_size chars) → buffered
+    await writer.write("hi")
+    assert byte_writer.buffered == 2
+
+    await writer.close()
+    result = os.read(read_fd.fd, 1024)
+    assert result == (b"a" * 16) + ("é" * 16).encode() + b"hi"
 
 
 async def test_text_write_aexit_base_exception_skips_flush(

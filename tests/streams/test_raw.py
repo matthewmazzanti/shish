@@ -48,9 +48,10 @@ async def test_raw_read_suspends_on_empty_pipe(read_fd: Fd, write_fd: Fd) -> Non
         await asyncio.sleep(0.01)
         os.write(write_fd.fd, b"delayed")
 
-    asyncio.create_task(delayed_write())
+    task = asyncio.create_task(delayed_write())
     result = await reader.read(1024)
     assert result == b"delayed"
+    await task
     reader.close()
 
 
