@@ -69,32 +69,35 @@ class ByteReadStream:
         self._buf = bytearray()
         self._eof = False
         self._buffer_size = buffer_size
+        self._lock = asyncio.Lock()
 
     async def read(self, size: int = -1) -> bytes:
         """Read up to size bytes. -1 = read all. Empty bytes = EOF."""
-        if size < 0:
-            return await self._read_all()
         if size == 0:
             return b""
-        while len(self._buf) < size and not self._eof:
-            await self._fill(size - len(self._buf))
-        result = bytes(self._buf[:size])
-        del self._buf[:size]
-        return result
+        async with self._lock:
+            if size < 0:
+                return await self._read_all()
+            while len(self._buf) < size and not self._eof:
+                await self._fill(size - len(self._buf))
+            result = bytes(self._buf[:size])
+            del self._buf[:size]
+            return result
 
     async def readline(self) -> bytes:
         """Read one line including trailing newline. Empty bytes = EOF."""
-        while True:
-            pos = self._buf.find(b"\n")
-            if pos >= 0:
-                result = bytes(self._buf[: pos + 1])
-                del self._buf[: pos + 1]
-                return result
-            if self._eof:
-                result = bytes(self._buf)
-                self._buf.clear()
-                return result
-            await self._fill()
+        async with self._lock:
+            while True:
+                pos = self._buf.find(b"\n")
+                if pos >= 0:
+                    result = bytes(self._buf[: pos + 1])
+                    del self._buf[: pos + 1]
+                    return result
+                if self._eof:
+                    result = bytes(self._buf)
+                    self._buf.clear()
+                    return result
+                await self._fill()
 
     async def readlines(self) -> list[bytes]:
         """Read all remaining lines until EOF."""
@@ -105,9 +108,14 @@ class ByteReadStream:
         """Whether the stream is closed."""
         return self._reader.closed
 
+    def close_fd(self) -> None:
+        """Close the fd without waiting for pending reads."""
+        self._reader.close()
+
     async def close(self) -> None:
         """Close the fd."""
-        self._reader.close()
+        async with self._lock:
+            self._reader.close()
 
     async def _read_all(self) -> bytes:
         """Read until EOF, return everything."""
@@ -131,8 +139,15 @@ class ByteReadStream:
     async def __aenter__(self) -> ByteReadStream:
         return self
 
-    async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_args: object,
+    ) -> None:
+        if exc_type is not None and not issubclass(exc_type, Exception):
+            self.close_fd()
+        else:
+            await self.close()
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         """Yield lines with trailing newline. Stops at EOF."""
@@ -166,32 +181,35 @@ class TextReadStream:
         self._buf = ""
         self._eof = False
         self._buffer_size = buffer_size
+        self._lock = asyncio.Lock()
 
     async def read(self, size: int = -1) -> str:
         """Read up to size characters. -1 = read all. Empty string = EOF."""
-        if size < 0:
-            return await self._read_all()
         if size == 0:
             return ""
-        while len(self._buf) < size and not self._eof:
-            await self._fill()
-        result = self._buf[:size]
-        self._buf = self._buf[size:]
-        return result
+        async with self._lock:
+            if size < 0:
+                return await self._read_all()
+            while len(self._buf) < size and not self._eof:
+                await self._fill()
+            result = self._buf[:size]
+            self._buf = self._buf[size:]
+            return result
 
     async def readline(self) -> str:
         """Read one decoded line including trailing newline. Empty string = EOF."""
-        while True:
-            pos = self._buf.find("\n")
-            if pos >= 0:
-                result = self._buf[: pos + 1]
-                self._buf = self._buf[pos + 1 :]
-                return result
-            if self._eof:
-                result = self._buf
-                self._buf = ""
-                return result
-            await self._fill()
+        async with self._lock:
+            while True:
+                pos = self._buf.find("\n")
+                if pos >= 0:
+                    result = self._buf[: pos + 1]
+                    self._buf = self._buf[pos + 1 :]
+                    return result
+                if self._eof:
+                    result = self._buf
+                    self._buf = ""
+                    return result
+                await self._fill()
 
     async def readlines(self) -> list[str]:
         """Read all remaining lines until EOF."""
@@ -204,7 +222,8 @@ class TextReadStream:
 
     async def close(self) -> None:
         """Close the underlying byte stream."""
-        await self._stream.close()
+        async with self._lock:
+            await self._stream.close()
 
     async def _read_all(self) -> str:
         """Read until EOF, return everything decoded."""
@@ -228,8 +247,15 @@ class TextReadStream:
     async def __aenter__(self) -> TextReadStream:
         return self
 
-    async def __aexit__(self, *_args: object) -> None:
-        await self.close()
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_args: object,
+    ) -> None:
+        if exc_type is not None and not issubclass(exc_type, Exception):
+            self._stream.close_fd()
+        else:
+            await self.close()
 
     async def __aiter__(self) -> AsyncIterator[str]:
         """Yield decoded lines with trailing newline. Stops at EOF."""
