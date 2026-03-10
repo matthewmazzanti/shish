@@ -59,7 +59,8 @@ class RawWriter:
 class ByteWriteStream:
     """Async writable byte stream with userspace buffering.
 
-    Mirrors open(mode="wb"). Owns the fd — closing the stream closes it.
+    Mirrors open(mode="wb"). Owns the raw writer — closing the stream
+    closes the underlying fd.
 
     Memory contract:
         The writer allocates exactly buffer_size bytes at construction.

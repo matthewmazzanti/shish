@@ -24,7 +24,10 @@ src/shish/          # main package
   syntax.py         # thin wrappers (Cmd, Pipeline), operators, combinators
   fd.py             # fd constants (STDIN/STDOUT/STDERR/PIPE), Fd
   fn_stage.py       # Fn stage contexts, ByteFn/TextFn aliases, decode wrapper
-  streams.py        # async byte/text streams for subprocess pipes
+  streams/          # async byte/text streams for subprocess pipes
+    __init__.py     # re-exports, module docstring
+    readers.py      # RawReader, ByteReadStream, TextReadStream
+    writers.py      # RawWriter, ByteWriteStream, TextWriteStream
   runtime/
     __init__.py     # re-exports from api + tree
     api.py          # Job, JobCtx, start()
@@ -83,7 +86,7 @@ TODO.md             # planned features and known issues
 - Pipeline stages run concurrently via `os.pipe()` fds
 - Per-stage redirects override pipe connections
 - SIGKILL orphan processes on error, shield reap from cancellation
-- Async IO via event loop reader/writer callbacks (`streams.py`)
+- Async IO via event loop reader/writer callbacks (`streams/`)
 - SIGPIPE propagates naturally for early termination
 
 ## Test Organization
@@ -91,6 +94,7 @@ TODO.md             # planned features and known issues
 - `test_builders.py` — Builder layer: `cmd()` builder methods, `builders.pipeline()` flattening. Sync only, no execution.
 - `test_syntax.py` — `sh` magic + operators produce correct builders. Sync only, no execution.
 - `test_fd_ops.py` — FdOps fd-table simulation. Sync only, no execution.
+- `streams/test_raw.py` — RawReader, RawWriter.
 - `streams/test_writers.py` — ByteWriteStream, TextWriteStream.
 - `streams/test_readers.py` — ByteReadStream, TextReadStream.
 - `test_stages.py` — ByteStage, TextStage, @decode decorator.

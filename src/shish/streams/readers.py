@@ -56,12 +56,12 @@ class RawReader:
 class ByteReadStream:
     """Async readable byte stream with userspace buffering.
 
-    Mirrors open(mode="rb"). Owns the fd — closing the stream closes it.
+    Mirrors open(mode="rb"). Owns the raw reader — closing the stream
+    closes the underlying fd.
 
-    Wraps a RawReader with a bytearray buffer (modeled after
-    CPython's _pyio.BufferedReader). read(n) loops filling from the
-    underlying reader until n bytes are buffered or EOF is reached,
-    matching BufferedReader.read(n) semantics.
+    Wraps a RawReader with a bytearray buffer (modeled after CPython's
+    _pyio.BufferedReader). read(n) loops filling from the underlying reader until n
+    bytes are buffered or EOF is reached, matching BufferedReader.read(n) semantics.
     """
 
     def __init__(self, raw: RawReader, buffer_size: int = DEFAULT_READ_SIZE) -> None:

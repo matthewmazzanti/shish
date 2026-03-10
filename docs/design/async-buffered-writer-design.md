@@ -344,12 +344,12 @@ caller data across await points (except transiently within a single `raw.write()
 ### 6.1 Architecture
 
 ```
-ByteWriteStream          ← buffered, async, owns the fd
-  └── _DirectWriter      ← unbuffered, async, single os.write per call
+ByteWriteStream          ← buffered, async, owns the raw writer
+  └── RawWriter           ← unbuffered, async, single os.write per call
         └── Fd            ← owned fd, close-once semantics
 ```
 
-`_DirectWriter` handles non-blocking I/O via `os.write` + `loop.add_writer`.
+`RawWriter` handles non-blocking I/O via `os.write` + `loop.add_writer`.
 A single `write()` call performs one `os.write` and returns the actual byte
 count (may be short). `BlockingIOError` is handled internally by suspending
 on `add_writer` — callers never see it.
@@ -359,10 +359,11 @@ of that.
 
 ### 6.2 Contracts
 
-**Memory:** The internal buffer grows up to `buffer_size` bytes via `extend()`.
-Writes larger than `buffer_size` bypass the buffer entirely (write-through to
-raw). The writer never holds a reference to the caller's data across await
-boundaries beyond the current raw `write()` call.
+**Memory:** The internal buffer is a fixed-size `bytearray(buffer_size)` allocated
+at construction, tracked by `_buf_len`. It never grows. Writes larger than
+`buffer_size` bypass the buffer entirely (write-through to raw). The writer never
+holds a reference to the caller's data across await boundaries beyond the current
+raw `write()` call.
 
 **Cancellation:** `CancelledError` may interrupt any await point. On
 cancellation the writer's internal buffer is in a consistent state, an unknown
@@ -393,21 +394,20 @@ A flat three-step sequence:
    (step 1 flushed it if needed). Write directly to raw in a loop. No copy.
 
 After step 1, exactly one of step 2 or step 3 applies — no re-evaluation needed.
-All state lives in one variable: `len(self._buffer)`. No phase enum, no error flag.
+All state lives in one variable: `self._buf_len`. No phase enum, no error flag.
 
 ### 6.4 _flush() cancel safety
 
 `_flush()` tracks `pos` (bytes successfully written to raw) and uses a `finally`
 block to shift unwritten bytes to the front of the buffer on every exit path:
 
-- **Success**: all bytes written, `del buffer[:pos]` leaves buffer empty.
-- **OSError mid-flush**: `del buffer[:pos]` removes only the bytes written.
-- **CancelledError mid-flush**: Same — `finally` runs, buffer compacted.
+- **Success**: all bytes written, `_buf_len` set to 0.
+- **OSError mid-flush**: only written bytes are removed, remainder shifted to front.
+- **CancelledError mid-flush**: same — `finally` runs, buffer compacted.
 
-Each memoryview slice passed to raw is `with`-blocked so its export lock is
-released on all exit paths. This ensures the bytearray remains resizable for
-`del[:pos]` compaction in the `finally` block — a live memoryview export would
-prevent it with `BufferError`.
+Bytearray slices (copies) are passed to raw rather than memoryview, avoiding
+export lock issues. Copying up to 64K fits in L2 cache and is faster than
+memoryview constructor + context manager overhead per iteration.
 
 ### 6.5 __aexit__ and teardown
 
@@ -435,11 +435,11 @@ paths. No separate `discard()` method is needed.
 | Memory bound | Write-through for oversized data | All four references converge on this ([section 3](#3-deep-dive-memory-bounds)) |
 | Cancellation | Allow, accept data loss | Cancel means "don't care about this data" ([section 5.4](#54-decision-bounded-memory--cancellable-accept-data-loss-on-cancel)) |
 | Return type of write() | `int` (always `len(data)`) | Compatible with `io.BufferedIOBase.write()` |
-| Buffer strategy | Growable `bytearray` + `with`-blocked memoryview slices | `len()` as implicit size; `del[:pos]` for compaction; `with` releases export locks |
+| Buffer strategy | Fixed-size `bytearray` + `_buf_len` | Allocated once at construction; slice assignment for compaction |
 | Scatter-gather | Rejected | Pins caller memory, re-creates unbounded growth ([section 3](#3-deep-dive-memory-bounds)) |
 | Short-write-on-cancel | Rejected | Can't return a value and raise an exception ([section 5.2](#52-why-short-write-on-cancel-doesnt-work-in-python)) |
 | Resume-after-cancel | Rejected | Requires holding reference to caller data ([section 5.3](#53-why-resumable-writes-re-create-unbounded-memory)) |
-| memoryview in _flush | `with` block, released before mutation | Zero-copy slicing; prevents export lock |
+| Bytearray slices in _flush | Copy per iteration, no memoryview | Simpler than memoryview; fast for ≤64K buffers |
 | Sticky errors | Not used | OS enforces same behavior; caching adds complexity for no benefit |
 | Concurrency | `asyncio.Lock` | Logger-style multi-task writes are natural; Lock cost is minimal |
 | Teardown | `__aexit__` with BaseException check | Skip flush on cancel/interrupt, flush on normal exit |
