@@ -12,7 +12,7 @@ from shish.fd import Fd
 DEFAULT_BUFFER_SIZE = 65536
 
 
-class _DirectWriter:
+class RawWriter:
     """Unbuffered async fd writer. Owns the fd.
 
     Uses os.write + loop.add_writer directly. write() performs a
@@ -80,12 +80,17 @@ class ByteWriteStream:
         can safely call write() without interleaving buffer mutations.
     """
 
-    def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
-        self._writer = _DirectWriter(owned_fd)
+    def __init__(self, raw: RawWriter, buffer_size: int = DEFAULT_BUFFER_SIZE) -> None:
+        self._writer = raw
         self._buffer = bytearray(buffer_size)
         self._buf_len = 0
         self._buffer_size = buffer_size
         self._lock = asyncio.Lock()
+
+    @classmethod
+    def from_fd(cls, owned_fd: Fd, buffer_size: int = DEFAULT_BUFFER_SIZE) -> ByteWriteStream:
+        """Create a ByteWriteStream from a file descriptor."""
+        return cls(RawWriter(owned_fd), buffer_size)
 
     @property
     def closed(self) -> bool:
@@ -215,6 +220,25 @@ class TextWriteStream:
     ) -> None:
         self._writer = writer
         self._encoding = encoding
+
+    @classmethod
+    def from_bytes(
+        cls,
+        writer: ByteWriteStream,
+        encoding: str = DEFAULT_ENCODING,
+    ) -> TextWriteStream:
+        """Create a TextWriteStream from a ByteWriteStream."""
+        return cls(writer, encoding)
+
+    @classmethod
+    def from_fd(
+        cls,
+        owned_fd: Fd,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = DEFAULT_BUFFER_SIZE,
+    ) -> TextWriteStream:
+        """Create a TextWriteStream from a file descriptor."""
+        return cls(ByteWriteStream.from_fd(owned_fd, buffer_size), encoding)
 
     @property
     def closed(self) -> bool:

@@ -699,7 +699,7 @@ async def test_start_stdin_fd() -> None:
     read_fd, write_fd = os.pipe()
     async with start(builders.Cmd(("cat",))).stdin(read_fd) as execution:
         os.close(read_fd)  # start() dup'd it; close our copy
-        async with ByteWriteStream(Fd(write_fd)) as writer:
+        async with ByteWriteStream.from_fd(Fd(write_fd)) as writer:
             await writer.write(b"hello from pipe")
         assert await execution.wait() == 0
 
@@ -715,10 +715,10 @@ async def test_start_stdin_fd_with_stdout_fd() -> None:
         os.close(stdout_w)
 
         async def do_write() -> None:
-            async with ByteWriteStream(Fd(stdin_w)) as writer:
+            async with ByteWriteStream.from_fd(Fd(stdin_w)) as writer:
                 await writer.write(b"round trip")
 
-        async with ByteReadStream(Fd(stdout_r)) as reader:
+        async with ByteReadStream.from_fd(Fd(stdout_r)) as reader:
             write_task = asyncio.create_task(do_write())
             code, captured = await asyncio.gather(
                 execution.wait(),

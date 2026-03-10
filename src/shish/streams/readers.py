@@ -13,7 +13,7 @@ from shish.fd import Fd
 DEFAULT_READ_SIZE = 65536
 
 
-class _DirectReader:
+class RawReader:
     """Unbuffered async fd reader. Owns the fd.
 
     Uses os.read + loop.add_reader directly. read() performs a single
@@ -58,18 +58,23 @@ class ByteReadStream:
 
     Mirrors open(mode="rb"). Owns the fd — closing the stream closes it.
 
-    Wraps a _DirectReader with a bytearray buffer (modeled after
+    Wraps a RawReader with a bytearray buffer (modeled after
     CPython's _pyio.BufferedReader). read(n) loops filling from the
     underlying reader until n bytes are buffered or EOF is reached,
     matching BufferedReader.read(n) semantics.
     """
 
-    def __init__(self, owned_fd: Fd, buffer_size: int = DEFAULT_READ_SIZE) -> None:
-        self._reader = _DirectReader(owned_fd)
+    def __init__(self, raw: RawReader, buffer_size: int = DEFAULT_READ_SIZE) -> None:
+        self._reader = raw
         self._buf = bytearray()
         self._eof = False
         self._buffer_size = buffer_size
         self._lock = asyncio.Lock()
+
+    @classmethod
+    def from_fd(cls, owned_fd: Fd, buffer_size: int = DEFAULT_READ_SIZE) -> ByteReadStream:
+        """Create a ByteReadStream from a file descriptor."""
+        return cls(RawReader(owned_fd), buffer_size)
 
     async def read(self, size: int = -1) -> bytes:
         """Read up to size bytes. -1 = read all. Empty bytes = EOF."""
@@ -183,6 +188,26 @@ class TextReadStream:
         self._eof = False
         self._buffer_size = buffer_size
         self._lock = asyncio.Lock()
+
+    @classmethod
+    def from_bytes(
+        cls,
+        stream: ByteReadStream,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = DEFAULT_READ_SIZE,
+    ) -> TextReadStream:
+        """Create a TextReadStream from a ByteReadStream."""
+        return cls(stream, encoding, buffer_size)
+
+    @classmethod
+    def from_fd(
+        cls,
+        owned_fd: Fd,
+        encoding: str = DEFAULT_ENCODING,
+        buffer_size: int = DEFAULT_READ_SIZE,
+    ) -> TextReadStream:
+        """Create a TextReadStream from a file descriptor."""
+        return cls(ByteReadStream.from_fd(owned_fd, buffer_size), encoding, buffer_size)
 
     @property
     def buffered(self) -> int:

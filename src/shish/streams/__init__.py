@@ -6,7 +6,7 @@ method, we have the async equivalent. If open() doesn't, we don't.
 Three layers, matching CPython's IO stack (FileIO → BufferedReader/Writer
 → TextIOWrapper):
 
-    Raw IO (_DirectReader, _DirectWriter)
+    Raw IO (RawReader, RawWriter)
         Non-blocking fd + event loop. Single os.read/os.write per call
         with add_reader/add_writer for backpressure. Own the fd.
 
@@ -35,12 +35,14 @@ Key invariants matching open():
     async for       Yields lines
 """
 
-from shish.streams.readers import ByteReadStream, TextReadStream
-from shish.streams.writers import ByteWriteStream, TextWriteStream
+from shish.streams.readers import ByteReadStream, RawReader, TextReadStream
+from shish.streams.writers import ByteWriteStream, RawWriter, TextWriteStream
 
 __all__ = [
     "ByteReadStream",
     "ByteWriteStream",
+    "RawReader",
+    "RawWriter",
     "TextReadStream",
     "TextWriteStream",
 ]

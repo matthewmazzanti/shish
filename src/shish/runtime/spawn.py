@@ -179,9 +179,9 @@ class SpawnScope:
 
         async def execute() -> int:
             async with (
-                ByteReadStream(dup_stdin) as stdin_stream,
-                ByteWriteStream(dup_stdout) as stdout_stream,
-                ByteWriteStream(dup_stderr) as stderr_stream,
+                ByteReadStream.from_fd(dup_stdin) as stdin_stream,
+                ByteWriteStream.from_fd(dup_stdout) as stdout_stream,
+                ByteWriteStream.from_fd(dup_stderr) as stderr_stream,
             ):
                 try:
                     ctx = ByteStage(
