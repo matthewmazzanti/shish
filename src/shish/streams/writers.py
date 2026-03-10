@@ -118,6 +118,9 @@ class ByteWriteStream:
             return 0
 
         async with self._lock:
+            # memoryview pins caller's data for the duration of the write,
+            # preventing mutation across await points. Also gives zero-copy
+            # slicing for the write-through path on large data.
             with memoryview(data) as view:
                 length = len(view)
                 # Flush if the new data won't fit alongside existing
@@ -133,8 +136,7 @@ class ByteWriteStream:
                 # Write-through if oversized
                 pos = 0
                 while pos < length:
-                    with view[pos:] as chunk:
-                        pos += await self._writer.write(chunk)
+                    pos += await self._writer.write(view[pos:])
 
                 return length
 
@@ -155,17 +157,14 @@ class ByteWriteStream:
             await self._flush()
 
     async def _flush(self) -> None:
-        """Drain internal buffer to raw.
-
-        Each memoryview slice is with-blocked so its export lock is
-        released on all exit paths (including exception tracebacks),
-        keeping the buffer free of dangling exports.
-        """
         pos = 0
         try:
             while pos < self._buf_len:
-                with memoryview(self._buffer)[pos : self._buf_len] as chunk:
-                    pos += await self._writer.write(chunk)
+                # Bytearray slices copy, but copying up to 64K (~1us, fits in L2 cache)
+                # is faster than memoryview constructor + context manager overhead per
+                # iteration. Lock prevents concurrent buffer mutation so the copy is
+                # safe.
+                pos += await self._writer.write(self._buffer[pos : self._buf_len])
         finally:
             if pos > 0:
                 remaining = self._buf_len - pos
