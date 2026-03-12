@@ -40,3 +40,9 @@ class Fd:
             self.closed = True
             if self.owned:
                 os.close(self.fd)
+
+    def __enter__(self) -> Fd:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
