@@ -41,19 +41,16 @@ typedef struct {
 } ByteWriteStreamObject;
 
 enum WritePhase {
-    SETUP = 0,              /* acquire buffer, decide path */
-    FLUSH = 1,              /* draining internal buffer */
-    CHECK_BUFFER = 2,       /* buffer small data or start write-through */
-    WRITE = 3,              /* write-through for large data */
+    ENTRY = 0,              /* initial entry — acquire buffer, decide path */
+    FLUSH = 1,              /* resume after yielding during flush */
+    WRITE = 2,              /* resume after yielding during write-through */
 };
 
 typedef struct {
     PyObject_HEAD
     ByteWriteStreamObject *writer;
     PyObject *data;         /* raw data ref (buffer acquired in SETUP) */
-    Py_buffer view;         /* acquired in SETUP phase */
-    int view_acquired;      /* flag: whether Py_buffer is valid */
-    Py_ssize_t length;      /* cached view length */
+    Py_buffer view;         /* view.obj != NULL when acquired */
     enum WritePhase phase;
     Py_ssize_t pos;         /* write-through position (per-awaitable) */
 } WriteAwaitableObject;
@@ -185,21 +182,6 @@ write_fd(ByteWriteStreamObject *w, const char *buf, Py_ssize_t len,
     return NULL;  /* done — no error set */
 }
 
-/* One step of flush: drain internal buffer to fd.
- * Returns Future on EAGAIN, NULL when done or on error.
- * Resets buf_len and flush_pos on completion. */
-static PyObject *
-flush_step(ByteWriteStreamObject *w)
-{
-    PyObject *future = write_fd(w, w->buffer, w->buf_len, &w->flush_pos);
-    if (future != NULL)
-        return future;
-    if (PyErr_Occurred())
-        return NULL;
-    w->buf_len = 0;
-    w->flush_pos = 0;
-    return NULL;
-}
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -215,7 +197,7 @@ WriteAwaitable_dealloc(WriteAwaitableObject *self)
     remove_writer(self->writer);
     PyErr_Restore(err_type, err_value, err_tb);
 
-    if (self->view_acquired)
+    if (self->view.obj)
         PyBuffer_Release(&self->view);
     Py_XDECREF(self->data);
     Py_DECREF(self->writer);
@@ -228,55 +210,65 @@ static PyObject *
 WriteAwaitable_iternext(WriteAwaitableObject *self)
 {
     ByteWriteStreamObject *w = self->writer;
+    PyObject *future;
+    Py_ssize_t length;
 
-    for (;;) switch (self->phase) {
-
-    case SETUP:
-        if (PyObject_GetBuffer(self->data, &self->view, PyBUF_SIMPLE) < 0)
-            return NULL;
-        self->view_acquired = 1;
-        self->length = self->view.len;
-        self->phase = needs_flush(w, self->length) ? FLUSH : CHECK_BUFFER;
-        continue;
-
-    case FLUSH: {
-        remove_writer(w);
-        PyObject *future = flush_step(w);
-        if (future != NULL)
-            return future;
-        if (PyErr_Occurred())
-            return NULL;
-        self->phase = CHECK_BUFFER;
-        continue;
+    switch (self->phase) {
+        case ENTRY: goto entry;
+        case FLUSH: goto flush;
+        case WRITE: goto write;
+        default:    Py_UNREACHABLE();
     }
 
-    case CHECK_BUFFER:
-        if (can_buffer(w, self->length)) {
-            copy_to_buf(w, (const char *)self->view.buf, self->length);
-            PyBuffer_Release(&self->view);
-            self->view_acquired = 0;
-            return stop_iteration_ssize(self->length);
+entry:
+    if (PyObject_GetBuffer(self->data, &self->view, PyBUF_SIMPLE) < 0) {
+        return NULL;
+    }
+
+    if (needs_flush(w, self->view.len)) {
+        for (;;) {
+            future = write_fd(w, w->buffer, w->buf_len, &w->flush_pos);
+            if (future == NULL && PyErr_Occurred()) {
+                return NULL;
+            }
+            if (future == NULL) {
+                break;
+            }
+            self->phase = FLUSH;
+            return future;
+flush:
+            remove_writer(w);
         }
-        self->pos = 0;
-        self->phase = WRITE;
-        continue;
+        w->buf_len = 0;
+        w->flush_pos = 0;
+    }
 
-    case WRITE: {
-        remove_writer(w);
-        PyObject *future = write_fd(
-            w, (const char *)self->view.buf, self->length, &self->pos
-        );
-        if (future != NULL)
-            return future;
-        if (PyErr_Occurred())
-            return NULL;
+    if (can_buffer(w, self->view.len)) {
+        length = self->view.len;
+        copy_to_buf(w, (const char *)self->view.buf, length);
         PyBuffer_Release(&self->view);
-        self->view_acquired = 0;
-        return stop_iteration_ssize(self->length);
+        return stop_iteration_ssize(length);
     }
 
+    self->pos = 0;
+    for (;;) {
+        future = write_fd(
+            w, (const char *)self->view.buf, self->view.len, &self->pos);
+        if (future == NULL && PyErr_Occurred()) {
+            return NULL;
+        }
+        if (future == NULL) {
+            break;
+        }
+        self->phase = WRITE;
+        return future;
+write:
+        remove_writer(w);
     }
-    Py_UNREACHABLE();
+
+    length = self->view.len;
+    PyBuffer_Release(&self->view);
+    return stop_iteration_ssize(length);
 }
 
 /* ── Awaitable protocol ── */
@@ -299,9 +291,8 @@ static PyObject *
 WriteAwaitable_throw(WriteAwaitableObject *self, PyObject *args)
 {
     remove_writer(self->writer);
-    if (self->view_acquired) {
+    if (self->view.obj) {
         PyBuffer_Release(&self->view);
-        self->view_acquired = 0;
     }
 
     PyObject *type, *value = NULL, *tb = NULL;
@@ -317,9 +308,8 @@ WriteAwaitable_close(
 )
 {
     remove_writer(self->writer);
-    if (self->view_acquired) {
+    if (self->view.obj) {
         PyBuffer_Release(&self->view);
-        self->view_acquired = 0;
     }
     Py_RETURN_NONE;
 }
@@ -387,13 +377,16 @@ FlushAwaitable_dealloc(FlushAwaitableObject *self)
 static PyObject *
 FlushAwaitable_iternext(FlushAwaitableObject *self)
 {
-    remove_writer(self->writer);
+    ByteWriteStreamObject *w = self->writer;
+    remove_writer(w);
 
-    PyObject *future = flush_step(self->writer);
+    PyObject *future = write_fd(w, w->buffer, w->buf_len, &w->flush_pos);
     if (future != NULL)
         return future;
     if (PyErr_Occurred())
         return NULL;
+    w->buf_len = 0;
+    w->flush_pos = 0;
     return stop_iteration_none();
 }
 
@@ -547,9 +540,8 @@ ByteWriteStream_write(ByteWriteStreamObject *self, PyObject *data)
         return NULL;
     aw->writer = (ByteWriteStreamObject *)Py_NewRef((PyObject *)self);
     aw->data = Py_NewRef(data);
-    aw->view_acquired = 0;
-    aw->length = 0;
-    aw->phase = SETUP;
+    aw->view.obj = NULL;
+    aw->phase = ENTRY;
     aw->pos = 0;
     return (PyObject *)aw;
 }
