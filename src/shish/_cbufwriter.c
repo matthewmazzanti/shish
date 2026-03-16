@@ -30,7 +30,7 @@ static PyTypeObject FlushAwaitableType;
 static PyTypeObject ByteWriteStreamType;
 
 typedef struct {
-    char *data;
+    char *buf;
     Py_ssize_t len;
     Py_ssize_t cap;
 } Buf;
@@ -40,7 +40,7 @@ typedef struct {
     PyObject *fd_obj;       /* Fd object (for close/closed) */
     int fd;                 /* raw fd int */
     PyObject *loop;         /* cached event loop */
-    Buf buf;                /* write buffer */
+    Buf wbuf;               /* write buffer */
     Py_ssize_t flush_pos;   /* flush drain progress */
 } ByteWriteStreamObject;
 
@@ -58,7 +58,7 @@ typedef struct {
     PyObject *data;         /* raw data ref (buffer acquired in SETUP) */
     Py_buffer view;         /* view.obj != NULL when acquired */
     enum WritePhase phase;
-    Py_ssize_t pos;         /* write-through position (per-awaitable) */
+    Py_ssize_t wt_pos;      /* write-through position */
 } WriteAwaitableObject;
 
 typedef struct {
@@ -68,31 +68,8 @@ typedef struct {
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * Static inline helpers (matching Python _-prefixed methods)
+ * Helpers
  * ═══════════════════════════════════════════════════════════════════ */
-
-/* Whether a flush is needed before buffering length bytes. */
-static inline int
-needs_flush(ByteWriteStreamObject *w, Py_ssize_t length)
-{
-    return w->buf.len > 0 && w->buf.len + length > w->buf.cap;
-}
-
-/* Whether length bytes fit in the internal buffer.
- * Strict < so exactly buf_cap writes go through. */
-static inline int
-can_buffer(ByteWriteStreamObject *w, Py_ssize_t length)
-{
-    return length < w->buf.cap;
-}
-
-/* Copy data into the internal buffer. Caller must check can_buffer. */
-static inline void
-copy_to_buf(ByteWriteStreamObject *w, const char *buf, Py_ssize_t len)
-{
-    memcpy(w->buf.data + w->buf.len, buf, (size_t)len);
-    w->buf.len += len;
-}
 
 /* Raise StopIteration(n) and return NULL. */
 static PyObject *
@@ -167,27 +144,6 @@ remove_writer(ByteWriteStreamObject *w)
         PyErr_Clear();
 }
 
-/* Write loop: write buf[*pos..len) to fd.
- * Returns Future on EAGAIN, NULL when done or on error.
- * Caller checks PyErr_Occurred() to distinguish done vs error. */
-static PyObject *
-write_fd(ByteWriteStreamObject *w, const char *buf, Py_ssize_t len,
-         Py_ssize_t *pos)
-{
-    while (*pos < len) {
-        Py_ssize_t n = write(w->fd, buf + *pos, (size_t)(len - *pos));
-        if (n >= 0) {
-            *pos += n;
-            continue;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return wait_writable(w);
-        PyErr_SetFromErrno(PyExc_OSError);
-        return NULL;
-    }
-    return NULL;  /* done — no error set */
-}
-
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -210,7 +166,36 @@ WriteAwaitable_dealloc(WriteAwaitableObject *self)
     PyObject_Del(self);
 }
 
-/* ── tp_iternext — for(;;) switch state machine ── */
+/* ── tp_iternext — goto-based coroutine ──
+ *
+ * Translates an async function into a re-entrant C iterator.
+ * The switch at the top dispatches to labeled resume points; the body reads
+ * top-to-bottom like the original async code.
+ *
+ * To "yield" (suspend and return a Future to the event loop):
+ *   1. Save phase for re-entry   (self->phase = FLUSH)
+ *   2. Return the Future          (return wait_writable(w))
+ *   3. Place a label              (flush:)
+ *   4. Clean up from the yield    (remove_writer)
+ *
+ * On the next iternext call, the switch jumps to the label,
+ * resuming execution right after the yield point.
+ *
+ * Local variables do not survive across yields — each iternext call is a fresh
+ * stack frame. Any state needed after a yield must be stored on the struct
+ * (self->wt_pos, w->flush_pos, etc.). Locals are fine within a single entry (e.g.
+ * `written`).
+ *
+ * The compiler (gcc -O2) optimizes the switch+goto into a single indirect jump
+ * — the jump table points directly at each label, eliminating the intermediate
+ * gotos entirely.
+ *
+ * Paths:
+ *   Small data, buffer has room  → ENTRY → memcpy → StopIteration
+ *   Small data, must flush first → ENTRY → flush loop ⇄ FLUSH → memcpy → StopIteration
+ *   Large data, buffer empty     → ENTRY → write loop ⇄ WRITE → StopIteration
+ *   Large data, must flush first → ENTRY → flush loop ⇄ FLUSH → write loop ⇄ WRITE → StopIteration
+ */
 
 static PyObject *
 WriteAwaitable_iternext(WriteAwaitableObject *self)
@@ -218,90 +203,99 @@ WriteAwaitable_iternext(WriteAwaitableObject *self)
     ByteWriteStreamObject *w = self->writer;
 
     switch (self->phase) {
-        case ENTRY: goto entry;
-        case FLUSH: goto flush;
-        case WRITE: goto write;
         case DONE:
             PyErr_SetString(PyExc_RuntimeError, "WriteAwaitable already completed");
             return NULL;
         case ERROR:
             PyErr_SetString(PyExc_RuntimeError, "WriteAwaitable already failed");
             return NULL;
+        case ENTRY: goto ENTRY;
+        case FLUSH: goto FLUSH;
+        case WRITE: goto WRITE;
         default: Py_UNREACHABLE();
     }
 
-entry:
+    /* ── Acquire buffer from caller's data ── */
+ENTRY:
     if (PyObject_GetBuffer(self->data, &self->view, PyBUF_SIMPLE) < 0) {
         return NULL;
     }
 
-    if (w->buf.len > 0 && w->buf.len + self->view.len > w->buf.cap) {
-        while (w->flush_pos < w->buf.len) {
+    /* ── Flush internal buffer if it can't absorb the new data ── */
+    if (w->wbuf.len > 0 && w->wbuf.cap < w->wbuf.len + self->view.len) {
+        while (w->flush_pos < w->wbuf.len) {
             Py_ssize_t written = write(
                 w->fd,
-                w->buf.data + w->flush_pos,
-                (size_t)(w->buf.len - w->flush_pos)
+                w->wbuf.buf + w->flush_pos,
+                (size_t)(w->wbuf.len - w->flush_pos)
             );
             if (written >= 0) {
                 w->flush_pos += written;
                 continue;
             }
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                self->phase = ERROR;
-                PyBuffer_Release(&self->view);
-                PyErr_SetFromErrno(PyExc_OSError);
-                return NULL;
+                goto error;
             }
 
-            // await fd writable
+            /* ── yield: await fd writable ──
+             * Safe to drop: flush_pos records progress on the writer,
+             * so the next write() resumes the partial flush. */
             self->phase = FLUSH;
             return wait_writable(w);
-flush:
+FLUSH:
             remove_writer(w);
         }
-        w->buf.len = 0;
+        w->wbuf.len = 0;
         w->flush_pos = 0;
     }
 
-    if (self->view.len < w->buf.cap) {
+    /* ── Fast path: copy small data into buffer ── */
+    if (self->view.len < w->wbuf.cap) {
         memcpy(
-            w->buf.data + w->buf.len,
+            w->wbuf.buf + w->wbuf.len,
             self->view.buf,
             (size_t)self->view.len
         );
-        w->buf.len += self->view.len;
-        self->phase = DONE;
-        stop_iteration_ssize(self->view.len);
-        PyBuffer_Release(&self->view);
-        return NULL;
+        w->wbuf.len += self->view.len;
+        /* ── return: bytes written to buffer ── */
+        goto done;
     }
 
-    self->pos = 0;
-    while (self->pos < self->view.len) {
+    /* ── Write-through: large data bypasses buffer ── */
+    self->wt_pos = 0;
+    while (self->wt_pos < self->view.len) {
         Py_ssize_t written = write(
             w->fd,
-            (const char *)self->view.buf + self->pos,
-            (size_t)(self->view.len - self->pos)
+            (const char *)self->view.buf + self->wt_pos,
+            (size_t)(self->view.len - self->wt_pos)
         );
         if (written >= 0) {
-            self->pos += written;
+            self->wt_pos += written;
             continue;
         }
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            self->phase = ERROR;
-            PyBuffer_Release(&self->view);
-            PyErr_SetFromErrno(PyExc_OSError);
-            return NULL;
+            goto error;
         }
+        /* ── yield: await fd writable ──
+         * Safe to drop: wt_pos dies with the awaitable. Partial data
+         * is already on the fd; writer buffer state is clean. */
         self->phase = WRITE;
         return wait_writable(w);
-write:
+WRITE:
         remove_writer(w);
     }
 
+    // fallthrough: return bytes written
+done:
     self->phase = DONE;
     stop_iteration_ssize(self->view.len);
     PyBuffer_Release(&self->view);
+    return NULL;
+
+error:
+    self->phase = ERROR;
+    PyBuffer_Release(&self->view);
+    PyErr_SetFromErrno(PyExc_OSError);
     return NULL;
 }
 
@@ -414,12 +408,23 @@ FlushAwaitable_iternext(FlushAwaitableObject *self)
     ByteWriteStreamObject *w = self->writer;
     remove_writer(w);
 
-    PyObject *future = write_fd(w, w->buf.data, w->buf.len, &w->flush_pos);
-    if (future != NULL)
-        return future;
-    if (PyErr_Occurred())
-        return NULL;
-    w->buf.len = 0;
+    while (w->flush_pos < w->wbuf.len) {
+        Py_ssize_t written = write(
+            w->fd,
+            w->wbuf.buf + w->flush_pos,
+            (size_t)(w->wbuf.len - w->flush_pos)
+        );
+        if (written >= 0) {
+            w->flush_pos += written;
+            continue;
+        }
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            PyErr_SetFromErrno(PyExc_OSError);
+            return NULL;
+        }
+        return wait_writable(w);
+    }
+    w->wbuf.len = 0;
     w->flush_pos = 0;
     return stop_iteration_none();
 }
@@ -526,13 +531,13 @@ ByteWriteStream_init(
         return -1;
 
     /* Allocate buffer */
-    self->buf.data = PyMem_Malloc(buffer_size);
-    if (self->buf.data == NULL) {
+    self->wbuf.buf = PyMem_Malloc(buffer_size);
+    if (self->wbuf.buf == NULL) {
         PyErr_NoMemory();
         return -1;
     }
-    self->buf.len = 0;
-    self->buf.cap = buffer_size;
+    self->wbuf.len = 0;
+    self->wbuf.cap = buffer_size;
     self->flush_pos = 0;
 
     /* Keep reference to Fd object for close/closed */
@@ -555,8 +560,8 @@ ByteWriteStream_init(
 static void
 ByteWriteStream_dealloc(ByteWriteStreamObject *self)
 {
-    if (self->buf.data != NULL)
-        PyMem_Free(self->buf.data);
+    if (self->wbuf.buf != NULL)
+        PyMem_Free(self->wbuf.buf);
     Py_XDECREF(self->fd_obj);
     Py_XDECREF(self->loop);
     Py_TYPE(self)->tp_free((PyObject *)self);
@@ -576,7 +581,7 @@ ByteWriteStream_write(ByteWriteStreamObject *self, PyObject *data)
     aw->data = Py_NewRef(data);
     aw->view.obj = NULL;
     aw->phase = ENTRY;
-    aw->pos = 0;
+    aw->wt_pos = 0;
     return (PyObject *)aw;
 }
 
@@ -630,7 +635,7 @@ ByteWriteStream_get_buffer_size(
     ByteWriteStreamObject *self, void *Py_UNUSED(closure)
 )
 {
-    return PyLong_FromSsize_t(self->buf.cap);
+    return PyLong_FromSsize_t(self->wbuf.cap);
 }
 
 static PyObject *
@@ -638,7 +643,7 @@ ByteWriteStream_get_buffered(
     ByteWriteStreamObject *self, void *Py_UNUSED(closure)
 )
 {
-    return PyLong_FromSsize_t(self->buf.len);
+    return PyLong_FromSsize_t(self->wbuf.len);
 }
 
 /* ── from_fd(owned_fd, buffer_size=8192) classmethod ── */
