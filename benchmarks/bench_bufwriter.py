@@ -2,7 +2,6 @@
 
 Compares:
   bytes.write()  — C stdio buffered (the ceiling)
-  v1c            — async def, lock bypass, try flush
   py awaitable   — Python WriteAwaitable, no lock, no async frames
   c awaitable    — C WriteAwaitable via _cbufwriter
 
@@ -19,17 +18,25 @@ import subprocess
 import sys
 import time
 
+from shish._cbufwriter import ByteWriteStream as CBufWriter
 from tabulate import tabulate
 
 from shish._bufwriter_py import ByteWriteStream as PyBufWriter
-from shish._cbufwriter import ByteWriteStream as CBufWriter
 from shish.fd import Fd
-from shish.streams.writers_v1c import ByteWriteStream as BufV1c
 
 WRITE_SIZES: list[int] = [
-    32, 64, 128, 256, 512,
-    1_024, 2_048, 4_096, 8_192,
-    16_384, 32_768, 65_536,
+    32,
+    64,
+    128,
+    256,
+    512,
+    1_024,
+    2_048,
+    4_096,
+    8_192,
+    16_384,
+    32_768,
+    65_536,
 ]
 
 DEVNULL_WRITES = 100_000
@@ -98,18 +105,6 @@ def timed_bytes_write(write_fd: Fd, chunk: bytes, writes: int) -> tuple[float, i
     return elapsed, writes * chunk_len
 
 
-async def timed_v1c(write_fd: Fd, chunk: bytes, writes: int) -> tuple[float, int]:
-    """Time v1c ByteWriteStream."""
-    stream = BufV1c.from_fd(write_fd)
-    chunk_len = len(chunk)
-    start = time.perf_counter()
-    for _ in range(writes):
-        await stream.write(chunk)
-    await stream.close()
-    elapsed = time.perf_counter() - start
-    return elapsed, writes * chunk_len
-
-
 async def timed_py_buf(write_fd: Fd, chunk: bytes, writes: int) -> tuple[float, int]:
     """Time Python awaitable buffered writer."""
     stream = PyBufWriter.from_fd(write_fd)
@@ -123,7 +118,7 @@ async def timed_py_buf(write_fd: Fd, chunk: bytes, writes: int) -> tuple[float, 
 
 
 async def timed_c_buf(write_fd: Fd, chunk: bytes, writes: int) -> tuple[float, int]:
-    """Time Rust awaitable buffered writer."""
+    """Time C awaitable buffered writer."""
     loop = asyncio.get_running_loop()
     stream = CBufWriter(write_fd)
     chunk_len = len(chunk)
@@ -148,7 +143,6 @@ async def run_devnull() -> None:
         chunk = random.randbytes(write_size)
 
         stdio_elapsed, _ = timed_bytes_write(open_devnull(), chunk, DEVNULL_WRITES)
-        v1c_elapsed, _ = await timed_v1c(open_devnull(), chunk, DEVNULL_WRITES)
         py_elapsed, _ = await timed_py_buf(open_devnull(), chunk, DEVNULL_WRITES)
         c_elapsed, _ = await timed_c_buf(open_devnull(), chunk, DEVNULL_WRITES)
 
@@ -156,20 +150,27 @@ async def run_devnull() -> None:
             [
                 format_size(write_size),
                 format_duration(stdio_elapsed / DEVNULL_WRITES),
-                format_duration(v1c_elapsed / DEVNULL_WRITES),
                 format_duration(py_elapsed / DEVNULL_WRITES),
                 format_duration(c_elapsed / DEVNULL_WRITES),
             ]
         )
         print(f"  {format_size(write_size):>10} done", file=sys.stderr, flush=True)
 
-    print(f"\nPart 1: Per-call overhead — /dev/null ({DEVNULL_WRITES:,} writes)", file=sys.stderr)
+    print(
+        f"\nPart 1: Per-call overhead — /dev/null ({DEVNULL_WRITES:,} writes)",
+        file=sys.stderr,
+    )
     print(file=sys.stderr)
     print(
         tabulate(
             rows,
-            headers=["Write Size", "bytes.write()", "v1c", "py awaitable", "c awaitable"],
-            colalign=("right", "right", "right", "right", "right"),
+            headers=[
+                "Write Size",
+                "bytes.write()",
+                "py awaitable",
+                "c awaitable",
+            ],
+            colalign=("right", "right", "right", "right"),
         ),
         file=sys.stderr,
     )
@@ -193,11 +194,6 @@ async def run_pipe() -> None:
 
         read_fd, write_fd = make_pipe()
         proc = spawn_sink(read_fd)
-        v1c_elapsed, v1c_total = await timed_v1c(write_fd, chunk, PIPE_WRITES)
-        proc.wait()
-
-        read_fd, write_fd = make_pipe()
-        proc = spawn_sink(read_fd)
         py_elapsed, py_total = await timed_py_buf(write_fd, chunk, PIPE_WRITES)
         proc.wait()
 
@@ -210,20 +206,27 @@ async def run_pipe() -> None:
             [
                 format_size(write_size),
                 format_rate(stdio_total, stdio_elapsed),
-                format_rate(v1c_total, v1c_elapsed),
                 format_rate(py_total, py_elapsed),
                 format_rate(c_total, c_elapsed),
             ]
         )
         print(f"  {format_size(write_size):>10} done", file=sys.stderr, flush=True)
 
-    print(f"\nPart 2: Pipe throughput — cat > /dev/null ({PIPE_WRITES:,} writes)", file=sys.stderr)
+    print(
+        f"\nPart 2: Pipe throughput — cat > /dev/null ({PIPE_WRITES:,} writes)",
+        file=sys.stderr,
+    )
     print(file=sys.stderr)
     print(
         tabulate(
             rows,
-            headers=["Write Size", "bytes.write()", "v1c", "py awaitable", "c awaitable"],
-            colalign=("right", "right", "right", "right", "right"),
+            headers=[
+                "Write Size",
+                "bytes.write()",
+                "py awaitable",
+                "c awaitable",
+            ],
+            colalign=("right", "right", "right", "right"),
         ),
         file=sys.stderr,
     )
