@@ -209,15 +209,16 @@ WriteAwaitable_iternext(WriteAwaitableObject *self)
         case ERROR:
             PyErr_SetString(PyExc_RuntimeError, "WriteAwaitable already failed");
             return NULL;
-        case ENTRY: goto ENTRY;
-        case FLUSH: goto FLUSH;
-        case WRITE: goto WRITE;
+        case ENTRY: goto resume_entry;
+        case FLUSH: goto resume_flush;
+        case WRITE: goto resume_write;
         default: Py_UNREACHABLE();
     }
 
+resume_entry:
     /* ── Acquire buffer from caller's data ── */
-ENTRY:
     if (PyObject_GetBuffer(self->data, &self->view, PyBUF_SIMPLE) < 0) {
+        self->phase = ERROR;
         return NULL;
     }
 
@@ -233,16 +234,16 @@ ENTRY:
                 w->flush_pos += written;
                 continue;
             }
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            if (errno == EINTR)
+                continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
                 goto error;
-            }
 
-            /* ── yield: await fd writable ──
-             * Safe to drop: flush_pos records progress on the writer,
+            /* yield: flush_pos records progress on the writer,
              * so the next write() resumes the partial flush. */
             self->phase = FLUSH;
             return wait_writable(w);
-FLUSH:
+resume_flush:
             remove_writer(w);
         }
         w->wbuf.len = 0;
@@ -273,19 +274,20 @@ FLUSH:
             self->wt_pos += written;
             continue;
         }
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        if (errno == EINTR)
+            continue;
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
             goto error;
-        }
-        /* ── yield: await fd writable ──
-         * Safe to drop: wt_pos dies with the awaitable. Partial data
+
+        /* yield: wt_pos dies with the awaitable. Partial data
          * is already on the fd; writer buffer state is clean. */
         self->phase = WRITE;
         return wait_writable(w);
-WRITE:
+resume_write:
         remove_writer(w);
     }
 
-    // fallthrough: return bytes written
+    /* fallthrough: return bytes written */
 done:
     self->phase = DONE;
     stop_iteration_ssize(self->view.len);
@@ -294,8 +296,8 @@ done:
 
 error:
     self->phase = ERROR;
-    PyBuffer_Release(&self->view);
     PyErr_SetFromErrno(PyExc_OSError);
+    PyBuffer_Release(&self->view);
     return NULL;
 }
 
@@ -418,6 +420,8 @@ FlushAwaitable_iternext(FlushAwaitableObject *self)
             w->flush_pos += written;
             continue;
         }
+        if (errno == EINTR)
+            continue;
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
             PyErr_SetFromErrno(PyExc_OSError);
             return NULL;
